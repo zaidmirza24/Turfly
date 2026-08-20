@@ -1,6 +1,7 @@
 import Slot from "./slot.model.js";
 import Turf from "../turf/turf.model.js";
 import ApiError from "../../common/utils/ApiError.js";
+import { releaseExpiredLocks } from "../../common/jobs/releaseExpiredLocks.js";
 
 /**
  * Create slots for a turf (owner only).
@@ -39,6 +40,12 @@ export const createSlots = async (ownerId, turfId, slots) => {
  * Optionally filter by date range or status.
  */
 export const getSlotsByTurf = async (turfId, { date, status, startDate, endDate } = {}) => {
+  // Correct any locks that expired since the last cron sweep before reading,
+  // so the slot grid never shows a stale "LOCKED" that's actually bookable.
+  // Booking correctness doesn't depend on this (lockSlot already re-checks
+  // expiry atomically) — this only keeps what's displayed accurate.
+  await releaseExpiredLocks();
+
   const query = { turfId };
 
   // Filter by specific date or range
