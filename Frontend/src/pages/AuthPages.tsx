@@ -31,31 +31,29 @@ function AuthShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-10 bg-background">
-      <div className="w-full max-w-4xl flex rounded-3xl overflow-hidden border border-border shadow-xl bg-card">
-        <div className="hidden md:flex w-[380px] flex-col justify-between bg-primary p-10 text-primary-foreground">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-primary-foreground/15 flex items-center justify-center">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 17L10 5H14L20 17M7 13H17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            </div>
-            <span className="font-display font-bold text-lg">Turfly</span>
+    <div className="min-h-screen w-full flex bg-background">
+      <div className="hidden md:flex w-[420px] lg:w-[480px] flex-shrink-0 flex-col justify-between bg-primary p-12 text-primary-foreground">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-primary-foreground/15 flex items-center justify-center">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 17L10 5H14L20 17M7 13H17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </div>
-          <div>
-            <h2 className="font-display text-[26px] font-bold leading-tight tracking-tight mb-3">{brandTitle}</h2>
-            <p className="text-primary-foreground/75 text-sm leading-relaxed max-w-[280px]">{brandSubtitle}</p>
-          </div>
-          {brandBullet ? (
-            <div className="flex items-center gap-3">
-              <div className="w-6 h-6 rounded-md bg-primary-foreground/15 flex items-center justify-center flex-shrink-0">
-                <Check size={13} />
-              </div>
-              <span className="text-xs text-primary-foreground/85">{brandBullet}</span>
+          <span className="font-display font-bold text-lg">Turfly</span>
+        </div>
+        <div>
+          <h2 className="font-display text-[32px] font-bold leading-tight tracking-tight mb-3">{brandTitle}</h2>
+          <p className="text-primary-foreground/75 text-base leading-relaxed max-w-[340px]">{brandSubtitle}</p>
+        </div>
+        {brandBullet ? (
+          <div className="flex items-center gap-3">
+            <div className="w-6 h-6 rounded-md bg-primary-foreground/15 flex items-center justify-center flex-shrink-0">
+              <Check size={13} />
             </div>
-          ) : <div className="h-6" />}
-        </div>
-        <div className="flex-1 flex flex-col items-center justify-center p-8 sm:p-11">
-          <div className="w-full max-w-sm">{children}</div>
-        </div>
+            <span className="text-xs text-primary-foreground/85">{brandBullet}</span>
+          </div>
+        ) : <div className="h-6" />}
+      </div>
+      <div className="flex-1 flex flex-col items-center justify-center p-8 sm:p-11">
+        <div className="w-full max-w-sm">{children}</div>
       </div>
     </div>
   );
@@ -451,9 +449,9 @@ export function ForgotPasswordPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 bg-background">
+    <div className="min-h-screen w-full flex items-center justify-center px-4 bg-background">
       <div className="w-full max-w-sm text-center">
-        <div className="bg-card border border-border rounded-2xl p-9 shadow-md">
+        <div className="p-9">
           <h1 className="font-display text-2xl font-bold tracking-tight mb-1">Reset password</h1>
           <p className="text-sm text-muted-foreground mb-7">We'll send you a link to get back in.</p>
           {sent ? (
