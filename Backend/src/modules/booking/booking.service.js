@@ -31,6 +31,10 @@ export const lockSlot = async (userId, slotId) => {
   const lockedSlot = await Slot.findOneAndUpdate(
     {
       _id: slotId,
+      // A slot that has already started can't be booked — only present/
+      // future slots. Checked atomically here (not as a separate query)
+      // so it can't race with the status check below it.
+      startTime: { $gt: now },
       $or: [{ status: "AVAILABLE" }, { status: "LOCKED", lockExpiresAt: { $lt: now } }],
     },
     {
@@ -42,10 +46,13 @@ export const lockSlot = async (userId, slotId) => {
   );
 
   if (!lockedSlot) {
-    // Either slot doesn't exist OR was already LOCKED/BOOKED
+    // Either slot doesn't exist, has already started, or was already LOCKED/BOOKED
     const exists = await Slot.findById(slotId);
     if (!exists) {
       throw new ApiError(404, "Slot not found");
+    }
+    if (exists.startTime <= now) {
+      throw new ApiError(400, "This slot has already started and can no longer be booked");
     }
     throw new ApiError(409, "Slot is not available for booking");
   }

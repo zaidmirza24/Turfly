@@ -9,8 +9,12 @@ interface SlotSelectorProps {
 }
 
 export function SlotSelector({ slots: allSlots, selectedSlotIds, onToggle }: SlotSelectorProps) {
-  // CLOSED slots are hours the turf isn't operating — never shown to customers.
-  const slots = allSlots.filter(s => s.status.toUpperCase() !== 'CLOSED');
+  const now = Date.now();
+  // CLOSED slots are hours the turf isn't operating, and a slot that has
+  // already started can't be booked (booking.service.js enforces this
+  // server-side too — this is just so a customer never sees it as an
+  // option in the first place).
+  const slots = allSlots.filter(s => s.status.toUpperCase() !== 'CLOSED' && new Date(s.startTime).getTime() > now);
 
   if (slots.length === 0) {
     return (

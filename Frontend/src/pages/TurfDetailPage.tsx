@@ -179,7 +179,7 @@ export default function TurfDetailPage() {
                     <div className="w-2.5 h-2.5 rounded-full bg-primary animate-pulse" />
                     <span className="text-sm font-black tracking-tight">{selectedDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>
                   </div>
-                  <Badge variant="outline" className="font-black border-primary/30 text-primary">{slots.filter(s => s.status === 'AVAILABLE').length} Slots</Badge>
+                  <Badge variant="outline" className="font-black border-primary/30 text-primary">{slots.filter(s => s.status === 'AVAILABLE' && new Date(s.startTime).getTime() > Date.now()).length} Slots</Badge>
                 </div>
 
                 <AnimatePresence mode="wait">
