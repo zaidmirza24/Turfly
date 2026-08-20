@@ -8,7 +8,10 @@ interface SlotSelectorProps {
   onSelect: (slot: TimeSlot) => void;
 }
 
-export function SlotSelector({ slots, selectedSlotId, onSelect }: SlotSelectorProps) {
+export function SlotSelector({ slots: allSlots, selectedSlotId, onSelect }: SlotSelectorProps) {
+  // CLOSED slots are hours the turf isn't operating — never shown to customers.
+  const slots = allSlots.filter(s => s.status.toUpperCase() !== 'CLOSED');
+
   if (slots.length === 0) {
     return (
       <div className="text-center py-12 glass rounded-3xl border-dashed border-primary/20">
@@ -30,7 +33,7 @@ export function SlotSelector({ slots, selectedSlotId, onSelect }: SlotSelectorPr
           Locked
         </div>
         <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-destructive">
-          <div className="w-2 h-2 rounded-full bg-destructive/40" /> 
+          <div className="w-2 h-2 rounded-full bg-destructive/40" />
           Booked
         </div>
       </div>
@@ -40,7 +43,7 @@ export function SlotSelector({ slots, selectedSlotId, onSelect }: SlotSelectorPr
           const id = slot._id || (slot as any).id;
           const isSelected = id === selectedSlotId;
           const status = slot.status.toUpperCase();
-          const isDisabled = status === 'BOOKED' || status === 'LOCKED';
+          const isDisabled = status === 'BOOKED' || status === 'LOCKED' || status === 'FULL';
           
           const time = new Date(slot.startTime).toLocaleTimeString('en-IN', {
             hour: '2-digit',

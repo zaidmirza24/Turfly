@@ -23,10 +23,11 @@ const slotSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["AVAILABLE", "LOCKED", "BOOKED"],
-      //                  ^^^^^^^^
-      // "LOCKED" is defined in schema NOW for future use,
-      // but Phase 1 only uses AVAILABLE ↔ BOOKED transitions.
+      enum: ["AVAILABLE", "LOCKED", "BOOKED", "CLOSED", "FULL"],
+      // CLOSED = owner blocked this hour off (maintenance, outside operating hours)
+      // FULL   = owner manually marked it taken (walk-in/cash customer, no in-app booking)
+      // Both CLOSED and FULL are excluded from lockSlot's AVAILABLE match, so
+      // they're non-bookable without any change to booking.service.js.
       default: "AVAILABLE",
       index: true,
     },

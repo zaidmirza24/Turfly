@@ -1,11 +1,11 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Turf, TimeSlot } from '@/types';
-import { Loader2, Plus, Calendar as CalendarIcon, Sparkles, Trash2, Info, Settings, Zap, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Loader2, Plus, Calendar as CalendarIcon, Sparkles, Trash2, Info, Settings, Zap, ChevronLeft, ChevronRight, Ban, UserCheck, CheckCircle2, Pencil, X } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -17,13 +17,25 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+
+type SlotAction = 'AVAILABLE' | 'CLOSED' | 'FULL';
+
+const STATUS_META: Record<string, { label: string; barClass: string; badgeClass: string }> = {
+  NONE: { label: 'Not Set', barClass: 'bg-transparent border-dashed border-border hover:border-primary/40', badgeClass: 'bg-muted text-muted-foreground' },
+  AVAILABLE: { label: 'Available', barClass: 'bg-primary/10 border-primary/30 hover:bg-primary/20', badgeClass: 'bg-primary/20 text-primary' },
+  CLOSED: { label: 'Closed', barClass: 'bg-muted border-border', badgeClass: 'bg-muted-foreground/20 text-muted-foreground' },
+  FULL: { label: 'Full', barClass: 'bg-warning/10 border-warning/30', badgeClass: 'bg-warning/20 text-warning' },
+  BOOKED: { label: 'Booked', barClass: 'bg-destructive/10 border-destructive/20 opacity-60 cursor-not-allowed', badgeClass: 'bg-destructive/20 text-destructive' },
+  LOCKED: { label: 'Locked', barClass: 'bg-warning/5 border-warning/10 opacity-60 cursor-not-allowed', badgeClass: 'bg-warning/20 text-warning' },
+};
 
 export default function SlotManagementPage() {
   const queryClient = useQueryClient();
   const [selectedTurfId, setSelectedTurfId] = useState('');
   const [isBulkOpen, setIsBulkOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  
+
   const { data: turfsResponse, isLoading: isLoadingTurfs } = useQuery({
     queryKey: ['my-turfs'],
     queryFn: () => api.get('/turfs/my-turfs'),
@@ -31,7 +43,20 @@ export default function SlotManagementPage() {
 
   const turfs = (turfsResponse as any)?.data as Turf[] || [];
   const currentTurf = turfs.find(t => t._id === selectedTurfId);
-  
+
+  // Operating hours settings state (local to dialog)
+  const [is24x7, setIs24x7] = useState(true);
+  const [openHour, setOpenHour] = useState(6);
+  const [closeHour, setCloseHour] = useState(22);
+
+  useEffect(() => {
+    if (currentTurf) {
+      setIs24x7(currentTurf.is24x7 ?? true);
+      setOpenHour(currentTurf.openHour ?? 6);
+      setCloseHour(currentTurf.closeHour ?? 22);
+    }
+  }, [selectedTurfId, currentTurf]);
+
   // Bulk form state
   const [bulkConfig, setBulkConfig] = useState({
     startDate: new Date().toISOString().split('T')[0],
@@ -42,13 +67,15 @@ export default function SlotManagementPage() {
     weekendPrice: 1500
   });
 
-  // Pre-fill from turf defaults
+  // Pre-fill from turf defaults / operating hours
   useEffect(() => {
     if (currentTurf) {
       setBulkConfig(prev => ({
         ...prev,
-        weekdayPrice: (currentTurf as any).defaultWeekdayPrice || (currentTurf as any).pricePerHour || 1000,
-        weekendPrice: (currentTurf as any).defaultWeekendPrice || ((currentTurf as any).pricePerHour ? (currentTurf as any).pricePerHour * 1.5 : 1500)
+        startHour: currentTurf.is24x7 === false ? (currentTurf.openHour ?? prev.startHour) : 0,
+        endHour: currentTurf.is24x7 === false ? (currentTurf.closeHour ?? prev.endHour) : 23,
+        weekdayPrice: currentTurf.defaultWeekdayPrice || currentTurf.pricePerHour || 1000,
+        weekendPrice: currentTurf.defaultWeekendPrice || (currentTurf.pricePerHour ? currentTurf.pricePerHour * 1.5 : 1500)
       }));
     }
   }, [selectedTurfId, currentTurf]);
@@ -56,7 +83,7 @@ export default function SlotManagementPage() {
   const updateTurfMutation = useMutation({
     mutationFn: (data: any) => api.patch(`/turfs/${selectedTurfId}`, data),
     onSuccess: () => {
-      toast.success('Pricing defaults saved');
+      toast.success('Settings saved');
       queryClient.invalidateQueries({ queryKey: ['my-turfs'] });
       setIsSettingsOpen(false);
     }
@@ -64,16 +91,17 @@ export default function SlotManagementPage() {
 
   const applyDefaultsMutation = useMutation({
     mutationFn: async () => {
-      const weekday = (currentTurf as any)?.defaultWeekdayPrice || 1000;
-      const weekend = (currentTurf as any)?.defaultWeekendPrice || 1500;
-      
+      const weekday = currentTurf?.defaultWeekdayPrice || 1000;
+      const weekend = currentTurf?.defaultWeekendPrice || 1500;
+
       await api.patch('/slots', { turfId: selectedTurfId, weekdayPrice: weekday, weekendPrice: weekend });
       toast.success('Default prices applied to all available slots');
-      queryClient.invalidateQueries({ queryKey: ['all-slots', selectedTurfId] });
+      queryClient.invalidateQueries({ queryKey: ['slots-range', selectedTurfId] });
     }
   });
 
   const [viewDate, setViewDate] = useState(new Date());
+  const [activeDayIndex, setActiveDayIndex] = useState(0);
 
   const days = useMemo(() => {
     return Array.from({ length: 7 }, (_, i) => {
@@ -82,6 +110,8 @@ export default function SlotManagementPage() {
       return d;
     });
   }, [viewDate]);
+
+  const activeDay = days[activeDayIndex] || days[0];
 
   const handleNextWeek = () => {
     const next = new Date(viewDate);
@@ -115,8 +145,8 @@ export default function SlotManagementPage() {
   const createSlotsMutation = useMutation({
     mutationFn: (data: any) => api.post('/slots', data),
     onSuccess: () => {
-      toast.success('Slots updated successfully');
-      queryClient.invalidateQueries({ queryKey: ['all-slots', selectedTurfId] });
+      toast.success('Slot updated');
+      queryClient.invalidateQueries({ queryKey: ['slots-range', selectedTurfId] });
       setIsBulkOpen(false);
     },
     onError: (error: any) => {
@@ -124,37 +154,122 @@ export default function SlotManagementPage() {
     }
   });
 
+  const setStatusMutation = useMutation({
+    mutationFn: (data: { turfId: string; slots: { startTime: string; endTime: string }[]; status: SlotAction }) =>
+      api.patch('/slots/status', data),
+    onSuccess: (_data, variables) => {
+      const label = STATUS_META[variables.status].label;
+      toast.success(`Marked ${variables.slots.length} hour${variables.slots.length > 1 ? 's' : ''} as ${label}`);
+      queryClient.invalidateQueries({ queryKey: ['slots-range', selectedTurfId] });
+      clearSelection();
+    },
+    onError: (error: any) => {
+      toast.error(error.message || 'Failed to update slot status');
+    }
+  });
+
   const deleteSlotsMutation = useMutation({
     mutationFn: (date: string) => api.delete('/slots', { params: { turfId: selectedTurfId, date } }),
     onSuccess: () => {
       toast.success('Slots cleared successfully');
-      queryClient.invalidateQueries({ queryKey: ['all-slots', selectedTurfId] });
+      queryClient.invalidateQueries({ queryKey: ['slots-range', selectedTurfId] });
     },
     onError: (error: any) => {
       toast.error(error.message || 'Failed to clear slots');
     }
   });
 
-  const hours = Array.from({ length: 24 }, (_, i) => i); // 0 to 23
+  // Hours shown for the active day, based on the turf's operating hours
+  const hours = useMemo(() => {
+    if (!currentTurf || currentTurf.is24x7 !== false) {
+      return Array.from({ length: 24 }, (_, i) => i);
+    }
+    const start = currentTurf.openHour ?? 0;
+    const end = currentTurf.closeHour ?? 23;
+    const list = [];
+    for (let h = start; h <= end; h++) list.push(h);
+    return list;
+  }, [currentTurf]);
+
+  const getSlotForHour = (date: Date, hour: number) => {
+    return slots.find(s => {
+      const sTime = new Date(s.startTime);
+      return sTime.getDate() === date.getDate() && sTime.getMonth() === date.getMonth() && sTime.getFullYear() === date.getFullYear() && sTime.getHours() === hour;
+    });
+  };
+
+  // ── Drag-to-select across hour rows for the active day ──
+  const [selectedHours, setSelectedHours] = useState<number[]>([]);
+  const isDragging = useRef(false);
+  const dragAnchor = useRef<number | null>(null);
+
+  const clearSelection = () => setSelectedHours([]);
+
+  useEffect(() => {
+    clearSelection();
+  }, [activeDayIndex, selectedTurfId]);
+
+  const isHourLocked = (date: Date, hour: number) => {
+    const slot = getSlotForHour(date, hour);
+    const status = slot?.status.toUpperCase();
+    return status === 'BOOKED' || status === 'LOCKED';
+  };
+
+  const handleRowMouseDown = (hour: number) => {
+    if (isHourLocked(activeDay, hour)) return;
+    isDragging.current = true;
+    dragAnchor.current = hour;
+    setSelectedHours([hour]);
+  };
+
+  const handleRowMouseEnter = (hour: number) => {
+    if (!isDragging.current || dragAnchor.current === null) return;
+    if (isHourLocked(activeDay, hour)) return;
+    const start = Math.min(dragAnchor.current, hour);
+    const end = Math.max(dragAnchor.current, hour);
+    const range = [];
+    for (let h = start; h <= end; h++) {
+      if (!isHourLocked(activeDay, h)) range.push(h);
+    }
+    setSelectedHours(range);
+  };
+
+  useEffect(() => {
+    const handleMouseUp = () => { isDragging.current = false; };
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => window.removeEventListener('mouseup', handleMouseUp);
+  }, []);
+
+  const applyStatusToSelection = (status: SlotAction) => {
+    if (selectedHours.length === 0) return;
+    const slotPayload = selectedHours.map(h => {
+      const start = new Date(activeDay);
+      start.setHours(h, 0, 0, 0);
+      const end = new Date(start);
+      end.setHours(h + 1, 0, 0, 0);
+      return { startTime: start.toISOString(), endTime: end.toISOString() };
+    });
+    setStatusMutation.mutate({ turfId: selectedTurfId, slots: slotPayload, status });
+  };
 
   const handleBulkGenerate = () => {
     const newSlots = [];
     const start = new Date(bulkConfig.startDate);
-    
+
     for (let i = 0; i < bulkConfig.days; i++) {
       const currentDate = new Date(start);
       currentDate.setDate(start.getDate() + i);
-      
+
       const isWeekend = currentDate.getDay() === 0 || currentDate.getDay() === 6;
       const price = isWeekend ? bulkConfig.weekendPrice : bulkConfig.weekdayPrice;
-      
+
       for (let h = bulkConfig.startHour; h <= bulkConfig.endHour; h++) {
         const startTime = new Date(currentDate);
         startTime.setHours(h, 0, 0, 0);
-        
+
         const endTime = new Date(startTime);
         endTime.setHours(h + 1, 0, 0, 0);
-        
+
         newSlots.push({
           startTime: startTime.toISOString(),
           endTime: endTime.toISOString(),
@@ -171,10 +286,11 @@ export default function SlotManagementPage() {
 
   const [editingSlot, setEditingSlot] = useState<{ date: Date, hour: number, price: number } | null>(null);
 
-  const handleCellClick = (date: Date, hour: number) => {
+  const openPriceEditor = (date: Date, hour: number) => {
     const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-    const defaultPrice = isWeekend ? (currentTurf as any)?.defaultWeekendPrice : (currentTurf as any)?.defaultWeekdayPrice;
-    setEditingSlot({ date, hour, price: Number(defaultPrice || 1000) });
+    const existing = getSlotForHour(date, hour);
+    const defaultPrice = isWeekend ? currentTurf?.defaultWeekendPrice : currentTurf?.defaultWeekdayPrice;
+    setEditingSlot({ date, hour, price: existing?.price ?? Number(defaultPrice || currentTurf?.pricePerHour || 1000) });
   };
 
   const saveSlotPrice = (price: number) => {
@@ -196,39 +312,6 @@ export default function SlotManagementPage() {
     setEditingSlot(null);
   };
 
-  const handleCopyDay = (sourceDate: Date) => {
-    const targetDateStr = prompt('Enter target date (YYYY-MM-DD):');
-    if (!targetDateStr) return;
-    
-    const sourceDateStr = sourceDate.toISOString().split('T')[0];
-    const sourceSlots = slots.filter(s => s.startTime.startsWith(sourceDateStr));
-    
-    if (sourceSlots.length === 0) {
-      toast.error('No slots to copy from this day');
-      return;
-    }
-
-    const newSlots = sourceSlots.map(s => {
-      const startTime = new Date(s.startTime);
-      const endTime = new Date(s.endTime);
-      const targetStart = new Date(targetDateStr);
-      targetStart.setHours(startTime.getHours(), 0, 0, 0);
-      const targetEnd = new Date(targetDateStr);
-      targetEnd.setHours(endTime.getHours(), 0, 0, 0);
-      
-      return {
-        startTime: targetStart.toISOString(),
-        endTime: targetEnd.toISOString(),
-        price: s.price
-      };
-    });
-
-    createSlotsMutation.mutate({
-      turfId: selectedTurfId,
-      slots: newSlots
-    });
-  };
-
   if (isLoadingTurfs) return <div className="flex justify-center py-12"><Loader2 className="animate-spin text-primary" /></div>;
 
   return (
@@ -238,32 +321,65 @@ export default function SlotManagementPage() {
           <h1 className="text-4xl font-black tracking-tighter">Slot Management</h1>
           <p className="text-muted-foreground font-medium mt-1">Schedule availability and set pricing for your arenas.</p>
         </div>
-        
+
         <div className="flex flex-wrap gap-3">
           <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" className="rounded-full gap-2 h-12 px-6 border-primary/20 hover:bg-primary/5 transition-all card-hover glass">
-                <Settings size={18} className="text-primary" /> 
-                <span className="font-bold tracking-tight">Price Settings</span>
+                <Settings size={18} className="text-primary" />
+                <span className="font-bold tracking-tight">Turf Settings</span>
               </Button>
             </DialogTrigger>
             <DialogContent className="rounded-[2.5rem] sm:max-w-[450px] p-0 overflow-hidden border-none shadow-2xl">
               <div className="bg-gradient-to-br from-primary/20 via-background to-background p-8">
                 <DialogHeader className="mb-8">
-                  <DialogTitle className="text-3xl font-black tracking-tighter">Fixed Pricing</DialogTitle>
+                  <DialogTitle className="text-3xl font-black tracking-tighter">Turf Settings</DialogTitle>
                   <DialogDescription className="text-muted-foreground font-medium">
-                    Establish your venue's standard rates once and apply them globally.
+                    Set your operating hours and standard rates.
                   </DialogDescription>
                 </DialogHeader>
-                
+
                 <div className="space-y-6">
+                  <div className="flex items-center justify-between p-4 rounded-2xl bg-muted">
+                    <div>
+                      <div className="text-sm font-bold">Open 24 Hours</div>
+                      <div className="text-[10px] text-muted-foreground font-medium">This turf never closes</div>
+                    </div>
+                    <Switch checked={is24x7} onCheckedChange={setIs24x7} />
+                  </div>
+
+                  {!is24x7 && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-1">Opens At</Label>
+                        <Input
+                          type="number" min={0} max={23}
+                          value={openHour}
+                          onChange={(e) => setOpenHour(Number(e.target.value))}
+                          className="h-14 rounded-2xl bg-muted border-none font-bold"
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-1">Closes At</Label>
+                        <Input
+                          type="number" min={0} max={23}
+                          value={closeHour}
+                          onChange={(e) => setCloseHour(Number(e.target.value))}
+                          className="h-14 rounded-2xl bg-muted border-none font-bold"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="h-[1px] bg-border" />
+
                   <div className="group space-y-2">
                     <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-1">Weekday Standard</Label>
                     <div className="relative">
                       <div className="absolute left-4 top-1/2 -translate-y-1/2 text-primary font-bold">₹</div>
-                      <Input 
-                        type="number" 
-                        defaultValue={(currentTurf as any)?.defaultWeekdayPrice || 1000}
+                      <Input
+                        type="number"
+                        defaultValue={currentTurf?.defaultWeekdayPrice || 1000}
                         id="defWeekday"
                         className="h-14 pl-10 rounded-2xl bg-muted border-2 border-transparent focus-visible:ring-primary focus-visible:border-primary transition-all text-lg font-bold"
                       />
@@ -274,17 +390,17 @@ export default function SlotManagementPage() {
                     <Label className="text-[10px] font-black uppercase tracking-widest text-primary ml-1">Weekend Premium</Label>
                     <div className="relative">
                       <div className="absolute left-4 top-1/2 -translate-y-1/2 text-primary font-bold">₹</div>
-                      <Input 
-                        type="number" 
-                        defaultValue={(currentTurf as any)?.defaultWeekendPrice || 1500}
+                      <Input
+                        type="number"
+                        defaultValue={currentTurf?.defaultWeekendPrice || 1500}
                         id="defWeekend"
                         className="h-14 pl-10 rounded-2xl bg-primary/5 border-2 border-primary/20 focus-visible:ring-primary transition-all text-lg font-bold"
                       />
                     </div>
                   </div>
-                  
-                  <div className="pt-6">
-                    <button 
+
+                  <div className="pt-2">
+                    <button
                       onClick={() => {
                         if (confirm('Apply these prices to all existing unbooked slots?')) {
                           applyDefaultsMutation.mutate();
@@ -308,11 +424,17 @@ export default function SlotManagementPage() {
 
                 <DialogFooter className="mt-10 gap-3">
                   <Button variant="ghost" onClick={() => setIsSettingsOpen(false)} className="rounded-xl font-bold h-12 flex-1">Cancel</Button>
-                  <Button 
+                  <Button
                     onClick={() => {
                       const weekday = (document.getElementById('defWeekday') as HTMLInputElement).value;
                       const weekend = (document.getElementById('defWeekend') as HTMLInputElement).value;
-                      updateTurfMutation.mutate({ defaultWeekdayPrice: Number(weekday), defaultWeekendPrice: Number(weekend) });
+                      updateTurfMutation.mutate({
+                        defaultWeekdayPrice: Number(weekday),
+                        defaultWeekendPrice: Number(weekend),
+                        is24x7,
+                        openHour: is24x7 ? 0 : Number(openHour),
+                        closeHour: is24x7 ? 23 : Number(closeHour),
+                      });
                     }}
                     className="gradient-primary rounded-xl h-12 flex-1 font-bold shadow-lg shadow-primary/20"
                   >
@@ -337,14 +459,14 @@ export default function SlotManagementPage() {
                     Generate weeks of inventory in a single click.
                   </DialogDescription>
                 </DialogHeader>
-                
+
                 <div className="space-y-6">
                   <div className="grid gap-2">
                     <Label htmlFor="startDate" className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-1">Start From</Label>
-                    <Input 
-                      id="startDate" 
-                      type="date" 
-                      value={bulkConfig.startDate} 
+                    <Input
+                      id="startDate"
+                      type="date"
+                      value={bulkConfig.startDate}
                       onChange={(e) => setBulkConfig({...bulkConfig, startDate: e.target.value})}
                       className="h-14 rounded-2xl bg-muted border-none font-bold"
                     />
@@ -353,20 +475,20 @@ export default function SlotManagementPage() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="grid gap-2">
                       <Label htmlFor="days" className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-1">Duration (Days)</Label>
-                      <Input 
-                        id="days" 
-                        type="number" 
-                        value={bulkConfig.days} 
+                      <Input
+                        id="days"
+                        type="number"
+                        value={bulkConfig.days}
                         onChange={(e) => setBulkConfig({...bulkConfig, days: Number(e.target.value)})}
                         className="h-14 rounded-2xl bg-muted border-none font-bold"
                       />
                     </div>
                     <div className="grid gap-2">
                       <Label htmlFor="startHour" className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-1">Daily Start</Label>
-                      <Input 
-                        id="startHour" 
-                        type="number" 
-                        value={bulkConfig.startHour} 
+                      <Input
+                        id="startHour"
+                        type="number"
+                        value={bulkConfig.startHour}
                         onChange={(e) => setBulkConfig({...bulkConfig, startHour: Number(e.target.value)})}
                         className="h-14 rounded-2xl bg-muted border-none font-bold"
                       />
@@ -381,18 +503,18 @@ export default function SlotManagementPage() {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label className="text-[10px] font-bold opacity-50 ml-1">Weekday</Label>
-                        <Input 
-                          type="number" 
-                          value={bulkConfig.weekdayPrice} 
+                        <Input
+                          type="number"
+                          value={bulkConfig.weekdayPrice}
                           onChange={(e) => setBulkConfig({...bulkConfig, weekdayPrice: Number(e.target.value)})}
                           className="h-12 rounded-xl bg-muted border-none font-bold"
                         />
                       </div>
                       <div className="space-y-2">
                         <Label className="text-[10px] font-bold text-primary ml-1">Weekend</Label>
-                        <Input 
-                          type="number" 
-                          value={bulkConfig.weekendPrice} 
+                        <Input
+                          type="number"
+                          value={bulkConfig.weekendPrice}
                           onChange={(e) => setBulkConfig({...bulkConfig, weekendPrice: Number(e.target.value)})}
                           className="h-12 rounded-xl bg-muted border-primary/10 border font-bold"
                         />
@@ -402,10 +524,10 @@ export default function SlotManagementPage() {
 
                   <div className="grid gap-2">
                     <Label htmlFor="endHour" className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-1">Daily End</Label>
-                    <Input 
-                      id="endHour" 
-                      type="number" 
-                      value={bulkConfig.endHour} 
+                    <Input
+                      id="endHour"
+                      type="number"
+                      value={bulkConfig.endHour}
                       onChange={(e) => setBulkConfig({...bulkConfig, endHour: Number(e.target.value)})}
                       className="h-14 rounded-2xl bg-muted border-none font-bold"
                     />
@@ -414,9 +536,9 @@ export default function SlotManagementPage() {
 
                 <DialogFooter className="mt-10 gap-3">
                   <Button variant="ghost" onClick={() => setIsBulkOpen(false)} className="rounded-xl font-bold h-12 flex-1">Discard</Button>
-                  <Button 
-                    onClick={handleBulkGenerate} 
-                    disabled={createSlotsMutation.isPending} 
+                  <Button
+                    onClick={handleBulkGenerate}
+                    disabled={createSlotsMutation.isPending}
                     className="gradient-primary rounded-xl h-12 flex-1 font-bold shadow-lg shadow-primary/20"
                   >
                     {createSlotsMutation.isPending ? <Loader2 className="animate-spin" size={18} /> : 'Build Schedule'}
@@ -438,12 +560,12 @@ export default function SlotManagementPage() {
           <Button variant="default" className="gradient-primary rounded-2xl px-8 shadow-lg shadow-primary/20">Add Your First Turf</Button>
         </div>
       ) : (
-        <div className="space-y-10">
+        <div className="space-y-6 pb-24">
           <div className="flex gap-3 overflow-x-auto pb-4 scrollbar-none px-1">
             {turfs.map(t => (
-              <Button 
-                key={t._id} 
-                variant={selectedTurfId === t._id ? 'default' : 'outline'} 
+              <Button
+                key={t._id}
+                variant={selectedTurfId === t._id ? 'default' : 'outline'}
                 className={cn('rounded-full h-12 px-8 font-black transition-all',
                   selectedTurfId === t._id ? 'gradient-primary shadow-xl shadow-primary/30 border-none scale-105' : 'glass hover:bg-accent hover:border-primary/30 text-muted-foreground hover:text-foreground')}
                 onClick={() => setSelectedTurfId(t._id)}
@@ -453,12 +575,19 @@ export default function SlotManagementPage() {
             ))}
           </div>
 
+          {currentTurf && currentTurf.is24x7 === false && (
+            <div className="flex items-center gap-2 px-4 text-xs font-bold text-muted-foreground">
+              <Zap size={14} className="text-primary" />
+              Operating hours: {String(currentTurf.openHour ?? 0).padStart(2, '0')}:00 – {String((currentTurf.closeHour ?? 23) + 1).padStart(2, '0')}:00
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center justify-between gap-4 glass p-4 rounded-[2rem] shadow-xl">
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="sm" onClick={handlePrevWeek} className="rounded-xl h-11 px-4 hover:bg-accent text-muted-foreground hover:text-foreground">
                 <ChevronLeft size={18} className="mr-1" /> Prev Week
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => setViewDate(new Date())} className="rounded-xl h-11 px-6 hover:bg-accent font-black text-[10px] uppercase tracking-widest">
+              <Button variant="ghost" size="sm" onClick={() => { setViewDate(new Date()); setActiveDayIndex(0); }} className="rounded-xl h-11 px-6 hover:bg-accent font-black text-[10px] uppercase tracking-widest">
                 Today
               </Button>
               <Button variant="ghost" size="sm" onClick={handleNextWeek} className="rounded-xl h-11 px-4 hover:bg-accent text-muted-foreground hover:text-foreground">
@@ -470,123 +599,163 @@ export default function SlotManagementPage() {
               <div className="h-8 w-[1px] bg-border mx-2" />
               <div className="relative group">
                 <CalendarIcon size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-primary opacity-60 group-focus-within:opacity-100 transition-opacity" />
-                <input 
-                  type="date" 
-                  value={viewDate.toISOString().split('T')[0]} 
-                  onChange={(e) => setViewDate(new Date(e.target.value))}
+                <input
+                  type="date"
+                  value={viewDate.toISOString().split('T')[0]}
+                  onChange={(e) => { setViewDate(new Date(e.target.value)); setActiveDayIndex(0); }}
                   className="bg-primary/5 border-2 border-transparent focus:border-primary/20 rounded-xl h-11 pl-10 pr-4 outline-none font-bold text-xs transition-all w-40"
                 />
               </div>
             </div>
           </div>
 
-          <div className="glass border-primary/10 rounded-[3rem] overflow-hidden shadow-2xl shadow-black/20">
-            <div className="overflow-x-auto custom-scrollbar">
-              <table className="w-full text-xs border-separate border-spacing-0">
-                <thead>
-                  <tr className="bg-primary/5 backdrop-blur-xl">
-                    <th className="p-6 text-left font-black tracking-tighter sticky left-0 bg-card/95 backdrop-blur-md min-w-[120px] border-r border-border z-20">
-                      <div className="flex items-center gap-2 text-primary">
-                        <Zap size={14} className="animate-pulse" /> TIME
-                      </div>
-                    </th>
-                    {days.map(d => (
-                      <th key={d.toISOString()} className="p-6 text-center min-w-[160px] border-r border-border last:border-r-0 relative group/col z-10">
-                        <div className="text-[10px] uppercase text-primary font-black tracking-[0.2em] mb-2 opacity-60">{d.toLocaleDateString('en', { weekday: 'long' })}</div>
-                        <div className="text-2xl font-black tracking-tighter text-foreground">{d.getDate()} {d.toLocaleDateString('en', { month: 'short' }).toUpperCase()}</div>
-                        
-                        <div className="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover/col:opacity-100 transition-all">
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-8 w-8 rounded-full hover:bg-primary/20 text-primary"
-                            onClick={() => handleCopyDay(d)}
-                            title="Copy Schedule"
-                          >
-                            <Plus size={14} />
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-8 w-8 rounded-full hover:bg-destructive/20 text-destructive"
-                            onClick={() => {
-                              if (confirm(`Clear all slots for ${d.toLocaleDateString()}?`)) {
-                                deleteSlotsMutation.mutate(d.toISOString());
-                              }
-                            }}
-                            title="Clear Day"
-                          >
-                            <Trash2 size={14} />
-                          </Button>
-                        </div>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {hours.map(h => (
-                    <tr key={h} className="group hover:bg-muted/50 transition-colors">
-                      <td className="p-6 font-black tracking-tighter sticky left-0 bg-card/95 backdrop-blur-sm border-r border-border z-20 text-muted-foreground group-hover:text-primary transition-colors">
-                        {h.toString().padStart(2, '0')}:00
-                      </td>
-                      {days.map(d => {
-                        const dateStr = d.toISOString().split('T')[0];
-                        const slot = slots.find(s => {
-                          const sTime = new Date(s.startTime);
-                          return sTime.getDate() === d.getDate() && sTime.getMonth() === d.getMonth() && sTime.getHours() === h;
-                        });
-
-                        const status = slot?.status.toUpperCase() || 'NONE';
-
-                        return (
-                          <td key={dateStr} className="p-3 border-r border-border last:border-r-0">
-                            <button
-                              onClick={() => !slot && handleCellClick(d, h)}
-                              disabled={status === 'BOOKED' || createSlotsMutation.isPending}
-                              className={cn('w-full p-4 rounded-[1.5rem] transition-all flex flex-col items-center justify-center min-h-[80px] relative overflow-hidden group/btn border-2',
-                                status === 'NONE' ? 'bg-transparent border-dashed border-border hover:border-primary/40 hover:bg-primary/10 text-muted-foreground/20' :
-                                status === 'AVAILABLE' ? 'bg-primary/10 text-primary border-primary/30 hover:bg-primary/20 hover:border-primary/50' :
-                                status === 'BOOKED' ? 'bg-destructive/10 text-destructive border-destructive/20 cursor-not-allowed opacity-40' :
-                                'bg-warning/10 text-warning border-warning/20 shadow-lg shadow-warning/5'
-                              )}
-                            >
-                              {status === 'NONE' ? (
-                                <Plus size={24} className="opacity-0 group-hover/btn:opacity-100 transition-all scale-75 group-hover/btn:scale-100" />
-                              ) : (
-                                <>
-                                  <div className="flex items-baseline gap-0.5">
-                                    <span className="text-[10px] font-bold opacity-60">₹</span>
-                                    <span className="font-black text-xl tracking-tighter">{slot.price}</span>
-                                  </div>
-                                  <div className={cn("text-[9px] font-black tracking-widest mt-1 px-2 py-0.5 rounded-full",
-                                    status === 'AVAILABLE' ? 'bg-primary/20' : 'bg-warning/20'
-                                  )}>
-                                    {status}
-                                  </div>
-                                  {status === 'AVAILABLE' && (
-                                    <div className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-                                  )}
-                                </>
-                              )}
-                            </button>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          {/* Day switcher */}
+          <div className="grid grid-cols-7 gap-2">
+            {days.map((d, i) => {
+              const isActive = i === activeDayIndex;
+              const isToday = d.toDateString() === new Date().toDateString();
+              return (
+                <button
+                  key={d.toISOString()}
+                  onClick={() => setActiveDayIndex(i)}
+                  className={cn('rounded-2xl p-3 text-center transition-all border-2',
+                    isActive ? 'gradient-primary border-transparent shadow-lg shadow-primary/20 text-primary-foreground scale-105' :
+                    'glass border-transparent hover:border-primary/20 text-foreground')}
+                >
+                  <div className={cn('text-[9px] font-black uppercase tracking-widest mb-1', isActive ? 'opacity-80' : 'text-muted-foreground')}>
+                    {d.toLocaleDateString('en', { weekday: 'short' })}
+                  </div>
+                  <div className="text-xl font-black tracking-tighter">{d.getDate()}</div>
+                  {isToday && !isActive && <div className="w-1 h-1 rounded-full bg-primary mx-auto mt-1" />}
+                </button>
+              );
+            })}
           </div>
-          
+
+          {/* Active day header + actions */}
+          <div className="flex items-center justify-between px-2">
+            <div>
+              <div className="text-2xl font-black tracking-tighter">{activeDay.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</div>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mt-0.5">Drag across hours to bulk-set status</div>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="rounded-xl h-10 px-4 text-destructive hover:bg-destructive/10 gap-2"
+              onClick={() => {
+                if (confirm(`Clear all slots for ${activeDay.toLocaleDateString()}?`)) {
+                  deleteSlotsMutation.mutate(activeDay.toISOString());
+                }
+              }}
+            >
+              <Trash2 size={14} /> Clear Day
+            </Button>
+          </div>
+
+          {/* Day timeline */}
+          <div className="glass border-primary/10 rounded-[2.5rem] overflow-hidden shadow-2xl shadow-black/20 select-none">
+            {isLoadingSlots ? (
+              <div className="flex justify-center py-16"><Loader2 className="animate-spin text-primary" /></div>
+            ) : (
+              <div className="divide-y divide-border">
+                {hours.map(h => {
+                  const slot = getSlotForHour(activeDay, h);
+                  const status = slot?.status.toUpperCase() || 'NONE';
+                  const meta = STATUS_META[status] || STATUS_META.NONE;
+                  const isSelected = selectedHours.includes(h);
+                  const isLocked = status === 'BOOKED' || status === 'LOCKED';
+                  const timeLabel = `${h.toString().padStart(2, '0')}:00 – ${((h + 1) % 24).toString().padStart(2, '0')}:00`;
+
+                  return (
+                    <div
+                      key={h}
+                      onMouseDown={() => handleRowMouseDown(h)}
+                      onMouseEnter={() => handleRowMouseEnter(h)}
+                      className={cn('flex items-center gap-4 px-6 py-4 transition-colors cursor-pointer',
+                        isSelected ? 'bg-primary/10' : 'hover:bg-muted/40',
+                        isLocked && 'cursor-not-allowed')}
+                    >
+                      <div className="w-24 shrink-0 font-black text-sm tracking-tighter text-muted-foreground">
+                        {timeLabel}
+                      </div>
+
+                      <div className={cn('flex-1 h-11 rounded-2xl border-2 flex items-center px-4 transition-all', meta.barClass)}>
+                        <span className={cn('text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-full', meta.badgeClass)}>
+                          {meta.label}
+                        </span>
+                        {status === 'BOOKED' && (
+                          <span className="ml-auto text-[10px] font-bold text-destructive flex items-center gap-1">
+                            <UserCheck size={12} /> Customer booking
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="w-24 shrink-0 text-right font-black text-lg tracking-tighter flex items-center justify-end gap-2">
+                        {slot ? <>₹{slot.price}</> : <span className="text-muted-foreground/30 text-sm">—</span>}
+                        {!isLocked && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openPriceEditor(activeDay, h); }}
+                            className="p-1.5 rounded-full hover:bg-primary/10 text-primary/60 hover:text-primary transition-colors"
+                            title="Edit price"
+                          >
+                            <Pencil size={13} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <div className="flex items-center gap-3 p-6 rounded-[2rem] glass border-primary/10 text-sm text-muted-foreground max-w-2xl">
             <div className="p-2 rounded-full bg-primary/10 text-primary">
               <Info size={18} />
             </div>
-            <p><strong>Pro Tip:</strong> Define your <strong>Price Settings</strong> once to automatically apply standard rates to all newly generated slots. Use the <strong>Sync</strong> button to update existing slots globally.</p>
+            <p><strong>Tip:</strong> Click and drag across hours to select a range, then mark it <strong>Closed</strong> (turf not operating) or <strong>Full</strong> (booked outside the app). Use the pencil icon to set a custom price for a single hour.</p>
           </div>
         </div>
       )}
+
+      {/* Floating bulk-status toolbar */}
+      {selectedHours.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-30 glass border-primary/20 rounded-full shadow-2xl px-3 py-2 flex items-center gap-2 animate-in fade-in slide-in-from-bottom-4">
+          <span className="text-xs font-black px-3 text-muted-foreground">{selectedHours.length} hour{selectedHours.length > 1 ? 's' : ''}</span>
+          <Button
+            size="sm"
+            className="rounded-full h-9 px-4 bg-primary/10 text-primary hover:bg-primary/20 gap-1.5 font-bold"
+            disabled={setStatusMutation.isPending}
+            onClick={() => applyStatusToSelection('AVAILABLE')}
+          >
+            <CheckCircle2 size={14} /> Available
+          </Button>
+          <Button
+            size="sm"
+            className="rounded-full h-9 px-4 bg-muted text-muted-foreground hover:bg-muted/70 gap-1.5 font-bold"
+            disabled={setStatusMutation.isPending}
+            onClick={() => applyStatusToSelection('CLOSED')}
+          >
+            <Ban size={14} /> Closed
+          </Button>
+          <Button
+            size="sm"
+            className="rounded-full h-9 px-4 bg-warning/10 text-warning hover:bg-warning/20 gap-1.5 font-bold"
+            disabled={setStatusMutation.isPending}
+            onClick={() => applyStatusToSelection('FULL')}
+          >
+            <UserCheck size={14} /> Full
+          </Button>
+          <button
+            onClick={clearSelection}
+            className="p-2 rounded-full hover:bg-muted text-muted-foreground ml-1"
+            title="Clear selection"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
       {editingSlot && (
         <Dialog open={!!editingSlot} onOpenChange={() => setEditingSlot(null)}>
           <DialogContent className="rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl sm:max-w-[400px]">
@@ -597,14 +766,14 @@ export default function SlotManagementPage() {
                   {editingSlot.date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })} @ {editingSlot.hour}:00
                 </DialogDescription>
               </DialogHeader>
-              
+
               <div className="space-y-6">
                 <div className="group space-y-2">
                   <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-1">Price per Hour</Label>
                   <div className="relative">
                     <div className="absolute left-4 top-1/2 -translate-y-1/2 text-primary font-bold text-xl">₹</div>
-                    <Input 
-                      type="number" 
+                    <Input
+                      type="number"
                       autoFocus
                       defaultValue={editingSlot.price}
                       id="slotPriceInput"
@@ -617,7 +786,7 @@ export default function SlotManagementPage() {
 
               <DialogFooter className="mt-8 gap-3">
                 <Button variant="ghost" onClick={() => setEditingSlot(null)} className="rounded-xl font-bold h-12 flex-1">Cancel</Button>
-                <Button 
+                <Button
                   onClick={() => {
                     const price = (document.getElementById('slotPriceInput') as HTMLInputElement).value;
                     saveSlotPrice(Number(price));

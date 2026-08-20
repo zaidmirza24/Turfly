@@ -28,3 +28,9 @@ export const updateSlots = async (req, res) => {
   await slotService.updateSlots(req.user._id, turfId, { date, price, weekdayPrice, weekendPrice });
   new ApiResponse(200, "Slots updated successfully").send(res);
 };
+
+export const setSlotsStatus = async (req, res) => {
+  const { turfId, slots, status } = req.body;
+  const updated = await slotService.setSlotsStatus(req.user._id, turfId, { slots, status });
+  new ApiResponse(200, "Slot status updated", updated).send(res);
+};

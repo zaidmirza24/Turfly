@@ -98,6 +98,60 @@ export const deleteSlots = async (ownerId, turfId, { date }) => {
   await Slot.deleteMany(query);
 };
 
+/**
+ * Bulk set the status of specific hourly slots (owner only).
+ *
+ * Used by the day-timeline UI's drag-select: the owner drags across a range
+ * of hours and picks AVAILABLE / CLOSED / FULL. Slots that don't exist yet
+ * for a given hour are created on the fly (so an owner can "close" an hour
+ * that was never generated). Slots already BOOKED or LOCKED are left alone —
+ * an owner can't override a real customer booking or an in-progress checkout
+ * from this endpoint; they must go through booking cancellation instead.
+ */
+export const setSlotsStatus = async (ownerId, turfId, { slots, status }) => {
+  const ALLOWED_STATUSES = ["AVAILABLE", "CLOSED", "FULL"];
+  if (!ALLOWED_STATUSES.includes(status)) {
+    throw new ApiError(400, "Status must be one of AVAILABLE, CLOSED, FULL");
+  }
+  if (!Array.isArray(slots) || slots.length === 0) {
+    throw new ApiError(400, "At least one slot time range is required");
+  }
+
+  const turf = await Turf.findById(turfId);
+  if (!turf) throw new ApiError(404, "Turf not found");
+  if (turf.ownerId.toString() !== ownerId.toString()) {
+    throw new ApiError(403, "You do not own this turf");
+  }
+
+  const updated = [];
+  for (const { startTime, endTime } of slots) {
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+
+    const existing = await Slot.findOne({ turfId, startTime: start });
+
+    if (existing) {
+      if (existing.status === "BOOKED" || existing.status === "LOCKED") {
+        continue;
+      }
+      existing.status = status;
+      await existing.save();
+      updated.push(existing);
+    } else {
+      const created = await Slot.create({
+        turfId,
+        startTime: start,
+        endTime: end,
+        price: turf.pricePerHour,
+        status,
+      });
+      updated.push(created);
+    }
+  }
+
+  return updated;
+};
+
 export const updateSlots = async (ownerId, turfId, { date, price, weekdayPrice, weekendPrice }) => {
   const turf = await Turf.findById(turfId);
   if (!turf) throw new ApiError(404, "Turf not found");

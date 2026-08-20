@@ -48,6 +48,22 @@ const turfSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    is24x7: {
+      type: Boolean,
+      default: true,
+    },
+    openHour: {
+      type: Number,
+      min: 0,
+      max: 23,
+      default: 0,
+    },
+    closeHour: {
+      type: Number,
+      min: 0,
+      max: 23,
+      default: 23,
+    },
     approvalStatus: {
       type: String,
       enum: ["PENDING", "APPROVED", "REJECTED"],

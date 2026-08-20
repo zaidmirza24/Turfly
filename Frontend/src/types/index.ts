@@ -1,6 +1,6 @@
 export type Sport = 'football' | 'cricket' | 'badminton' | 'tennis' | 'basketball' | 'volleyball';
 
-export type SlotStatus = 'available' | 'locked' | 'booked';
+export type SlotStatus = 'available' | 'locked' | 'booked' | 'closed' | 'full';
 export type BookingStatus = 'confirmed' | 'cancelled' | 'pending';
 export type TurfApprovalStatus = 'approved' | 'pending' | 'rejected';
 export type UserRole = 'USER' | 'OWNER' | 'ADMIN';
@@ -34,6 +34,11 @@ export interface Turf {
   ownerId: string | { _id: string, name: string, email: string };
   isActive: boolean;
   approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
+  is24x7?: boolean;
+  openHour?: number; // 0-23
+  closeHour?: number; // 0-23, inclusive of the last slot's start hour
+  defaultWeekdayPrice?: number;
+  defaultWeekendPrice?: number;
 }
 
 export interface TimeSlot {
@@ -43,7 +48,7 @@ export interface TimeSlot {
   date?: string; // YYYY-MM-DD (calculated from startTime if needed)
   startTime: string; // ISO String from backend
   endTime: string; // ISO String from backend
-  status: 'AVAILABLE' | 'LOCKED' | 'BOOKED'; // match backend casing
+  status: 'AVAILABLE' | 'LOCKED' | 'BOOKED' | 'CLOSED' | 'FULL'; // match backend casing
   price: number;
 }
 
