@@ -12,6 +12,8 @@ const bookingSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Turf",
       required: [true, "Turf reference is required"],
+      // Queried on every owner bookings view (getBookingsByTurf / getOwnerBookings).
+      index: true,
     },
     slotId: {
       type: mongoose.Schema.Types.ObjectId,

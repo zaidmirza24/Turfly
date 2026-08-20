@@ -6,6 +6,8 @@ const turfSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: [true, "Owner is required"],
+      // Queried on every owner-dashboard load (Turf.find({ ownerId })) and
+      // every ownership check in turf/slot mutations.
       index: true,
     },
     name: {

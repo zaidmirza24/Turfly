@@ -55,8 +55,11 @@ const slotSchema = new mongoose.Schema(
   }
 );
 
-// Compound index for efficient slot queries by turf + time range
-slotSchema.index({ turfId: 1, startTime: 1 });
+// Unique compound index: one slot per turf per hour. Also enforces the
+// idempotency default-slot provisioning (slot.service.js) relies on — two
+// concurrent requests provisioning the same hour race safely instead of
+// creating duplicate slot documents for it.
+slotSchema.index({ turfId: 1, startTime: 1 }, { unique: true });
 
 const Slot = mongoose.model("Slot", slotSchema);
 export default Slot;

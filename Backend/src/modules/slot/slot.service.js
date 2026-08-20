@@ -25,14 +25,84 @@ export const createSlots = async (ownerId, turfId, slots) => {
     startTime: { $in: startTimes }
   });
 
-  // Attach turfId to each slot
+  // Build slot docs from only the fields a caller should be able to set —
+  // spreading the raw request body would let a client inject `status:
+  // "BOOKED"` or a fake `bookingId` on creation.
   const slotDocs = slots.map((slot) => ({
-    ...slot,
+    startTime: slot.startTime,
+    endTime: slot.endTime,
+    price: slot.price,
     turfId,
   }));
 
   const createdSlots = await Slot.insertMany(slotDocs);
   return createdSlots;
+};
+
+// Hard cap on how many calendar days a single request can trigger default-slot
+// provisioning for. Without this, an unauthenticated caller could pass an
+// arbitrarily wide startDate/endDate and force the creation of years' worth
+// of Slot documents in one request.
+const MAX_PROVISION_DAYS = 62;
+
+/**
+ * Idempotently create AVAILABLE slots for every operating hour of `turf`
+ * across [rangeStart, rangeEnd] that doesn't already have a Slot document.
+ *
+ * Product rule: a slot is AVAILABLE by default; the owner only has to act
+ * to CLOSE an hour (or mark it FULL) — never to opt hours in one at a time.
+ * Hours outside the turf's operating window are simply never generated here,
+ * which is what makes them implicitly "closed" without a stored document.
+ */
+const provisionDefaultSlots = async (turf, rangeStart, rangeEnd) => {
+  const dayCursor = new Date(rangeStart);
+  dayCursor.setHours(0, 0, 0, 0);
+  const lastDay = new Date(rangeEnd);
+  lastDay.setHours(0, 0, 0, 0);
+
+  const openHour = turf.is24x7 === false ? (turf.openHour ?? 0) : 0;
+  const closeHour = turf.is24x7 === false ? (turf.closeHour ?? 23) : 23;
+
+  const wantedStartTimes = [];
+  for (let i = 0; dayCursor <= lastDay && i < MAX_PROVISION_DAYS; i++) {
+    for (let h = openHour; h <= closeHour; h++) {
+      const startTime = new Date(dayCursor);
+      startTime.setHours(h, 0, 0, 0);
+      wantedStartTimes.push(startTime);
+    }
+    dayCursor.setDate(dayCursor.getDate() + 1);
+  }
+
+  if (wantedStartTimes.length === 0) return;
+
+  const existing = await Slot.find({
+    turfId: turf._id,
+    startTime: { $in: wantedStartTimes },
+  }).select("startTime").lean();
+  const existingTimes = new Set(existing.map((s) => s.startTime.getTime()));
+
+  const toCreate = wantedStartTimes
+    .filter((t) => !existingTimes.has(t.getTime()))
+    .map((startTime) => {
+      const endTime = new Date(startTime);
+      endTime.setHours(endTime.getHours() + 1);
+      return { turfId: turf._id, startTime, endTime, price: turf.pricePerHour, status: "AVAILABLE" };
+    });
+
+  if (toCreate.length === 0) return;
+
+  try {
+    // ordered:false so one duplicate (a concurrent request provisioning the
+    // same hour first) doesn't abort the rest of the batch.
+    await Slot.insertMany(toCreate, { ordered: false });
+  } catch (err) {
+    // Duplicate-key errors are expected under concurrent provisioning — the
+    // unique (turfId, startTime) index is what makes this idempotent instead
+    // of racy. Anything else is a real failure and should still surface.
+    if (err.code !== 11000 && !(err.writeErrors?.every((e) => e.code === 11000))) {
+      throw err;
+    }
+  }
 };
 
 /**
@@ -47,25 +117,36 @@ export const getSlotsByTurf = async (turfId, { date, status, startDate, endDate 
   await releaseExpiredLocks();
 
   const query = { turfId };
+  let rangeStart = null;
+  let rangeEnd = null;
 
   // Filter by specific date or range
   if (date) {
-    const dayStart = new Date(date);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(date);
-    dayEnd.setHours(23, 59, 59, 999);
-    query.startTime = { $gte: dayStart, $lte: dayEnd };
+    rangeStart = new Date(date);
+    rangeStart.setHours(0, 0, 0, 0);
+    rangeEnd = new Date(date);
+    rangeEnd.setHours(23, 59, 59, 999);
+    query.startTime = { $gte: rangeStart, $lte: rangeEnd };
   } else if (startDate || endDate) {
     query.startTime = {};
     if (startDate) {
-      const start = new Date(startDate);
-      start.setHours(0, 0, 0, 0);
-      query.startTime.$gte = start;
+      rangeStart = new Date(startDate);
+      rangeStart.setHours(0, 0, 0, 0);
+      query.startTime.$gte = rangeStart;
     }
     if (endDate) {
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      query.startTime.$lte = end;
+      rangeEnd = new Date(endDate);
+      rangeEnd.setHours(23, 59, 59, 999);
+      query.startTime.$lte = rangeEnd;
+    }
+  }
+
+  // Only provision defaults when the request names a bounded date/range —
+  // an unbounded "all slots for this turf" query never triggers generation.
+  if (rangeStart && rangeEnd) {
+    const turf = await Turf.findById(turfId);
+    if (turf) {
+      await provisionDefaultSlots(turf, rangeStart, rangeEnd);
     }
   }
 

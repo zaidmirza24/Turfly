@@ -12,6 +12,11 @@ const generateToken = (userId) => {
   });
 };
 
+// Roles the public registration endpoint may assign. ADMIN accounts are
+// provisioned only via scripts/seedAdmin.js — never self-service, or any
+// caller could hand themselves platform-admin access via this endpoint.
+const PUBLIC_REGISTRATION_ROLES = ["USER", "OWNER"];
+
 /**
  * Register a new user.
  */
@@ -21,7 +26,8 @@ export const registerUser = async ({ name, email, phone, password, role }) => {
     throw new ApiError(409, "User with this email already exists");
   }
 
-  const user = await User.create({ name, email, phone, password, role });
+  const safeRole = PUBLIC_REGISTRATION_ROLES.includes(role) ? role : "USER";
+  const user = await User.create({ name, email, phone, password, role: safeRole });
   const token = generateToken(user._id);
 
   return {
