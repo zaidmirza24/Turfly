@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(npm run *)",
+      "Bash(powershell -Command \"Get-NetTCPConnection -LocalPort 5000 -State Listen -ErrorAction SilentlyContinue | Select-Object OwningProcess; Get-Process -Id \\(Get-NetTCPConnection -LocalPort 5000 -State Listen -ErrorAction SilentlyContinue\\).OwningProcess -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,Path\")",
+      "Bash(npm ls *)",
+      "Read(//c/Users/mirza/AppData/Local/Temp/claude/bundled-skills/**)",
+      "Bash(node 'C:\\\\Users\\\\mirza\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\bundled-skills\\\\2.1.235\\\\70f5e108a7dc5bd84262fec9678d9536\\\\design\\\\seed-canvas.mjs' --template 'C:\\\\Users\\\\mirza\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\bundled-skills\\\\2.1.235\\\\70f5e108a7dc5bd84262fec9678d9536\\\\design\\\\payload.template.html' --out turfly-redesign.html --title 'Turfly Redesign' --artboard Main.dc.html --artboard Onboarding.dc.html --artboard TurfDetail.dc.html --artboard OwnerDashboard.dc.html --canvas canvas.json)",
+      "Bash(node \"C:\\\\Users\\\\mirza\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\bundled-skills\\\\2.1.235\\\\70f5e108a7dc5bd84262fec9678d9536\\\\design\\\\seed-canvas.mjs\" --check turfly-redesign.html)",
+      "Bash(curl -sf http://localhost:5173)",
+      "Bash(curl -s \"http://localhost:5000/api/turfs\")",
+      "Bash(curl -s \"http://localhost:5000/api/turfs?limit=3\")",
+      "Bash(curl -sf http://localhost:5000/api/health)"
+    ]
+  }
+}
