@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Turf, TimeSlot } from '@/types';
-import { Loader2, Plus, Calendar as CalendarIcon, Sparkles, Trash2, Info, Settings, Zap, ChevronLeft, ChevronRight, Ban, UserCheck, CheckCircle2, Pencil, X } from 'lucide-react';
+import { Loader2, Plus, Calendar as CalendarIcon, Sparkles, Trash2, Info, Settings, Zap, ChevronLeft, ChevronRight, Ban, UserCheck, CheckCircle2, Pencil, X, AlertTriangle, RefreshCw } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -20,6 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 
 type SlotAction = 'AVAILABLE' | 'CLOSED' | 'FULL';
+type SlotsApiResponse = { data: TimeSlot[] };
 
 const STATUS_META: Record<string, { label: string; barClass: string; badgeClass: string }> = {
   NONE: { label: 'Not Set', barClass: 'bg-transparent border-dashed border-border hover:border-primary/40', badgeClass: 'bg-muted text-muted-foreground' },
@@ -30,19 +31,32 @@ const STATUS_META: Record<string, { label: string; barClass: string; badgeClass:
   LOCKED: { label: 'Locked', barClass: 'bg-warning/5 border-warning/10 opacity-60 cursor-not-allowed', badgeClass: 'bg-warning/20 text-warning' },
 };
 
+const sameLocalHour = (isoTime: string, date: Date, hour: number) => {
+  const t = new Date(isoTime);
+  return t.getFullYear() === date.getFullYear() && t.getMonth() === date.getMonth() && t.getDate() === date.getDate() && t.getHours() === hour;
+};
+
 export default function SlotManagementPage() {
   const queryClient = useQueryClient();
   const [selectedTurfId, setSelectedTurfId] = useState('');
   const [isBulkOpen, setIsBulkOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  const { data: turfsResponse, isLoading: isLoadingTurfs } = useQuery({
+  const { data: turfsResponse, isLoading: isLoadingTurfs, isError: isTurfsError, refetch: refetchTurfs } = useQuery({
     queryKey: ['my-turfs'],
     queryFn: () => api.get('/turfs/my-turfs'),
   });
 
   const turfs = (turfsResponse as any)?.data as Turf[] || [];
   const currentTurf = turfs.find(t => t._id === selectedTurfId);
+
+  // Auto-select the first turf once turfs load (effect, not during render).
+  useEffect(() => {
+    if (turfs.length > 0 && !turfs.some(t => t._id === selectedTurfId)) {
+      setSelectedTurfId(turfs[0]._id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turfs.length]);
 
   // Operating hours settings state (local to dialog)
   const [is24x7, setIs24x7] = useState(true);
@@ -80,26 +94,6 @@ export default function SlotManagementPage() {
     }
   }, [selectedTurfId, currentTurf]);
 
-  const updateTurfMutation = useMutation({
-    mutationFn: (data: any) => api.patch(`/turfs/${selectedTurfId}`, data),
-    onSuccess: () => {
-      toast.success('Settings saved');
-      queryClient.invalidateQueries({ queryKey: ['my-turfs'] });
-      setIsSettingsOpen(false);
-    }
-  });
-
-  const applyDefaultsMutation = useMutation({
-    mutationFn: async () => {
-      const weekday = currentTurf?.defaultWeekdayPrice || 1000;
-      const weekend = currentTurf?.defaultWeekendPrice || 1500;
-
-      await api.patch('/slots', { turfId: selectedTurfId, weekdayPrice: weekday, weekendPrice: weekend });
-      toast.success('Default prices applied to all available slots');
-      queryClient.invalidateQueries({ queryKey: ['slots-range', selectedTurfId] });
-    }
-  });
-
   const [viewDate, setViewDate] = useState(new Date());
   const [activeDayIndex, setActiveDayIndex] = useState(0);
 
@@ -117,67 +111,188 @@ export default function SlotManagementPage() {
     const next = new Date(viewDate);
     next.setDate(viewDate.getDate() + 7);
     setViewDate(next);
+    setActiveDayIndex(0);
   };
 
   const handlePrevWeek = () => {
     const prev = new Date(viewDate);
     prev.setDate(viewDate.getDate() - 7);
     setViewDate(prev);
+    setActiveDayIndex(0);
   };
-
-  if (turfs.length > 0 && !selectedTurfId) {
-    setSelectedTurfId(turfs[0]._id);
-  }
 
   const startDateStr = viewDate.toISOString().split('T')[0];
   const endDate = new Date(viewDate);
   endDate.setDate(viewDate.getDate() + 7);
   const endDateStr = endDate.toISOString().split('T')[0];
 
-  const { data: slotsResponse, isLoading: isLoadingSlots } = useQuery({
-    queryKey: ['slots-range', selectedTurfId, startDateStr],
+  const slotsQueryKey = useMemo(() => ['slots-range', selectedTurfId, startDateStr] as const, [selectedTurfId, startDateStr]);
+
+  const { data: slotsResponse, isLoading: isLoadingSlots, isFetching: isFetchingSlots, isError: isSlotsError, refetch: refetchSlots } = useQuery({
+    queryKey: slotsQueryKey,
     queryFn: () => api.get(`/slots?turfId=${selectedTurfId}&startDate=${startDateStr}&endDate=${endDateStr}`),
     enabled: !!selectedTurfId,
   });
 
   const slots = (slotsResponse as any)?.data as TimeSlot[] || [];
 
-  const createSlotsMutation = useMutation({
-    mutationFn: (data: any) => api.post('/slots', data),
-    onSuccess: () => {
-      toast.success('Slot updated');
-      queryClient.invalidateQueries({ queryKey: ['slots-range', selectedTurfId] });
-      setIsBulkOpen(false);
+  // ── Optimistic cache helpers ──
+  const upsertSlotsInCache = (
+    old: SlotsApiResponse | undefined,
+    updates: { startTime: string; endTime: string; price?: number; status: SlotAction }[]
+  ): SlotsApiResponse | undefined => {
+    if (!old) return old;
+    const list = [...old.data];
+    updates.forEach(u => {
+      const targetTime = new Date(u.startTime).getTime();
+      const idx = list.findIndex(s => new Date(s.startTime).getTime() === targetTime);
+      if (idx >= 0) {
+        if (list[idx].status === 'BOOKED' || list[idx].status === 'LOCKED') return; // never optimistically touch real bookings
+        list[idx] = { ...list[idx], status: u.status, price: u.price ?? list[idx].price };
+      } else {
+        list.push({
+          _id: `optimistic-${u.startTime}`,
+          turfId: selectedTurfId,
+          startTime: u.startTime,
+          endTime: u.endTime,
+          status: u.status,
+          price: u.price ?? currentTurf?.pricePerHour ?? 0,
+        });
+      }
+    });
+    return { ...old, data: list };
+  };
+
+  const snapshotSlots = async () => {
+    await queryClient.cancelQueries({ queryKey: slotsQueryKey });
+    return queryClient.getQueryData<SlotsApiResponse>(slotsQueryKey);
+  };
+
+  const rollbackSlots = (previous: SlotsApiResponse | undefined) => {
+    if (previous) queryClient.setQueryData(slotsQueryKey, previous);
+  };
+
+  const updateTurfMutation = useMutation({
+    mutationFn: (data: any) => api.patch(`/turfs/${selectedTurfId}`, data),
+    onMutate: async (data: any) => {
+      await queryClient.cancelQueries({ queryKey: ['my-turfs'] });
+      const previous = queryClient.getQueryData<{ data: Turf[] }>(['my-turfs']);
+      queryClient.setQueryData<{ data: Turf[] }>(['my-turfs'], (old) => {
+        if (!old) return old;
+        return { ...old, data: old.data.map(t => t._id === selectedTurfId ? { ...t, ...data } : t) };
+      });
+      setIsSettingsOpen(false);
+      return { previous };
     },
-    onError: (error: any) => {
+    onError: (error: any, _data, context) => {
+      if (context?.previous) queryClient.setQueryData(['my-turfs'], context.previous);
+      toast.error(error.message || 'Failed to save settings');
+    },
+    onSuccess: () => toast.success('Settings saved'),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['my-turfs'] }),
+  });
+
+  const applyDefaultsMutation = useMutation({
+    mutationFn: () => {
+      const weekday = currentTurf?.defaultWeekdayPrice || 1000;
+      const weekend = currentTurf?.defaultWeekendPrice || 1500;
+      return api.patch('/slots', { turfId: selectedTurfId, weekdayPrice: weekday, weekendPrice: weekend });
+    },
+    onMutate: async () => {
+      const previous = await snapshotSlots();
+      const weekday = currentTurf?.defaultWeekdayPrice || 1000;
+      const weekend = currentTurf?.defaultWeekendPrice || 1500;
+      queryClient.setQueryData<SlotsApiResponse>(slotsQueryKey, (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          data: old.data.map(s => {
+            if (s.status !== 'AVAILABLE') return s;
+            const day = new Date(s.startTime).getDay();
+            const isWeekend = day === 0 || day === 6;
+            return { ...s, price: isWeekend ? weekend : weekday };
+          })
+        };
+      });
+      return { previous };
+    },
+    onError: (error: any, _v, context) => {
+      rollbackSlots(context?.previous);
+      toast.error(error.message || 'Failed to apply default prices');
+    },
+    onSuccess: () => toast.success('Default prices applied to all available slots'),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['slots-range', selectedTurfId] }),
+  });
+
+  const createSlotsMutation = useMutation({
+    mutationFn: (data: { turfId: string; slots: { startTime: string; endTime: string; price: number }[] }) => api.post('/slots', data),
+    onMutate: async (data) => {
+      const previous = await snapshotSlots();
+      queryClient.setQueryData<SlotsApiResponse>(slotsQueryKey, (old) =>
+        upsertSlotsInCache(old, data.slots.map(s => ({ ...s, status: 'AVAILABLE' as const })))
+      );
+      setIsBulkOpen(false);
+      setEditingSlot(null);
+      return { previous };
+    },
+    onError: (error: any, _data, context) => {
+      rollbackSlots(context?.previous);
       toast.error(error.message || 'Failed to update slots');
-    }
+    },
+    onSuccess: () => toast.success('Slot updated'),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['slots-range', selectedTurfId] }),
   });
 
   const setStatusMutation = useMutation({
     mutationFn: (data: { turfId: string; slots: { startTime: string; endTime: string }[]; status: SlotAction }) =>
       api.patch('/slots/status', data),
+    onMutate: async (data) => {
+      const previous = await snapshotSlots();
+      queryClient.setQueryData<SlotsApiResponse>(slotsQueryKey, (old) =>
+        upsertSlotsInCache(old, data.slots.map(s => ({ ...s, status: data.status })))
+      );
+      clearSelection();
+      return { previous };
+    },
+    onError: (error: any, _data, context) => {
+      rollbackSlots(context?.previous);
+      toast.error(error.message || 'Failed to update slot status');
+    },
     onSuccess: (_data, variables) => {
       const label = STATUS_META[variables.status].label;
       toast.success(`Marked ${variables.slots.length} hour${variables.slots.length > 1 ? 's' : ''} as ${label}`);
-      queryClient.invalidateQueries({ queryKey: ['slots-range', selectedTurfId] });
-      clearSelection();
     },
-    onError: (error: any) => {
-      toast.error(error.message || 'Failed to update slot status');
-    }
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['slots-range', selectedTurfId] }),
   });
 
   const deleteSlotsMutation = useMutation({
     mutationFn: (date: string) => api.delete('/slots', { params: { turfId: selectedTurfId, date } }),
-    onSuccess: () => {
-      toast.success('Slots cleared successfully');
-      queryClient.invalidateQueries({ queryKey: ['slots-range', selectedTurfId] });
+    onMutate: async (dateIso: string) => {
+      const previous = await snapshotSlots();
+      const target = new Date(dateIso);
+      queryClient.setQueryData<SlotsApiResponse>(slotsQueryKey, (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          data: old.data.filter(s => {
+            const sd = new Date(s.startTime);
+            const sameDay = sd.getFullYear() === target.getFullYear() && sd.getMonth() === target.getMonth() && sd.getDate() === target.getDate();
+            return !(sameDay && s.status !== 'BOOKED');
+          })
+        };
+      });
+      clearSelection();
+      return { previous };
     },
-    onError: (error: any) => {
+    onError: (error: any, _date, context) => {
+      rollbackSlots(context?.previous);
       toast.error(error.message || 'Failed to clear slots');
-    }
+    },
+    onSuccess: () => toast.success('Slots cleared successfully'),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['slots-range', selectedTurfId] }),
   });
+
+  const isMutatingSlots = createSlotsMutation.isPending || setStatusMutation.isPending || deleteSlotsMutation.isPending;
 
   // Hours shown for the active day, based on the turf's operating hours
   const hours = useMemo(() => {
@@ -192,13 +307,10 @@ export default function SlotManagementPage() {
   }, [currentTurf]);
 
   const getSlotForHour = (date: Date, hour: number) => {
-    return slots.find(s => {
-      const sTime = new Date(s.startTime);
-      return sTime.getDate() === date.getDate() && sTime.getMonth() === date.getMonth() && sTime.getFullYear() === date.getFullYear() && sTime.getHours() === hour;
-    });
+    return slots.find(s => sameLocalHour(s.startTime, date, hour));
   };
 
-  // ── Drag-to-select across hour rows for the active day ──
+  // ── Drag-to-select across hour rows for the active day (mouse + touch) ──
   const [selectedHours, setSelectedHours] = useState<number[]>([]);
   const isDragging = useRef(false);
   const dragAnchor = useRef<number | null>(null);
@@ -211,12 +323,11 @@ export default function SlotManagementPage() {
 
   const isHourLocked = (date: Date, hour: number) => {
     const slot = getSlotForHour(date, hour);
-    const status = slot?.status.toUpperCase();
-    return status === 'BOOKED' || status === 'LOCKED';
+    return slot?.status === 'BOOKED' || slot?.status === 'LOCKED';
   };
 
   const handleRowMouseDown = (hour: number) => {
-    if (isHourLocked(activeDay, hour)) return;
+    if (isMutatingSlots || isHourLocked(activeDay, hour)) return;
     isDragging.current = true;
     dragAnchor.current = hour;
     setSelectedHours([hour]);
@@ -235,13 +346,30 @@ export default function SlotManagementPage() {
   };
 
   useEffect(() => {
-    const handleMouseUp = () => { isDragging.current = false; };
-    window.addEventListener('mouseup', handleMouseUp);
-    return () => window.removeEventListener('mouseup', handleMouseUp);
+    const stopDrag = () => { isDragging.current = false; };
+    window.addEventListener('mouseup', stopDrag);
+    window.addEventListener('touchend', stopDrag);
+    window.addEventListener('touchcancel', stopDrag);
+    return () => {
+      window.removeEventListener('mouseup', stopDrag);
+      window.removeEventListener('touchend', stopDrag);
+      window.removeEventListener('touchcancel', stopDrag);
+    };
   }, []);
 
+  const handleTimelineTouchMove = (e: React.TouchEvent) => {
+    if (!isDragging.current) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+    const el = document.elementFromPoint(touch.clientX, touch.clientY) as HTMLElement | null;
+    const hourAttr = el?.closest('[data-hour]')?.getAttribute('data-hour');
+    if (hourAttr !== null && hourAttr !== undefined) {
+      handleRowMouseEnter(Number(hourAttr));
+    }
+  };
+
   const applyStatusToSelection = (status: SlotAction) => {
-    if (selectedHours.length === 0) return;
+    if (selectedHours.length === 0 || isMutatingSlots) return;
     const slotPayload = selectedHours.map(h => {
       const start = new Date(activeDay);
       start.setHours(h, 0, 0, 0);
@@ -253,6 +381,11 @@ export default function SlotManagementPage() {
   };
 
   const handleBulkGenerate = () => {
+    if (bulkConfig.days < 1 || bulkConfig.startHour > bulkConfig.endHour) {
+      toast.error('Check your duration and hour range before generating.');
+      return;
+    }
+
     const newSlots = [];
     const start = new Date(bulkConfig.startDate);
 
@@ -287,6 +420,7 @@ export default function SlotManagementPage() {
   const [editingSlot, setEditingSlot] = useState<{ date: Date, hour: number, price: number } | null>(null);
 
   const openPriceEditor = (date: Date, hour: number) => {
+    if (isMutatingSlots) return;
     const isWeekend = date.getDay() === 0 || date.getDay() === 6;
     const existing = getSlotForHour(date, hour);
     const defaultPrice = isWeekend ? currentTurf?.defaultWeekendPrice : currentTurf?.defaultWeekdayPrice;
@@ -295,6 +429,10 @@ export default function SlotManagementPage() {
 
   const saveSlotPrice = (price: number) => {
     if (!editingSlot) return;
+    if (!Number.isFinite(price) || price < 0) {
+      toast.error('Enter a valid price');
+      return;
+    }
     const { date, hour } = editingSlot;
     const startTime = new Date(date);
     startTime.setHours(hour, 0, 0, 0);
@@ -309,10 +447,22 @@ export default function SlotManagementPage() {
         price: Number(price)
       }]
     });
-    setEditingSlot(null);
   };
 
   if (isLoadingTurfs) return <div className="flex justify-center py-12"><Loader2 className="animate-spin text-primary" /></div>;
+
+  if (isTurfsError) {
+    return (
+      <div className="text-center py-24 border-2 border-dashed rounded-[3rem] bg-destructive/5 border-destructive/20">
+        <AlertTriangle size={40} className="text-destructive/60 mx-auto mb-4" />
+        <h3 className="text-xl font-bold mb-2">Couldn't load your arenas</h3>
+        <p className="text-muted-foreground font-medium mb-6">Check your connection and try again.</p>
+        <Button onClick={() => refetchTurfs()} className="rounded-2xl gap-2 px-8">
+          <RefreshCw size={16} /> Retry
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
@@ -406,11 +556,12 @@ export default function SlotManagementPage() {
                           applyDefaultsMutation.mutate();
                         }
                       }}
-                      className="w-full p-4 rounded-2xl bg-primary/10 border border-primary/20 hover:bg-primary/20 transition-all flex items-center justify-between group"
+                      disabled={applyDefaultsMutation.isPending}
+                      className="w-full p-4 rounded-2xl bg-primary/10 border border-primary/20 hover:bg-primary/20 transition-all flex items-center justify-between group disabled:opacity-50"
                     >
                       <div className="flex items-center gap-3">
                         <div className="p-2 rounded-lg bg-primary text-primary-foreground">
-                          <Zap size={16} />
+                          {applyDefaultsMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
                         </div>
                         <div className="text-left">
                           <div className="text-sm font-bold">Sync Schedule</div>
@@ -425,9 +576,14 @@ export default function SlotManagementPage() {
                 <DialogFooter className="mt-10 gap-3">
                   <Button variant="ghost" onClick={() => setIsSettingsOpen(false)} className="rounded-xl font-bold h-12 flex-1">Cancel</Button>
                   <Button
+                    disabled={updateTurfMutation.isPending}
                     onClick={() => {
                       const weekday = (document.getElementById('defWeekday') as HTMLInputElement).value;
                       const weekend = (document.getElementById('defWeekend') as HTMLInputElement).value;
+                      if (!is24x7 && Number(openHour) > Number(closeHour)) {
+                        toast.error('Opening hour must be before closing hour');
+                        return;
+                      }
                       updateTurfMutation.mutate({
                         defaultWeekdayPrice: Number(weekday),
                         defaultWeekendPrice: Number(weekend),
@@ -438,7 +594,7 @@ export default function SlotManagementPage() {
                     }}
                     className="gradient-primary rounded-xl h-12 flex-1 font-bold shadow-lg shadow-primary/20"
                   >
-                    Save Changes
+                    {updateTurfMutation.isPending ? <Loader2 className="animate-spin" size={18} /> : 'Save Changes'}
                   </Button>
                 </DialogFooter>
               </div>
@@ -478,6 +634,7 @@ export default function SlotManagementPage() {
                       <Input
                         id="days"
                         type="number"
+                        min={1}
                         value={bulkConfig.days}
                         onChange={(e) => setBulkConfig({...bulkConfig, days: Number(e.target.value)})}
                         className="h-14 rounded-2xl bg-muted border-none font-bold"
@@ -488,6 +645,7 @@ export default function SlotManagementPage() {
                       <Input
                         id="startHour"
                         type="number"
+                        min={0} max={23}
                         value={bulkConfig.startHour}
                         onChange={(e) => setBulkConfig({...bulkConfig, startHour: Number(e.target.value)})}
                         className="h-14 rounded-2xl bg-muted border-none font-bold"
@@ -527,6 +685,7 @@ export default function SlotManagementPage() {
                     <Input
                       id="endHour"
                       type="number"
+                      min={0} max={23}
                       value={bulkConfig.endHour}
                       onChange={(e) => setBulkConfig({...bulkConfig, endHour: Number(e.target.value)})}
                       className="h-14 rounded-2xl bg-muted border-none font-bold"
@@ -596,13 +755,16 @@ export default function SlotManagementPage() {
             </div>
 
             <div className="flex items-center gap-4">
+              {isFetchingSlots && !isLoadingSlots && (
+                <Loader2 size={16} className="animate-spin text-muted-foreground" />
+              )}
               <div className="h-8 w-[1px] bg-border mx-2" />
               <div className="relative group">
                 <CalendarIcon size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-primary opacity-60 group-focus-within:opacity-100 transition-opacity" />
                 <input
                   type="date"
                   value={viewDate.toISOString().split('T')[0]}
-                  onChange={(e) => { setViewDate(new Date(e.target.value)); setActiveDayIndex(0); }}
+                  onChange={(e) => { if (e.target.value) { setViewDate(new Date(e.target.value)); setActiveDayIndex(0); } }}
                   className="bg-primary/5 border-2 border-transparent focus:border-primary/20 rounded-xl h-11 pl-10 pr-4 outline-none font-bold text-xs transition-all w-40"
                 />
               </div>
@@ -641,6 +803,7 @@ export default function SlotManagementPage() {
             <Button
               variant="ghost"
               size="sm"
+              disabled={deleteSlotsMutation.isPending}
               className="rounded-xl h-10 px-4 text-destructive hover:bg-destructive/10 gap-2"
               onClick={() => {
                 if (confirm(`Clear all slots for ${activeDay.toLocaleDateString()}?`)) {
@@ -648,19 +811,30 @@ export default function SlotManagementPage() {
                 }
               }}
             >
-              <Trash2 size={14} /> Clear Day
+              {deleteSlotsMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} Clear Day
             </Button>
           </div>
 
           {/* Day timeline */}
-          <div className="glass border-primary/10 rounded-[2.5rem] overflow-hidden shadow-2xl shadow-black/20 select-none">
-            {isLoadingSlots ? (
+          <div className="relative glass border-primary/10 rounded-[2.5rem] overflow-hidden shadow-2xl shadow-black/20 select-none">
+            {isSlotsError ? (
+              <div className="text-center py-16">
+                <AlertTriangle size={32} className="text-destructive/60 mx-auto mb-3" />
+                <p className="text-muted-foreground font-medium mb-4">Couldn't load this week's schedule.</p>
+                <Button variant="outline" size="sm" onClick={() => refetchSlots()} className="rounded-xl gap-2">
+                  <RefreshCw size={14} /> Retry
+                </Button>
+              </div>
+            ) : isLoadingSlots ? (
               <div className="flex justify-center py-16"><Loader2 className="animate-spin text-primary" /></div>
             ) : (
-              <div className="divide-y divide-border">
+              <div
+                className={cn('divide-y divide-border transition-opacity', isMutatingSlots && 'opacity-70 pointer-events-none')}
+                onTouchMove={handleTimelineTouchMove}
+              >
                 {hours.map(h => {
                   const slot = getSlotForHour(activeDay, h);
-                  const status = slot?.status.toUpperCase() || 'NONE';
+                  const status = slot?.status || 'NONE';
                   const meta = STATUS_META[status] || STATUS_META.NONE;
                   const isSelected = selectedHours.includes(h);
                   const isLocked = status === 'BOOKED' || status === 'LOCKED';
@@ -669,8 +843,10 @@ export default function SlotManagementPage() {
                   return (
                     <div
                       key={h}
+                      data-hour={h}
                       onMouseDown={() => handleRowMouseDown(h)}
                       onMouseEnter={() => handleRowMouseEnter(h)}
+                      onTouchStart={() => handleRowMouseDown(h)}
                       className={cn('flex items-center gap-4 px-6 py-4 transition-colors cursor-pointer',
                         isSelected ? 'bg-primary/10' : 'hover:bg-muted/40',
                         isLocked && 'cursor-not-allowed')}
@@ -721,7 +897,9 @@ export default function SlotManagementPage() {
       {/* Floating bulk-status toolbar */}
       {selectedHours.length > 0 && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-30 glass border-primary/20 rounded-full shadow-2xl px-3 py-2 flex items-center gap-2 animate-in fade-in slide-in-from-bottom-4">
-          <span className="text-xs font-black px-3 text-muted-foreground">{selectedHours.length} hour{selectedHours.length > 1 ? 's' : ''}</span>
+          <span className="text-xs font-black px-3 text-muted-foreground">
+            {setStatusMutation.isPending ? <Loader2 size={14} className="animate-spin inline" /> : `${selectedHours.length} hour${selectedHours.length > 1 ? 's' : ''}`}
+          </span>
           <Button
             size="sm"
             className="rounded-full h-9 px-4 bg-primary/10 text-primary hover:bg-primary/20 gap-1.5 font-bold"
@@ -748,7 +926,8 @@ export default function SlotManagementPage() {
           </Button>
           <button
             onClick={clearSelection}
-            className="p-2 rounded-full hover:bg-muted text-muted-foreground ml-1"
+            disabled={setStatusMutation.isPending}
+            className="p-2 rounded-full hover:bg-muted text-muted-foreground ml-1 disabled:opacity-40"
             title="Clear selection"
           >
             <X size={16} />
@@ -757,7 +936,7 @@ export default function SlotManagementPage() {
       )}
 
       {editingSlot && (
-        <Dialog open={!!editingSlot} onOpenChange={() => setEditingSlot(null)}>
+        <Dialog open={!!editingSlot} onOpenChange={(open) => { if (!open) setEditingSlot(null); }}>
           <DialogContent className="rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl sm:max-w-[400px]">
             <div className="bg-gradient-to-br from-primary/20 via-background to-background p-8">
               <DialogHeader className="mb-6">
@@ -775,6 +954,7 @@ export default function SlotManagementPage() {
                     <Input
                       type="number"
                       autoFocus
+                      min={0}
                       defaultValue={editingSlot.price}
                       id="slotPriceInput"
                       className="h-16 pl-10 rounded-2xl bg-muted border-2 border-transparent focus-visible:border-primary/30 focus-visible:ring-0 transition-all text-2xl font-black"
@@ -787,13 +967,14 @@ export default function SlotManagementPage() {
               <DialogFooter className="mt-8 gap-3">
                 <Button variant="ghost" onClick={() => setEditingSlot(null)} className="rounded-xl font-bold h-12 flex-1">Cancel</Button>
                 <Button
+                  disabled={createSlotsMutation.isPending}
                   onClick={() => {
                     const price = (document.getElementById('slotPriceInput') as HTMLInputElement).value;
                     saveSlotPrice(Number(price));
                   }}
                   className="gradient-primary rounded-xl h-12 flex-1 font-bold shadow-lg shadow-primary/20"
                 >
-                  Confirm Slot
+                  {createSlotsMutation.isPending ? <Loader2 className="animate-spin" size={18} /> : 'Confirm Slot'}
                 </Button>
               </DialogFooter>
             </div>
