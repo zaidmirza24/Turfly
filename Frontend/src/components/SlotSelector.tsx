@@ -21,12 +21,12 @@ export function SlotSelector({ slots, selectedSlotId, onSelect }: SlotSelectorPr
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap gap-4 px-2 py-3 bg-primary/5 rounded-2xl border border-primary/10">
-        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-emerald-500">
-          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]" /> 
+        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-success">
+          <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
           Available
         </div>
-        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-amber-500">
-          <div className="w-2 h-2 rounded-full bg-amber-500" /> 
+        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-warning">
+          <div className="w-2 h-2 rounded-full bg-warning" />
           Locked
         </div>
         <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-destructive">

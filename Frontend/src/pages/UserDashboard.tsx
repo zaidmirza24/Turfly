@@ -68,7 +68,7 @@ export default function UserDashboard() {
 
   return (
     <div className="container mx-auto px-4 py-10 max-w-4xl space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 glass p-8 rounded-[2.5rem] border-white/5 shadow-2xl relative overflow-hidden">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 glass p-8 rounded-[2.5rem] border-border shadow-2xl relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-1.5 gradient-primary opacity-50" />
         <div className="flex items-center gap-5">
           <div className="w-20 h-20 rounded-[2rem] bg-primary/10 flex items-center justify-center border-2 border-primary/20 shadow-xl shadow-primary/5">
@@ -84,8 +84,8 @@ export default function UserDashboard() {
         </div>
 
         <div className="flex gap-4">
-          <div className="text-center px-6 border-r border-white/5">
-            <div className="text-2xl font-black tracking-tighter text-white">{upcoming.length}</div>
+          <div className="text-center px-6 border-r border-border">
+            <div className="text-2xl font-black tracking-tighter text-foreground">{upcoming.length}</div>
             <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Upcoming</div>
           </div>
           <div className="text-center px-6">
@@ -123,7 +123,7 @@ export default function UserDashboard() {
           <TabsContent value="past" className="mt-0 outline-none">
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="grid gap-6">
               {past.length === 0 ? (
-                <div className="text-center py-24 glass rounded-[3rem] border-dashed border-white/5 opacity-50">
+                <div className="text-center py-24 glass rounded-[3rem] border-dashed border-border opacity-50">
                   <Activity size={48} className="mx-auto mb-4 opacity-10" />
                   <p className="text-muted-foreground font-black tracking-widest text-[10px] uppercase">No past history recorded</p>
                 </div>
@@ -147,7 +147,7 @@ export default function UserDashboard() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="mt-8 gap-3">
-            <AlertDialogCancel className="rounded-xl font-bold h-12 border-white/10 hover:bg-white/5">Keep Slot</AlertDialogCancel>
+            <AlertDialogCancel className="rounded-xl font-bold h-12 border-border hover:bg-muted">Keep Slot</AlertDialogCancel>
             <AlertDialogAction onClick={handleCancel} className="rounded-xl h-12 font-black bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-xl shadow-destructive/20">Confirm Cancellation</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

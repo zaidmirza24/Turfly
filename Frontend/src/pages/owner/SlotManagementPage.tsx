@@ -265,7 +265,7 @@ export default function SlotManagementPage() {
                         type="number" 
                         defaultValue={(currentTurf as any)?.defaultWeekdayPrice || 1000}
                         id="defWeekday"
-                        className="h-14 pl-10 rounded-2xl bg-white/50 border-2 border-transparent focus-visible:ring-primary focus-visible:border-primary transition-all text-lg font-bold"
+                        className="h-14 pl-10 rounded-2xl bg-muted border-2 border-transparent focus-visible:ring-primary focus-visible:border-primary transition-all text-lg font-bold"
                       />
                     </div>
                   </div>
@@ -345,8 +345,8 @@ export default function SlotManagementPage() {
                       id="startDate" 
                       type="date" 
                       value={bulkConfig.startDate} 
-                      onChange={(e) => setBulkConfig({...bulkConfig, startDate: e.target.value})} 
-                      className="h-14 rounded-2xl bg-white/50 border-none font-bold"
+                      onChange={(e) => setBulkConfig({...bulkConfig, startDate: e.target.value})}
+                      className="h-14 rounded-2xl bg-muted border-none font-bold"
                     />
                   </div>
 
@@ -357,8 +357,8 @@ export default function SlotManagementPage() {
                         id="days" 
                         type="number" 
                         value={bulkConfig.days} 
-                        onChange={(e) => setBulkConfig({...bulkConfig, days: Number(e.target.value)})} 
-                        className="h-14 rounded-2xl bg-white/50 border-none font-bold"
+                        onChange={(e) => setBulkConfig({...bulkConfig, days: Number(e.target.value)})}
+                        className="h-14 rounded-2xl bg-muted border-none font-bold"
                       />
                     </div>
                     <div className="grid gap-2">
@@ -367,8 +367,8 @@ export default function SlotManagementPage() {
                         id="startHour" 
                         type="number" 
                         value={bulkConfig.startHour} 
-                        onChange={(e) => setBulkConfig({...bulkConfig, startHour: Number(e.target.value)})} 
-                        className="h-14 rounded-2xl bg-white/50 border-none font-bold"
+                        onChange={(e) => setBulkConfig({...bulkConfig, startHour: Number(e.target.value)})}
+                        className="h-14 rounded-2xl bg-muted border-none font-bold"
                       />
                     </div>
                   </div>
@@ -384,8 +384,8 @@ export default function SlotManagementPage() {
                         <Input 
                           type="number" 
                           value={bulkConfig.weekdayPrice} 
-                          onChange={(e) => setBulkConfig({...bulkConfig, weekdayPrice: Number(e.target.value)})} 
-                          className="h-12 rounded-xl bg-white/80 border-none font-bold"
+                          onChange={(e) => setBulkConfig({...bulkConfig, weekdayPrice: Number(e.target.value)})}
+                          className="h-12 rounded-xl bg-muted border-none font-bold"
                         />
                       </div>
                       <div className="space-y-2">
@@ -393,8 +393,8 @@ export default function SlotManagementPage() {
                         <Input 
                           type="number" 
                           value={bulkConfig.weekendPrice} 
-                          onChange={(e) => setBulkConfig({...bulkConfig, weekendPrice: Number(e.target.value)})} 
-                          className="h-12 rounded-xl bg-white/80 border-primary/10 border font-bold"
+                          onChange={(e) => setBulkConfig({...bulkConfig, weekendPrice: Number(e.target.value)})}
+                          className="h-12 rounded-xl bg-muted border-primary/10 border font-bold"
                         />
                       </div>
                     </div>
@@ -406,8 +406,8 @@ export default function SlotManagementPage() {
                       id="endHour" 
                       type="number" 
                       value={bulkConfig.endHour} 
-                      onChange={(e) => setBulkConfig({...bulkConfig, endHour: Number(e.target.value)})} 
-                      className="h-14 rounded-2xl bg-white/50 border-none font-bold"
+                      onChange={(e) => setBulkConfig({...bulkConfig, endHour: Number(e.target.value)})}
+                      className="h-14 rounded-2xl bg-muted border-none font-bold"
                     />
                   </div>
                 </div>
@@ -444,8 +444,8 @@ export default function SlotManagementPage() {
               <Button 
                 key={t._id} 
                 variant={selectedTurfId === t._id ? 'default' : 'outline'} 
-                className={cn('rounded-full h-12 px-8 font-black transition-all border-white/5', 
-                  selectedTurfId === t._id ? 'gradient-primary shadow-xl shadow-primary/30 border-none scale-105' : 'glass hover:bg-white/5 hover:border-primary/30 text-muted-foreground hover:text-white')}
+                className={cn('rounded-full h-12 px-8 font-black transition-all',
+                  selectedTurfId === t._id ? 'gradient-primary shadow-xl shadow-primary/30 border-none scale-105' : 'glass hover:bg-accent hover:border-primary/30 text-muted-foreground hover:text-foreground')}
                 onClick={() => setSelectedTurfId(t._id)}
               >
                 {t.name}
@@ -453,21 +453,21 @@ export default function SlotManagementPage() {
             ))}
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-4 glass p-4 rounded-[2rem] border-white/5 shadow-xl">
+          <div className="flex flex-wrap items-center justify-between gap-4 glass p-4 rounded-[2rem] shadow-xl">
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={handlePrevWeek} className="rounded-xl h-11 px-4 hover:bg-white/5 text-muted-foreground hover:text-white">
+              <Button variant="ghost" size="sm" onClick={handlePrevWeek} className="rounded-xl h-11 px-4 hover:bg-accent text-muted-foreground hover:text-foreground">
                 <ChevronLeft size={18} className="mr-1" /> Prev Week
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => setViewDate(new Date())} className="rounded-xl h-11 px-6 hover:bg-white/5 font-black text-[10px] uppercase tracking-widest">
+              <Button variant="ghost" size="sm" onClick={() => setViewDate(new Date())} className="rounded-xl h-11 px-6 hover:bg-accent font-black text-[10px] uppercase tracking-widest">
                 Today
               </Button>
-              <Button variant="ghost" size="sm" onClick={handleNextWeek} className="rounded-xl h-11 px-4 hover:bg-white/5 text-muted-foreground hover:text-white">
+              <Button variant="ghost" size="sm" onClick={handleNextWeek} className="rounded-xl h-11 px-4 hover:bg-accent text-muted-foreground hover:text-foreground">
                 Next Week <ChevronRight size={18} className="ml-1" />
               </Button>
             </div>
 
             <div className="flex items-center gap-4">
-              <div className="h-8 w-[1px] bg-white/5 mx-2" />
+              <div className="h-8 w-[1px] bg-border mx-2" />
               <div className="relative group">
                 <CalendarIcon size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-primary opacity-60 group-focus-within:opacity-100 transition-opacity" />
                 <input 
@@ -485,15 +485,15 @@ export default function SlotManagementPage() {
               <table className="w-full text-xs border-separate border-spacing-0">
                 <thead>
                   <tr className="bg-primary/5 backdrop-blur-xl">
-                    <th className="p-6 text-left font-black tracking-tighter sticky left-0 bg-card/95 backdrop-blur-md min-w-[120px] border-r border-white/5 z-20">
+                    <th className="p-6 text-left font-black tracking-tighter sticky left-0 bg-card/95 backdrop-blur-md min-w-[120px] border-r border-border z-20">
                       <div className="flex items-center gap-2 text-primary">
                         <Zap size={14} className="animate-pulse" /> TIME
                       </div>
                     </th>
                     {days.map(d => (
-                      <th key={d.toISOString()} className="p-6 text-center min-w-[160px] border-r border-white/5 last:border-r-0 relative group/col z-10">
+                      <th key={d.toISOString()} className="p-6 text-center min-w-[160px] border-r border-border last:border-r-0 relative group/col z-10">
                         <div className="text-[10px] uppercase text-primary font-black tracking-[0.2em] mb-2 opacity-60">{d.toLocaleDateString('en', { weekday: 'long' })}</div>
-                        <div className="text-2xl font-black tracking-tighter text-white">{d.getDate()} {d.toLocaleDateString('en', { month: 'short' }).toUpperCase()}</div>
+                        <div className="text-2xl font-black tracking-tighter text-foreground">{d.getDate()} {d.toLocaleDateString('en', { month: 'short' }).toUpperCase()}</div>
                         
                         <div className="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover/col:opacity-100 transition-all">
                           <Button 
@@ -523,10 +523,10 @@ export default function SlotManagementPage() {
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-y divide-border">
                   {hours.map(h => (
-                    <tr key={h} className="group hover:bg-white/[0.02] transition-colors">
-                      <td className="p-6 font-black tracking-tighter sticky left-0 bg-card/95 backdrop-blur-sm border-r border-white/5 z-20 text-muted-foreground group-hover:text-primary transition-colors">
+                    <tr key={h} className="group hover:bg-muted/50 transition-colors">
+                      <td className="p-6 font-black tracking-tighter sticky left-0 bg-card/95 backdrop-blur-sm border-r border-border z-20 text-muted-foreground group-hover:text-primary transition-colors">
                         {h.toString().padStart(2, '0')}:00
                       </td>
                       {days.map(d => {
@@ -535,19 +535,19 @@ export default function SlotManagementPage() {
                           const sTime = new Date(s.startTime);
                           return sTime.getDate() === d.getDate() && sTime.getMonth() === d.getMonth() && sTime.getHours() === h;
                         });
-                        
+
                         const status = slot?.status.toUpperCase() || 'NONE';
-                        
+
                         return (
-                          <td key={dateStr} className="p-3 border-r border-white/5 last:border-r-0">
+                          <td key={dateStr} className="p-3 border-r border-border last:border-r-0">
                             <button
                               onClick={() => !slot && handleCellClick(d, h)}
                               disabled={status === 'BOOKED' || createSlotsMutation.isPending}
                               className={cn('w-full p-4 rounded-[1.5rem] transition-all flex flex-col items-center justify-center min-h-[80px] relative overflow-hidden group/btn border-2',
-                                status === 'NONE' ? 'bg-transparent border-dashed border-white/5 hover:border-primary/40 hover:bg-primary/10 text-muted-foreground/20' :
-                                status === 'AVAILABLE' ? 'bg-primary/10 text-primary border-primary/30 hover:bg-primary/20 hover:border-primary/50 shadow-[0_0_20px_rgba(16,185,129,0.1)]' :
-                                status === 'BOOKED' ? 'bg-red-500/10 text-red-500 border-red-500/20 cursor-not-allowed opacity-40' :
-                                'bg-amber-500/10 text-amber-500 border-amber-500/20 shadow-lg shadow-amber-500/5'
+                                status === 'NONE' ? 'bg-transparent border-dashed border-border hover:border-primary/40 hover:bg-primary/10 text-muted-foreground/20' :
+                                status === 'AVAILABLE' ? 'bg-primary/10 text-primary border-primary/30 hover:bg-primary/20 hover:border-primary/50' :
+                                status === 'BOOKED' ? 'bg-destructive/10 text-destructive border-destructive/20 cursor-not-allowed opacity-40' :
+                                'bg-warning/10 text-warning border-warning/20 shadow-lg shadow-warning/5'
                               )}
                             >
                               {status === 'NONE' ? (
@@ -559,12 +559,12 @@ export default function SlotManagementPage() {
                                     <span className="font-black text-xl tracking-tighter">{slot.price}</span>
                                   </div>
                                   <div className={cn("text-[9px] font-black tracking-widest mt-1 px-2 py-0.5 rounded-full",
-                                    status === 'AVAILABLE' ? 'bg-primary/20' : 'bg-amber-500/20'
+                                    status === 'AVAILABLE' ? 'bg-primary/20' : 'bg-warning/20'
                                   )}>
                                     {status}
                                   </div>
                                   {status === 'AVAILABLE' && (
-                                    <div className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-primary animate-pulse shadow-[0_0_12px_rgba(16,185,129,0.9)]" />
+                                    <div className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
                                   )}
                                 </>
                               )}
@@ -608,7 +608,7 @@ export default function SlotManagementPage() {
                       autoFocus
                       defaultValue={editingSlot.price}
                       id="slotPriceInput"
-                      className="h-16 pl-10 rounded-2xl bg-white/50 border-2 border-transparent focus-visible:border-primary/30 focus-visible:ring-0 transition-all text-2xl font-black"
+                      className="h-16 pl-10 rounded-2xl bg-muted border-2 border-transparent focus-visible:border-primary/30 focus-visible:ring-0 transition-all text-2xl font-black"
                       onKeyDown={(e) => e.key === 'Enter' && saveSlotPrice(Number((e.target as HTMLInputElement).value))}
                     />
                   </div>

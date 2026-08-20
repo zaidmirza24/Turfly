@@ -35,10 +35,10 @@ export default function OwnerDashboard() {
   });
 
   const stats = [
-    { label: 'Total Bookings', value: bookings.length, icon: CalendarDays, trend: '+12%', color: 'from-blue-500/20 to-blue-600/20 text-blue-400' },
-    { label: 'Total Revenue', value: `₹${revenue.toLocaleString()}`, icon: DollarSign, trend: '+8.4%', color: 'from-emerald-500/20 to-emerald-600/20 text-emerald-400' },
-    { label: 'Upcoming', value: upcoming.length, icon: TrendingUp, trend: '+2', color: 'from-amber-500/20 to-amber-600/20 text-amber-400' },
-    { label: 'Active Turfs', value: turfs.filter(t => t.isActive).length, icon: MapPin, trend: 'Stable', color: 'from-purple-500/20 to-purple-600/20 text-purple-400' },
+    { label: 'Total Bookings', value: bookings.length, icon: CalendarDays, trend: '+12%', color: 'from-blue-500/15 to-blue-600/15 text-blue-600' },
+    { label: 'Total Revenue', value: `₹${revenue.toLocaleString()}`, icon: DollarSign, trend: '+8.4%', color: 'from-success/15 to-success/25 text-success' },
+    { label: 'Upcoming', value: upcoming.length, icon: TrendingUp, trend: '+2', color: 'from-warning/15 to-warning/25 text-warning' },
+    { label: 'Active Turfs', value: turfs.filter(t => t.isActive).length, icon: MapPin, trend: 'Stable', color: 'from-purple-500/15 to-purple-600/15 text-purple-600' },
   ];
 
   // Prepare chart data
@@ -108,7 +108,7 @@ export default function OwnerDashboard() {
               </div>
             </div>
             <div className="flex items-center gap-2 pt-4 border-t border-primary/5">
-              <span className="text-[10px] font-black text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">{s.trend}</span>
+              <span className="text-[10px] font-black text-success bg-success/10 px-2 py-0.5 rounded-full">{s.trend}</span>
               <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Since last week</span>
             </div>
           </motion.div>
@@ -130,40 +130,41 @@ export default function OwnerDashboard() {
               <AreaChart data={chartData}>
                 <defs>
                   <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="var(--primary)" stopOpacity={0}/>
+                    <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0}/>
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
-                <XAxis 
-                  dataKey="date" 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: 900 }}
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                <XAxis
+                  dataKey="date"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10, fontWeight: 900 }}
                   dy={10}
                 />
-                <YAxis 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: 900 }}
+                <YAxis
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10, fontWeight: 900 }}
                 />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: 'rgba(2, 6, 23, 0.9)', 
-                    border: '1px solid rgba(255,255,255,0.1)', 
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'hsl(var(--popover))',
+                    border: '1px solid hsl(var(--border))',
                     borderRadius: '1rem',
                     fontSize: '12px',
                     fontWeight: 900
                   }}
-                  itemStyle={{ color: 'var(--primary)' }}
+                  itemStyle={{ color: 'hsl(var(--primary))' }}
+                  labelStyle={{ color: 'hsl(var(--foreground))' }}
                 />
-                <Area 
-                  type="monotone" 
-                  dataKey="revenue" 
-                  stroke="var(--primary)" 
+                <Area
+                  type="monotone"
+                  dataKey="revenue"
+                  stroke="hsl(var(--primary))"
                   strokeWidth={4}
-                  fillOpacity={1} 
-                  fill="url(#colorRevenue)" 
+                  fillOpacity={1}
+                  fill="url(#colorRevenue)"
                 />
               </AreaChart>
             </ResponsiveContainer>
@@ -173,33 +174,33 @@ export default function OwnerDashboard() {
         <div className="space-y-6">
           <div className="flex items-center justify-between px-2">
             <h2 className="text-2xl font-black tracking-tighter">Live Status</h2>
-            <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
+            <span className="flex h-2 w-2 rounded-full bg-success animate-ping" />
           </div>
-          
-          <div className="glass rounded-[2.5rem] p-6 border-white/5 space-y-4">
+
+          <div className="glass rounded-[2.5rem] p-6 space-y-4">
              <div className="space-y-4">
                {upcoming.length > 0 ? (
                  upcoming.slice(0, 3).map((b, i) => (
-                   <div key={b._id} className="flex items-center gap-4 p-4 rounded-2xl bg-white/5 border border-white/5 group hover:border-primary/20 transition-all">
+                   <div key={b._id} className="flex items-center gap-4 p-4 rounded-2xl bg-muted border group hover:border-primary/20 transition-all">
                      <div className="w-12 h-12 rounded-xl bg-primary/10 flex flex-col items-center justify-center text-primary font-black">
                         <span className="text-[10px] leading-none uppercase">{new Date((b.slotId as any)?.startTime || (b as any).startTime).toLocaleDateString(undefined, {month: 'short'})}</span>
                         <span className="text-lg leading-none">{new Date((b.slotId as any)?.startTime || (b as any).startTime).getDate()}</span>
                      </div>
                      <div>
-                       <div className="font-bold text-sm text-white">Upcoming Match</div>
+                       <div className="font-bold text-sm">Upcoming Match</div>
                        <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">{(b as any).turfId?.name}</div>
                      </div>
                    </div>
                  ))
                ) : (
-                 <div className="text-center py-10 opacity-20">
+                 <div className="text-center py-10 opacity-30">
                     <Activity size={40} className="mx-auto mb-2" />
                     <p className="text-xs font-black uppercase tracking-widest">Waiting for action</p>
                  </div>
                )}
              </div>
-             
-             <Button onClick={() => navigate('/owner/bookings')} className="w-full rounded-2xl h-12 bg-white/5 hover:bg-white/10 text-xs font-black uppercase tracking-widest border border-white/5">
+
+             <Button onClick={() => navigate('/owner/bookings')} className="w-full rounded-2xl h-12 bg-muted hover:bg-accent text-xs font-black uppercase tracking-widest border">
                 Full Activity Log
              </Button>
           </div>
@@ -269,12 +270,12 @@ export default function OwnerDashboard() {
                           <td className="p-6">
                             <span className={cn(
                               "text-[9px] px-3 py-1 rounded-full font-black uppercase tracking-widest inline-flex items-center gap-1.5 shadow-sm",
-                              b.status.toUpperCase() === 'CONFIRMED' ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' : 
-                              b.status.toUpperCase() === 'CANCELLED' ? 'bg-destructive/10 text-destructive border border-destructive/20' : 
+                              b.status.toUpperCase() === 'CONFIRMED' ? 'bg-success/10 text-success border border-success/20' :
+                              b.status.toUpperCase() === 'CANCELLED' ? 'bg-destructive/10 text-destructive border border-destructive/20' :
                               'bg-muted text-muted-foreground'
                             )}>
-                              <div className={cn("w-1.5 h-1.5 rounded-full", 
-                                b.status.toUpperCase() === 'CONFIRMED' ? "bg-emerald-500 animate-pulse" : 
+                              <div className={cn("w-1.5 h-1.5 rounded-full",
+                                b.status.toUpperCase() === 'CONFIRMED' ? "bg-success animate-pulse" :
                                 b.status.toUpperCase() === 'CANCELLED' ? "bg-destructive" : "bg-muted-foreground"
                               )} />
                               {b.status}
@@ -311,8 +312,8 @@ export default function OwnerDashboard() {
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-[10px] font-black text-primary tracking-widest uppercase">Rating</div>
-                  <div className="text-lg font-black tracking-tighter">{t.rating || '4.8'}</div>
+                  <div className="text-[10px] font-black text-primary tracking-widest uppercase">Price</div>
+                  <div className="text-lg font-black tracking-tighter">₹{t.pricePerHour}</div>
                 </div>
               </motion.div>
             ))}

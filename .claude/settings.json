@@ -11,7 +11,20 @@
       "Bash(curl -sf http://localhost:5173)",
       "Bash(curl -s \"http://localhost:5000/api/turfs\")",
       "Bash(curl -s \"http://localhost:5000/api/turfs?limit=3\")",
-      "Bash(curl -sf http://localhost:5000/api/health)"
+      "Bash(curl -sf http://localhost:5000/api/health)",
+      "Bash(powershell -Command \"Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction SilentlyContinue\")",
+      "Bash(powershell -Command 'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '\\\\''*vite*'\\\\'' -or $_.CommandLine -like '\\\\''*5173*'\\\\'' } | Select-Object ProcessId,Name,CommandLine')",
+      "Bash(powershell -Command \"Stop-Process -Id 21308,15560 -Force -ErrorAction SilentlyContinue\")",
+      "Bash(powershell -Command \"Get-NetTCPConnection -LocalPort 5173 -State Listen | Select-Object -ExpandProperty OwningProcess\")",
+      "Bash(powershell -Command \"Get-NetTCPConnection -LocalPort 5000 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess\")",
+      "Bash(powershell -Command \"Get-CimInstance Win32_Process -Filter 'ProcessId=11160' | Select-Object ProcessId,Name,CommandLine\")",
+      "Bash(powershell -Command \"Stop-Process -Id 11160 -Force\")",
+      "Bash(powershell -Command \"Get-NetTCPConnection -LocalPort 5000 -State Listen -ErrorAction SilentlyContinue\")",
+      "Bash(timeout 20 bash -c 'until curl -sf http://localhost:5000/api/health >/dev/null; do sleep 1; done')",
+      "Bash(curl -s http://localhost:5000/)",
+      "Bash(curl -s http://localhost:5000/api/health)",
+      "Bash(curl -s http://localhost:5000/api/turfs)",
+      "Bash(node scripts/testVercelHandler.mjs)"
     ]
   }
 }

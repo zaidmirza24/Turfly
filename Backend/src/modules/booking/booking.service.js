@@ -22,9 +22,16 @@ export const lockSlot = async (userId, slotId) => {
   const now = new Date();
   const lockExpiresAt = new Date(now.getTime() + LOCK_TTL_MS);
 
-  // Atomic: only succeeds if slot is currently AVAILABLE
+  // Atomic: succeeds if the slot is AVAILABLE, or if it's still marked
+  // LOCKED but that lock has already expired. The $or branch is defense in
+  // depth — a slot must be immediately re-lockable at read time regardless
+  // of how often the cleanup cron actually runs (it may not run every
+  // minute on every hosting platform, e.g. Vercel's Hobby tier).
   const lockedSlot = await Slot.findOneAndUpdate(
-    { _id: slotId, status: "AVAILABLE" },
+    {
+      _id: slotId,
+      $or: [{ status: "AVAILABLE" }, { status: "LOCKED", lockExpiresAt: { $lt: now } }],
+    },
     {
       status: "LOCKED",
       lockedBy: userId,

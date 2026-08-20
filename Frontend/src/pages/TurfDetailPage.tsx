@@ -3,11 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { SlotSelector } from '@/components/SlotSelector';
-import { StarRating } from '@/components/StarRating';
 import { useBooking } from '@/contexts/BookingContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { MapPin, Wifi, Car, Droplets, Shield, ChevronLeft, Calendar, Loader2, Info, Zap } from 'lucide-react';
+import { MapPin, Wifi, Car, Droplets, Shield, ChevronLeft, Calendar, Loader2, Info, Zap, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { TimeSlot, Turf } from '@/types';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -106,7 +105,7 @@ export default function TurfDetailPage() {
           <section>
             <div className="flex flex-wrap gap-2 mb-4">
               {sports.map(s => <Badge key={s} variant="secondary" className="capitalize px-3 py-1 rounded-full">{s}</Badge>)}
-              {turf.isActive && <Badge className="bg-emerald-500 hover:bg-emerald-600 rounded-full">Open Now</Badge>}
+              {turf.isActive && <Badge className="bg-success hover:bg-success/90 rounded-full">Open Now</Badge>}
             </div>
             <h1 className="text-3xl md:text-5xl font-black tracking-tight mb-2">{turf.name}</h1>
             <div className="flex items-center gap-2 text-muted-foreground">
@@ -114,8 +113,6 @@ export default function TurfDetailPage() {
               <span className="text-lg">{turf.location}</span>
             </div>
             <div className="mt-4 flex items-center gap-4">
-              <StarRating rating={turf.rating || 4.8} count={turf.reviewCount || 24} />
-              <div className="h-4 w-[1px] bg-border" />
               <div className="flex items-center gap-1 text-sm font-medium">
                 <Info size={16} className="text-muted-foreground" />
                 <span>Popular Venue</span>
@@ -154,7 +151,7 @@ export default function TurfDetailPage() {
             </div>
 
             <div className="grid md:grid-cols-2 gap-8 items-start">
-              <div className="glass border-white/5 rounded-[2.5rem] p-6 shadow-2xl">
+              <div className="glass rounded-[2.5rem] p-6 shadow-2xl">
                 <MonthCalendar
                   mode="single"
                   selected={selectedDate}
@@ -167,7 +164,7 @@ export default function TurfDetailPage() {
               <div className="space-y-4">
                 <div className="flex items-center justify-between bg-primary/10 p-4 rounded-2xl border border-primary/20 backdrop-blur-sm">
                   <div className="flex items-center gap-2">
-                    <div className="w-2.5 h-2.5 rounded-full bg-primary animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-primary animate-pulse" />
                     <span className="text-sm font-black tracking-tight">{selectedDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>
                   </div>
                   <Badge variant="outline" className="font-black border-primary/30 text-primary">{slots.filter(s => s.status === 'AVAILABLE').length} Slots</Badge>
@@ -231,10 +228,10 @@ export default function TurfDetailPage() {
                     
                     {(new Date(selectedSlot.startTime).getDay() === 0 || new Date(selectedSlot.startTime).getDay() === 6) && (
                       <div className="flex justify-between items-center pt-2 border-t border-primary/10">
-                        <span className="text-emerald-600 font-bold text-[10px] uppercase tracking-widest flex items-center gap-1">
+                        <span className="text-success font-bold text-[10px] uppercase tracking-widest flex items-center gap-1">
                           <Sparkles size={10} /> Weekend Rate
                         </span>
-                        <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-600 border-none text-[9px] font-black">PREMIUM</Badge>
+                        <Badge variant="secondary" className="bg-success/10 text-success border-none text-[9px] font-black">PREMIUM</Badge>
                       </div>
                     )}
                   </div>
@@ -256,7 +253,7 @@ export default function TurfDetailPage() {
               )}
             </div>
             
-            <div className="p-6 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400">
+            <div className="p-6 rounded-3xl bg-success/10 border border-success/20 text-success">
               <div className="flex gap-3">
                 <Zap size={20} className="shrink-0 mt-0.5" />
                 <div className="text-xs font-medium leading-relaxed">
