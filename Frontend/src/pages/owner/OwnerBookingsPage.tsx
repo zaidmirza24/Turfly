@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { Loader2, Search, Filter, CalendarDays, User, MapPin, Activity } from 'lucide-react';
+import { Search, Filter, CalendarDays, User, MapPin, Activity } from 'lucide-react';
 import { Booking } from '@/types';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
+import { SyncingIndicator } from '@/components/SyncingIndicator';
+import { BookingStatusBadge } from '@/components/BookingStatusBadge';
 
 export default function OwnerBookingsPage() {
   const [filter, setFilter] = useState<string>('all');
@@ -29,12 +31,7 @@ export default function OwnerBookingsPage() {
   });
 
   if (isLoading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
-        <Loader2 className="w-12 h-12 animate-spin text-primary opacity-20" />
-        <p className="text-muted-foreground font-black tracking-widest text-[10px] uppercase animate-pulse">Syncing Bookings</p>
-      </div>
-    );
+    return <SyncingIndicator label="Syncing Bookings" />;
   }
 
   return (
@@ -153,18 +150,7 @@ export default function OwnerBookingsPage() {
                           <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Paid via Wallet</div>
                         </td>
                         <td className="p-6">
-                          <span className={cn(
-                            "text-[9px] px-3 py-1.5 rounded-full font-black uppercase tracking-widest inline-flex items-center gap-1.5 shadow-sm border",
-                            b.status.toUpperCase() === 'CONFIRMED' ? 'bg-success/10 text-success border-success/20' :
-                            b.status.toUpperCase() === 'CANCELLED' ? 'bg-destructive/10 text-destructive border-destructive/20' :
-                            'bg-muted text-muted-foreground border-transparent'
-                          )}>
-                            <div className={cn("w-1.5 h-1.5 rounded-full",
-                              b.status.toUpperCase() === 'CONFIRMED' ? "bg-success animate-pulse" :
-                              b.status.toUpperCase() === 'CANCELLED' ? "bg-destructive" : "bg-muted-foreground"
-                            )} />
-                            {b.status}
-                          </span>
+                          <BookingStatusBadge status={b.status} />
                         </td>
                       </motion.tr>
                     );

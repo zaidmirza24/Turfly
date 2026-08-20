@@ -16,6 +16,11 @@ export const bookSlot = async (req, res) => {
   new ApiResponse(201, "Slot booked successfully", booking).send(res);
 };
 
+export const bookMultipleSlots = async (req, res) => {
+  const bookings = await bookingService.bookMultipleSlots(req.user._id, req.body.slotIds);
+  new ApiResponse(201, "Slots booked successfully", bookings).send(res);
+};
+
 export const getMyBookings = async (req, res) => {
   const bookings = await bookingService.getUserBookings(req.user._id);
   new ApiResponse(200, "Bookings fetched successfully", bookings).send(res);

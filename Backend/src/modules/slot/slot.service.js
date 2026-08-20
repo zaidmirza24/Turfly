@@ -2,6 +2,7 @@ import Slot from "./slot.model.js";
 import Turf from "../turf/turf.model.js";
 import ApiError from "../../common/utils/ApiError.js";
 import { releaseExpiredLocks } from "../../common/jobs/releaseExpiredLocks.js";
+import { istDateTime, istDayBounds, nextDateKey } from "../../common/utils/istTime.js";
 
 /**
  * Create slots for a turf (owner only).
@@ -47,30 +48,30 @@ const MAX_PROVISION_DAYS = 62;
 
 /**
  * Idempotently create AVAILABLE slots for every operating hour of `turf`
- * across [rangeStart, rangeEnd] that doesn't already have a Slot document.
+ * across the IST calendar days [startDateKey, endDateKey] ("YYYY-MM-DD",
+ * inclusive) that don't already have a Slot document.
  *
  * Product rule: a slot is AVAILABLE by default; the owner only has to act
  * to CLOSE an hour (or mark it FULL) — never to opt hours in one at a time.
  * Hours outside the turf's operating window are simply never generated here,
  * which is what makes them implicitly "closed" without a stored document.
+ *
+ * Day/hour math goes through istDateTime/nextDateKey (fixed IST offset)
+ * rather than Date's local setHours/setDate — those depend on the server
+ * process's own timezone, which differs between local dev and production
+ * and would silently provision the wrong hours depending on where this runs.
  */
-const provisionDefaultSlots = async (turf, rangeStart, rangeEnd) => {
-  const dayCursor = new Date(rangeStart);
-  dayCursor.setHours(0, 0, 0, 0);
-  const lastDay = new Date(rangeEnd);
-  lastDay.setHours(0, 0, 0, 0);
-
+const provisionDefaultSlots = async (turf, startDateKey, endDateKey) => {
   const openHour = turf.is24x7 === false ? (turf.openHour ?? 0) : 0;
   const closeHour = turf.is24x7 === false ? (turf.closeHour ?? 23) : 23;
 
   const wantedStartTimes = [];
-  for (let i = 0; dayCursor <= lastDay && i < MAX_PROVISION_DAYS; i++) {
+  let cursor = startDateKey;
+  for (let i = 0; cursor <= endDateKey && i < MAX_PROVISION_DAYS; i++) {
     for (let h = openHour; h <= closeHour; h++) {
-      const startTime = new Date(dayCursor);
-      startTime.setHours(h, 0, 0, 0);
-      wantedStartTimes.push(startTime);
+      wantedStartTimes.push(istDateTime(cursor, h));
     }
-    dayCursor.setDate(dayCursor.getDate() + 1);
+    cursor = nextDateKey(cursor);
   }
 
   if (wantedStartTimes.length === 0) return;
@@ -116,37 +117,39 @@ export const getSlotsByTurf = async (turfId, { date, status, startDate, endDate 
   // expiry atomically) — this only keeps what's displayed accurate.
   await releaseExpiredLocks();
 
+  // date/startDate/endDate are treated as opaque "YYYY-MM-DD" IST calendar-
+  // day keys, never parsed with `new Date(str)` — a date-only string parses
+  // as UTC midnight, and mutating it with setHours/setDate afterward uses
+  // the server process's *local* timezone, which is a different offset in
+  // local dev than in production. istDayBounds/istDateTime sidestep that
+  // entirely by working in a fixed IST offset regardless of process TZ.
   const query = { turfId };
-  let rangeStart = null;
-  let rangeEnd = null;
+  let startKey = null;
+  let endKey = null;
 
-  // Filter by specific date or range
   if (date) {
-    rangeStart = new Date(date);
-    rangeStart.setHours(0, 0, 0, 0);
-    rangeEnd = new Date(date);
-    rangeEnd.setHours(23, 59, 59, 999);
-    query.startTime = { $gte: rangeStart, $lte: rangeEnd };
+    startKey = date;
+    endKey = date;
+    const { start, end } = istDayBounds(date);
+    query.startTime = { $gte: start, $lte: end };
   } else if (startDate || endDate) {
     query.startTime = {};
     if (startDate) {
-      rangeStart = new Date(startDate);
-      rangeStart.setHours(0, 0, 0, 0);
-      query.startTime.$gte = rangeStart;
+      startKey = startDate;
+      query.startTime.$gte = istDayBounds(startDate).start;
     }
     if (endDate) {
-      rangeEnd = new Date(endDate);
-      rangeEnd.setHours(23, 59, 59, 999);
-      query.startTime.$lte = rangeEnd;
+      endKey = endDate;
+      query.startTime.$lte = istDayBounds(endDate).end;
     }
   }
 
   // Only provision defaults when the request names a bounded date/range —
   // an unbounded "all slots for this turf" query never triggers generation.
-  if (rangeStart && rangeEnd) {
+  if (startKey && endKey) {
     const turf = await Turf.findById(turfId);
     if (turf) {
-      await provisionDefaultSlots(turf, rangeStart, rangeEnd);
+      await provisionDefaultSlots(turf, startKey, endKey);
     }
   }
 
@@ -169,11 +172,8 @@ export const deleteSlots = async (ownerId, turfId, { date }) => {
   const query = { turfId, status: { $ne: "BOOKED" } };
 
   if (date) {
-    const dayStart = new Date(date);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(date);
-    dayEnd.setHours(23, 59, 59, 999);
-    query.startTime = { $gte: dayStart, $lte: dayEnd };
+    const { start, end } = istDayBounds(date);
+    query.startTime = { $gte: start, $lte: end };
   }
 
   await Slot.deleteMany(query);
@@ -243,26 +243,28 @@ export const updateSlots = async (ownerId, turfId, { date, price, weekdayPrice, 
   const baseQuery = { turfId, status: { $ne: "BOOKED" } };
 
   if (date) {
-    const dayStart = new Date(date);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(date);
-    dayEnd.setHours(23, 59, 59, 999);
-    baseQuery.startTime = { $gte: dayStart, $lte: dayEnd };
+    const { start, end } = istDayBounds(date);
+    baseQuery.startTime = { $gte: start, $lte: end };
   }
+
+  // $dayOfWeek defaults to UTC — without an explicit timezone, a slot at
+  // 12:30am IST Monday (still Sunday evening in UTC) would be classified as
+  // Sunday and get weekend pricing instead of weekday pricing.
+  const dayOfWeekIST = { $dayOfWeek: { date: "$startTime", timezone: "Asia/Kolkata" } };
 
   if (price) {
     await Slot.updateMany(baseQuery, { $set: { price } });
   } else if (weekdayPrice && weekendPrice) {
     // Update Weekdays (Mon-Fri: 1-5)
-    await Slot.updateMany({ 
-      ...baseQuery, 
-      $expr: { $and: [{ $gte: [{ $dayOfWeek: "$startTime" }, 2] }, { $lte: [{ $dayOfWeek: "$startTime" }, 6] }] } 
+    await Slot.updateMany({
+      ...baseQuery,
+      $expr: { $and: [{ $gte: [dayOfWeekIST, 2] }, { $lte: [dayOfWeekIST, 6] }] }
     }, { $set: { price: weekdayPrice } });
 
     // Update Weekends (Sat-Sun: 7, 1)
-    await Slot.updateMany({ 
-      ...baseQuery, 
-      $expr: { $or: [{ $eq: [{ $dayOfWeek: "$startTime" }, 7] }, { $eq: [{ $dayOfWeek: "$startTime" }, 1] }] } 
+    await Slot.updateMany({
+      ...baseQuery,
+      $expr: { $or: [{ $eq: [dayOfWeekIST, 7] }, { $eq: [dayOfWeekIST, 1] }] }
     }, { $set: { price: weekendPrice } });
   }
 };

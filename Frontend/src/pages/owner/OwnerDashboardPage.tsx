@@ -1,13 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import api from '@/lib/api';
-import { DollarSign, CalendarDays, TrendingUp, MapPin, Loader2, ChevronRight, Activity, AreaChart as ChartIcon } from 'lucide-react';
+import { DollarSign, CalendarDays, TrendingUp, MapPin, ChevronRight, Activity } from 'lucide-react';
 import { Booking, Turf } from '@/types';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useNavigate } from 'react-router-dom';
+import { SyncingIndicator } from '@/components/SyncingIndicator';
+import { BookingStatusBadge } from '@/components/BookingStatusBadge';
 
 export default function OwnerDashboard() {
   const navigate = useNavigate();
@@ -63,15 +65,7 @@ export default function OwnerDashboard() {
   }, [bookings]);
 
   if (isLoadingTurfs || isLoadingBookings) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
-        <div className="relative">
-          <Loader2 className="w-12 h-12 animate-spin text-primary opacity-20" />
-          <Loader2 className="w-12 h-12 animate-spin text-primary absolute top-0 left-0 [animation-delay:0.2s]" />
-        </div>
-        <p className="text-muted-foreground font-black tracking-widest text-[10px] uppercase animate-pulse">Syncing Arena Data</p>
-      </div>
-    );
+    return <SyncingIndicator label="Syncing Arena Data" double />;
   }
 
   return (
@@ -268,18 +262,7 @@ export default function OwnerDashboard() {
                           </td>
                           <td className="p-6 font-black text-lg tracking-tighter text-foreground/80">₹{b.totalAmount || b.amount}</td>
                           <td className="p-6">
-                            <span className={cn(
-                              "text-[9px] px-3 py-1 rounded-full font-black uppercase tracking-widest inline-flex items-center gap-1.5 shadow-sm",
-                              b.status.toUpperCase() === 'CONFIRMED' ? 'bg-success/10 text-success border border-success/20' :
-                              b.status.toUpperCase() === 'CANCELLED' ? 'bg-destructive/10 text-destructive border border-destructive/20' :
-                              'bg-muted text-muted-foreground'
-                            )}>
-                              <div className={cn("w-1.5 h-1.5 rounded-full",
-                                b.status.toUpperCase() === 'CONFIRMED' ? "bg-success animate-pulse" :
-                                b.status.toUpperCase() === 'CANCELLED' ? "bg-destructive" : "bg-muted-foreground"
-                              )} />
-                              {b.status}
-                            </span>
+                            <BookingStatusBadge status={b.status} />
                           </td>
                         </motion.tr>
                       );

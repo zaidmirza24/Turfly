@@ -67,6 +67,9 @@ export interface Booking {
   status: BookingStatus;
   sport: Sport;
   createdAt: string;
+  // Present when this booking was created as part of a multi-slot checkout —
+  // shared across every booking made in that same checkout, null otherwise.
+  groupId?: string | null;
 }
 
 export interface Review {

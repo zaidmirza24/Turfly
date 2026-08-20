@@ -1,42 +1,52 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
-import { TimeSlot, Booking } from '@/types';
+import { TimeSlot } from '@/types';
 import api from '@/lib/api';
 
+const getSlotId = (slot: TimeSlot) => slot._id || (slot as any).id;
+
 interface BookingContextType {
-  selectedSlot: TimeSlot | null;
-  selectSlot: (slot: TimeSlot | null) => void;
-  createBooking: (slotId: string) => Promise<any>;
+  selectedSlots: TimeSlot[];
+  toggleSlot: (slot: TimeSlot) => void;
+  clearSelection: () => void;
+  createBooking: (slotIds: string[]) => Promise<any>;
   cancelBooking: (bookingId: string) => Promise<any>;
 }
 
 const BookingContext = createContext<BookingContextType | undefined>(undefined);
 
 export function BookingProvider({ children }: { children: React.ReactNode }) {
-  const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null);
+  const [selectedSlots, setSelectedSlots] = useState<TimeSlot[]>([]);
 
-  const selectSlot = useCallback((slot: TimeSlot | null) => setSelectedSlot(slot), []);
+  const toggleSlot = useCallback((slot: TimeSlot) => {
+    const id = getSlotId(slot);
+    setSelectedSlots(prev => {
+      const exists = prev.some(s => getSlotId(s) === id);
+      if (exists) return prev.filter(s => getSlotId(s) !== id);
+      return [...prev, slot];
+    });
+  }, []);
 
-  const createBooking = useCallback(async (slotId: string) => {
-    try {
-      const res: any = await api.post('/bookings', { slotId });
-      setSelectedSlot(null);
-      return res.data;
-    } catch (error) {
-      throw error;
-    }
+  const clearSelection = useCallback(() => setSelectedSlots([]), []);
+
+  // Single slot still goes through the plain /bookings endpoint (unchanged
+  // response shape — a single Booking object); more than one goes through
+  // /bookings/multi (all-or-nothing, returns an array of Bookings sharing a
+  // groupId). Callers should normalize the result to an array either way.
+  const createBooking = useCallback(async (slotIds: string[]) => {
+    const res: any = slotIds.length === 1
+      ? await api.post('/bookings', { slotId: slotIds[0] })
+      : await api.post('/bookings/multi', { slotIds });
+    setSelectedSlots([]);
+    return res.data;
   }, []);
 
   const cancelBooking = useCallback(async (bookingId: string) => {
-    try {
-      const res: any = await api.delete(`/bookings/${bookingId}`);
-      return res.data;
-    } catch (error) {
-      throw error;
-    }
+    const res: any = await api.delete(`/bookings/${bookingId}`);
+    return res.data;
   }, []);
 
   return (
-    <BookingContext.Provider value={{ selectedSlot, selectSlot, createBooking, cancelBooking }}>
+    <BookingContext.Provider value={{ selectedSlots, toggleSlot, clearSelection, createBooking, cancelBooking }}>
       {children}
     </BookingContext.Provider>
   );

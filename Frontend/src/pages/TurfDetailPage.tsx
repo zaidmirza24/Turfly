@@ -11,6 +11,10 @@ import { cn } from '@/lib/utils';
 import { TimeSlot, Turf } from '@/types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Calendar as MonthCalendar } from '@/components/ui/calendar';
+import { toDateKey, getISTDay } from '@/lib/dateKey';
+import { toast } from 'sonner';
+
+const MAX_SLOTS_PER_BOOKING = 10;
 
 const amenityIcons: Record<string, React.ReactNode> = {
   'Parking': <Car size={16} />,
@@ -22,12 +26,12 @@ const amenityIcons: Record<string, React.ReactNode> = {
 export default function TurfDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { selectSlot, selectedSlot } = useBooking();
+  const { toggleSlot, selectedSlots, clearSelection } = useBooking();
   const [selectedImage, setSelectedImage] = useState(0);
 
   const today = new Date();
   const [selectedDate, setSelectedDate] = useState(today);
-  const dateStr = selectedDate.toISOString().split('T')[0];
+  const dateStr = toDateKey(selectedDate);
 
   const { data: turfResponse, isLoading: isLoadingTurf, error: turfError } = useQuery({
     queryKey: ['turf', id],
@@ -45,13 +49,21 @@ export default function TurfDetailPage() {
 
   const slots = (slotsResponse as any)?.data as TimeSlot[] || [];
 
-  const handleSlotSelect = (slot: TimeSlot) => {
+  const selectedSlotIds = selectedSlots.map(s => s._id || (s as any).id);
+  const totalPrice = selectedSlots.reduce((sum, s) => sum + s.price, 0);
+
+  const handleSlotToggle = (slot: TimeSlot) => {
     const slotId = slot._id || (slot as any).id;
-    selectSlot(selectedSlot?._id === slotId || (selectedSlot as any)?.id === slotId ? null : slot);
+    const alreadySelected = selectedSlotIds.includes(slotId);
+    if (!alreadySelected && selectedSlots.length >= MAX_SLOTS_PER_BOOKING) {
+      toast.error(`You can select up to ${MAX_SLOTS_PER_BOOKING} slots at a time`);
+      return;
+    }
+    toggleSlot(slot);
   };
 
   const handleProceed = () => {
-    if (selectedSlot) navigate(`/booking/${turf?._id || (turf as any).id}`);
+    if (selectedSlots.length > 0) navigate(`/booking/${turf?._id || (turf as any).id}`);
   };
 
   if (isLoadingTurf) {
@@ -181,7 +193,7 @@ export default function TurfDetailPage() {
                     {isLoadingSlots ? (
                       <div className="py-20 flex justify-center"><Loader2 className="animate-spin text-primary" size={32} /></div>
                     ) : (
-                      <SlotSelector slots={slots} selectedSlotId={selectedSlot?._id || (selectedSlot as any)?.id || null} onSelect={handleSlotSelect} />
+                      <SlotSelector slots={slots} selectedSlotIds={selectedSlotIds} onToggle={handleSlotToggle} />
                     )}
                   </motion.div>
                 </AnimatePresence>
@@ -195,7 +207,7 @@ export default function TurfDetailPage() {
             <div className="glass p-8 rounded-[2.5rem] shadow-2xl relative overflow-hidden border-primary/10">
               <div className="absolute top-0 left-0 w-full h-1.5 gradient-primary" />
               
-              {!selectedSlot ? (
+              {selectedSlots.length === 0 ? (
                 <div className="text-center mb-8 pt-2">
                   <div className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground mb-1">Starting From</div>
                   <div className="flex items-center justify-center gap-1">
@@ -205,40 +217,54 @@ export default function TurfDetailPage() {
                 </div>
               ) : (
                 <div className="text-center mb-8 pt-2">
-                  <div className="text-[10px] font-black uppercase tracking-[0.2em] text-primary mb-1">Selected Rate</div>
+                  <div className="text-[10px] font-black uppercase tracking-[0.2em] text-primary mb-1">
+                    {selectedSlots.length} Slot{selectedSlots.length > 1 ? 's' : ''} Selected
+                  </div>
                   <div className="flex items-center justify-center gap-1">
-                    <span className="text-4xl font-black text-primary tracking-tighter">₹{selectedSlot.price}</span>
+                    <span className="text-4xl font-black text-primary tracking-tighter">₹{totalPrice}</span>
                   </div>
                 </div>
               )}
 
-              {selectedSlot ? (
+              {selectedSlots.length > 0 ? (
                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-                  <div className="bg-primary/5 border border-primary/20 rounded-[2rem] p-6 space-y-4">
-                    <div className="flex justify-between items-center">
-                      <span className="text-muted-foreground font-bold text-[10px] uppercase tracking-widest">Date</span>
-                      <span className="font-black tracking-tight">{new Date(selectedSlot.startTime).toLocaleDateString(undefined, {month: 'short', day: 'numeric', weekday: 'short'})}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-muted-foreground font-bold text-[10px] uppercase tracking-widest">Time Slot</span>
-                      <span className="font-black text-primary tracking-tight">
-                        {new Date(selectedSlot.startTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                      </span>
-                    </div>
-                    
-                    {(new Date(selectedSlot.startTime).getDay() === 0 || new Date(selectedSlot.startTime).getDay() === 6) && (
-                      <div className="flex justify-between items-center pt-2 border-t border-primary/10">
-                        <span className="text-success font-bold text-[10px] uppercase tracking-widest flex items-center gap-1">
-                          <Sparkles size={10} /> Weekend Rate
-                        </span>
-                        <Badge variant="secondary" className="bg-success/10 text-success border-none text-[9px] font-black">PREMIUM</Badge>
-                      </div>
-                    )}
+                  <div className="bg-primary/5 border border-primary/20 rounded-[2rem] p-4 space-y-2 max-h-64 overflow-y-auto custom-scrollbar">
+                    {selectedSlots
+                      .slice()
+                      .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+                      .map(slot => {
+                        const slotId = slot._id || (slot as any).id;
+                        const isWeekend = getISTDay(slot.startTime) === 0 || getISTDay(slot.startTime) === 6;
+                        return (
+                          <div key={slotId} className="flex justify-between items-center p-3 rounded-xl bg-card/60">
+                            <div>
+                              <div className="font-black text-sm tracking-tight flex items-center gap-1.5">
+                                {new Date(slot.startTime).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'Asia/Kolkata' })}
+                                {' · '}
+                                {new Date(slot.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })}
+                                {isWeekend && <Sparkles size={11} className="text-success" />}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground font-bold">₹{slot.price}</div>
+                            </div>
+                            <button
+                              onClick={() => toggleSlot(slot)}
+                              className="text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:text-destructive transition-colors px-2"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        );
+                      })}
                   </div>
 
-                  <Button className="w-full h-16 rounded-2xl text-xl font-black gradient-primary shadow-xl shadow-primary/30 hover:scale-[1.02] transition-transform" onClick={handleProceed}>
-                    Confirm & Pay
-                  </Button>
+                  <div className="flex gap-3">
+                    <Button variant="ghost" className="rounded-2xl font-bold" onClick={clearSelection}>
+                      Clear
+                    </Button>
+                    <Button className="flex-1 h-16 rounded-2xl text-xl font-black gradient-primary shadow-xl shadow-primary/30 hover:scale-[1.02] transition-transform" onClick={handleProceed}>
+                      Confirm & Pay
+                    </Button>
+                  </div>
                 </motion.div>
               ) : (
                 <div className="text-center py-8 space-y-6">

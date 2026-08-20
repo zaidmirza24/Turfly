@@ -3,6 +3,7 @@ import {
   lockSlot,
   confirmSlot,
   bookSlot,
+  bookMultipleSlots,
   getMyBookings,
   getOwnerBookings,
   cancelBooking,
@@ -20,6 +21,9 @@ router.post("/confirm", protect, authorize("USER"), confirmSlot);
 
 // POST /api/bookings — instant book (lock + confirm in one call)
 router.post("/", protect, authorize("USER"), bookSlot);
+
+// POST /api/bookings/multi — instant book multiple slots (all-or-nothing)
+router.post("/multi", protect, authorize("USER"), bookMultipleSlots);
 
 // GET /api/bookings — dynamic route based on role
 router.get("/", protect, (req, res) => {

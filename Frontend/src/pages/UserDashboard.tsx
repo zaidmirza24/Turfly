@@ -7,12 +7,12 @@ import { BookingCard } from '@/components/BookingCard';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { CalendarDays, Loader2, User, Activity, ChevronRight } from 'lucide-react';
+import { CalendarDays, User, Activity, ChevronRight } from 'lucide-react';
 import { Booking } from '@/types';
-import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
+import { SyncingIndicator } from '@/components/SyncingIndicator';
 
 export default function UserDashboard() {
   const { cancelBooking } = useBooking();
@@ -58,12 +58,7 @@ export default function UserDashboard() {
   };
 
   if (isLoading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
-        <Loader2 className="w-12 h-12 animate-spin text-primary opacity-20" />
-        <p className="text-muted-foreground font-black tracking-widest text-[10px] uppercase animate-pulse">Retrieving Tickets</p>
-      </div>
-    );
+    return <SyncingIndicator label="Retrieving Tickets" />;
   }
 
   return (

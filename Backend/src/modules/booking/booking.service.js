@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import Slot from "../slot/slot.model.js";
 import Booking from "./booking.model.js";
 import Turf from "../turf/turf.model.js";
@@ -59,7 +60,7 @@ export const lockSlot = async (userId, slotId) => {
  * In Phase 3 this is where payment verification would go
  * (between lock and confirm).
  */
-export const confirmSlot = async (userId, slotId) => {
+export const confirmSlot = async (userId, slotId, groupId = null) => {
   // Atomic: only succeeds if slot is LOCKED by this user
   const slot = await Slot.findOneAndUpdate(
     {
@@ -86,6 +87,7 @@ export const confirmSlot = async (userId, slotId) => {
     slotId: slot._id,
     status: "CONFIRMED",
     amount: slot.price,
+    groupId,
   });
 
   // Link booking to slot
@@ -104,6 +106,81 @@ export const confirmSlot = async (userId, slotId) => {
 export const bookSlot = async (userId, slotId) => {
   await lockSlot(userId, slotId);
   return confirmSlot(userId, slotId);
+};
+
+const MAX_SLOTS_PER_BOOKING = 10;
+
+/**
+ * Lock several slots for one checkout, all-or-nothing.
+ *
+ * There's no multi-document transaction here — lockSlot's atomic
+ * findOneAndUpdate already makes each individual lock race-safe, and a
+ * strict DB transaction would additionally require the deployment's MongoDB
+ * to run as a replica set, which isn't guaranteed for every environment this
+ * runs in (e.g. a standalone local dev instance). Instead: lock slots one at
+ * a time, and if any fails partway through, release everything already
+ * locked by this same request before surfacing the error — so a failed
+ * multi-slot request never leaves some slots silently locked out from under
+ * other customers.
+ */
+const lockMultipleSlots = async (userId, slotIds) => {
+  const lockedSlots = [];
+  try {
+    for (const slotId of slotIds) {
+      const locked = await lockSlot(userId, slotId);
+      lockedSlots.push(locked);
+    }
+  } catch (err) {
+    await Promise.all(
+      lockedSlots.map((s) =>
+        Slot.findOneAndUpdate(
+          { _id: s._id, status: "LOCKED", lockedBy: userId },
+          { status: "AVAILABLE", lockedBy: null, lockExpiresAt: null }
+        )
+      )
+    );
+    throw err;
+  }
+  return lockedSlots;
+};
+
+/**
+ * Confirm several already-locked slots as one booking group. Same
+ * compensating-rollback approach as lockMultipleSlots — if a confirm fails
+ * partway (shouldn't happen since we hold the locks ourselves, but a lock
+ * can still expire under a very slow request), cancel whatever bookings
+ * already succeeded rather than leaving a partial group.
+ */
+const confirmMultipleSlots = async (userId, slotIds, groupId) => {
+  const bookings = [];
+  try {
+    for (const slotId of slotIds) {
+      const booking = await confirmSlot(userId, slotId, groupId);
+      bookings.push(booking);
+    }
+  } catch (err) {
+    await Promise.all(bookings.map((b) => cancelBooking(userId, b._id).catch(() => {})));
+    throw err;
+  }
+  return bookings;
+};
+
+/**
+ * Book multiple slots in one checkout (all-or-nothing). Each slot still
+ * becomes its own Booking document — they just share a groupId.
+ */
+export const bookMultipleSlots = async (userId, slotIds) => {
+  if (!Array.isArray(slotIds) || slotIds.length === 0) {
+    throw new ApiError(400, "At least one slot must be selected");
+  }
+  const uniqueIds = [...new Set(slotIds.map(String))];
+  if (uniqueIds.length > MAX_SLOTS_PER_BOOKING) {
+    throw new ApiError(400, `You can book at most ${MAX_SLOTS_PER_BOOKING} slots at a time`);
+  }
+
+  await lockMultipleSlots(userId, uniqueIds);
+  const groupId = randomUUID();
+  return confirmMultipleSlots(userId, uniqueIds, groupId);
 };
 
 /**
