@@ -89,7 +89,7 @@ export function BulkGeneratorDialog({ open, onOpenChange, selectedTurfId, curren
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="days" className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-1">Duration (Days)</Label>
                 <Input
@@ -119,7 +119,7 @@ export function BulkGeneratorDialog({ open, onOpenChange, selectedTurfId, curren
                 <Sparkles size={14} className="text-primary" />
                 <span className="text-[10px] font-black uppercase tracking-widest">Rate Configuration</span>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label className="text-[10px] font-bold opacity-50 ml-1">Weekday</Label>
                   <Input

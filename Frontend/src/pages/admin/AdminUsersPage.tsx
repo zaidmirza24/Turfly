@@ -44,43 +44,71 @@ export default function AdminUsersPage() {
           <p className="font-medium">{search ? 'No users match that search' : 'No users yet'}</p>
         </div>
       ) : (
-        <div className="border rounded-xl overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/50">
-                <tr>
-                  <th className="text-left p-3 font-medium">Name</th>
-                  <th className="text-left p-3 font-medium">Email</th>
-                  <th className="text-left p-3 font-medium">Role</th>
-                  <th className="text-left p-3 font-medium">Status</th>
-                  <th className="text-left p-3 font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(u => (
-                  <tr key={u._id} className="border-t">
-                    <td className="p-3 font-medium">{u.name}</td>
-                    <td className="p-3 text-muted-foreground">{u.email}</td>
-                    <td className="p-3"><Badge variant={u.role === 'ADMIN' ? 'default' : 'secondary'} className="capitalize">{u.role.toLowerCase()}</Badge></td>
-                    <td className="p-3"><Badge variant={u.isBanned ? 'destructive' : 'outline'}>{u.isBanned ? 'Banned' : 'Active'}</Badge></td>
-                    <td className="p-3">
-                      {u.role !== 'ADMIN' && (
-                        <Button
-                          size="sm"
-                          variant={u.isBanned ? 'outline' : 'destructive'}
-                          disabled={banMutation.isPending}
-                          onClick={() => banMutation.mutate({ id: u._id, isBanned: !u.isBanned })}
-                        >
-                          {u.isBanned ? 'Unban' : 'Ban'}
-                        </Button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <>
+          <div className="md:hidden space-y-3">
+            {filtered.map(u => (
+              <div key={u._id} className="border rounded-xl p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">{u.name}</div>
+                    <div className="text-sm text-muted-foreground truncate">{u.email}</div>
+                  </div>
+                  <Badge variant={u.role === 'ADMIN' ? 'default' : 'secondary'} className="capitalize shrink-0">{u.role.toLowerCase()}</Badge>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <Badge variant={u.isBanned ? 'destructive' : 'outline'}>{u.isBanned ? 'Banned' : 'Active'}</Badge>
+                  {u.role !== 'ADMIN' && (
+                    <Button
+                      size="sm"
+                      variant={u.isBanned ? 'outline' : 'destructive'}
+                      disabled={banMutation.isPending}
+                      onClick={() => banMutation.mutate({ id: u._id, isBanned: !u.isBanned })}
+                    >
+                      {u.isBanned ? 'Unban' : 'Ban'}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
-        </div>
+          <div className="hidden md:block border rounded-xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50">
+                  <tr>
+                    <th className="text-left p-3 font-medium">Name</th>
+                    <th className="text-left p-3 font-medium">Email</th>
+                    <th className="text-left p-3 font-medium">Role</th>
+                    <th className="text-left p-3 font-medium">Status</th>
+                    <th className="text-left p-3 font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map(u => (
+                    <tr key={u._id} className="border-t">
+                      <td className="p-3 font-medium">{u.name}</td>
+                      <td className="p-3 text-muted-foreground">{u.email}</td>
+                      <td className="p-3"><Badge variant={u.role === 'ADMIN' ? 'default' : 'secondary'} className="capitalize">{u.role.toLowerCase()}</Badge></td>
+                      <td className="p-3"><Badge variant={u.isBanned ? 'destructive' : 'outline'}>{u.isBanned ? 'Banned' : 'Active'}</Badge></td>
+                      <td className="p-3">
+                        {u.role !== 'ADMIN' && (
+                          <Button
+                            size="sm"
+                            variant={u.isBanned ? 'outline' : 'destructive'}
+                            disabled={banMutation.isPending}
+                            onClick={() => banMutation.mutate({ id: u._id, isBanned: !u.isBanned })}
+                          >
+                            {u.isBanned ? 'Unban' : 'Ban'}
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

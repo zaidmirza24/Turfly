@@ -62,7 +62,7 @@ export default function OwnerBookingsPage() {
         </div>
       </div>
 
-      <div className="flex items-center gap-3 bg-primary/5 p-2 rounded-2xl border border-primary/10 w-fit">
+      <div className="flex flex-wrap items-center gap-3 bg-primary/5 p-2 rounded-2xl border border-primary/10 w-fit">
         {['all', 'confirmed', 'cancelled'].map(s => (
           <Button 
             key={s} 
@@ -77,7 +77,67 @@ export default function OwnerBookingsPage() {
         ))}
       </div>
 
-      <div className="glass rounded-[3rem] overflow-hidden shadow-2xl shadow-black/5 border-primary/10">
+      <div className="md:hidden space-y-3">
+        {filtered.length === 0 ? (
+          <div className="glass rounded-[3rem] p-16 text-center border-primary/10">
+            <div className="flex flex-col items-center gap-4 opacity-20">
+              <Filter size={48} />
+              <div className="space-y-1">
+                <p className="text-lg font-black tracking-tighter text-foreground">No bookings found</p>
+                <p className="text-sm font-medium">Try adjusting your search or filters</p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          filtered.map((b) => {
+            const customer = bookingUser(b);
+            const turf = bookingTurf(b);
+            const startTime = bookingStartTime(b);
+            return (
+              <div key={b._id} className="glass rounded-[2rem] border-primary/10 p-5 shadow-xl shadow-black/5 space-y-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center">
+                      <User size={18} className="text-primary" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-black tracking-tight truncate">{customer?.name || 'Guest User'}</div>
+                      <div className="text-[10px] font-bold text-muted-foreground truncate">{customer?.email}</div>
+                      {customer?.phone && (
+                        <a href={`tel:${customer.phone}`} className="text-[10px] font-bold text-primary hover:underline">{customer.phone}</a>
+                      )}
+                    </div>
+                  </div>
+                  <BookingStatusBadge status={b.status} />
+                </div>
+                <div className="flex items-center gap-2">
+                  <MapPin size={14} className="text-primary/60 shrink-0" />
+                  <div>
+                    <div className="font-bold">{turf?.name || 'Standard Turf'}</div>
+                    <div className="text-[10px] font-medium text-muted-foreground">{turf?.location}</div>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <CalendarDays size={14} className="text-primary" />
+                      <span className="font-black tracking-tight">
+                        {startTime ? formatSlotDate(startTime, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                      </span>
+                    </div>
+                    <div className="text-[10px] font-black text-primary uppercase tracking-[0.2em] ml-6">
+                      {startTime ? formatSlotTime(startTime) : ''}
+                    </div>
+                  </div>
+                  <div className="font-black text-lg tracking-tighter">₹{b.amount}</div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      <div className="hidden md:block glass rounded-[3rem] overflow-hidden shadow-2xl shadow-black/5 border-primary/10">
         <div className="overflow-x-auto custom-scrollbar">
           <table className="w-full text-sm">
             <thead>

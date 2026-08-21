@@ -8,7 +8,7 @@ type Props = {
 
 export function DaySwitcher({ days, activeDayIndex, onSelect }: Props) {
   return (
-    <div className="grid grid-cols-7 gap-2">
+    <div className="flex gap-2 overflow-x-auto snap-x snap-mandatory pb-1 sm:grid sm:grid-cols-7 sm:overflow-visible sm:pb-0">
       {days.map((d, i) => {
         const isActive = i === activeDayIndex;
         const isToday = d.toDateString() === new Date().toDateString();
@@ -16,7 +16,7 @@ export function DaySwitcher({ days, activeDayIndex, onSelect }: Props) {
           <button
             key={d.toISOString()}
             onClick={() => onSelect(i)}
-            className={cn('rounded-2xl p-3 text-center transition-all border-2',
+            className={cn('rounded-2xl p-3 text-center transition-all border-2 shrink-0 min-w-[3rem] snap-start sm:shrink sm:min-w-0',
               isActive ? 'gradient-primary border-transparent shadow-lg shadow-primary/20 text-primary-foreground scale-105' :
               'glass border-transparent hover:border-primary/20 text-foreground')}
           >

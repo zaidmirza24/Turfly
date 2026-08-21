@@ -104,7 +104,7 @@ export default function TurfDetailPage() {
   const pricePerHour = turf.pricePerHour || 500;
 
   return (
-    <div className="container mx-auto px-4 py-6 max-w-6xl">
+    <div className="container mx-auto px-4 py-6 max-w-6xl pb-28 lg:pb-6">
       <Button variant="ghost" size="sm" className="gap-1 mb-6 hover:bg-primary/10" onClick={() => navigate(-1)}>
         <ChevronLeft size={16} /> Back to Search
       </Button>
@@ -190,7 +190,12 @@ export default function TurfDetailPage() {
                   mode="single"
                   selected={selectedDate}
                   onSelect={(date) => date && setSelectedDate(date)}
-                  disabled={(date) => date < new Date(new Date().setHours(0,0,0,0))}
+                  // Mirrors booking.service.js's MAX_ADVANCE_BOOKING_MS (30 days) —
+                  // kept in sync manually since the two run in different codebases.
+                  disabled={(date) =>
+                    date < new Date(new Date().setHours(0, 0, 0, 0)) ||
+                    date > new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+                  }
                   className="w-full"
                 />
               </div>
@@ -321,6 +326,42 @@ export default function TurfDetailPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/*
+        On mobile/tablet (<lg) the booking sidebar sits below all the page
+        content instead of beside it, so without this bar a customer has to
+        scroll past About/Amenities/the calendar every time before they can
+        act on price/selection. Mirrors it without duplicating booking logic.
+      */}
+      <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 glass border-t border-primary/10 shadow-2xl px-4 py-3 flex items-center justify-between gap-4">
+        {selectedSlots.length === 0 ? (
+          <>
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Starting From</div>
+              <div className="text-xl font-black text-primary tracking-tighter">₹{pricePerHour}<span className="text-xs text-muted-foreground font-medium">/hr</span></div>
+            </div>
+            <Button className="rounded-2xl font-black h-12 px-6" onClick={() => document.getElementById('booking')?.scrollIntoView({ behavior: 'smooth' })}>
+              Check Availability
+            </Button>
+          </>
+        ) : (
+          <>
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-primary">
+                {selectedSlots.length} Slot{selectedSlots.length > 1 ? 's' : ''}
+              </div>
+              <div className="text-xl font-black text-primary tracking-tighter">₹{totalPrice}</div>
+            </div>
+            <Button
+              disabled={!canBook}
+              className="flex-1 max-w-[60%] h-12 rounded-2xl font-black gradient-primary shadow-lg shadow-primary/30"
+              onClick={handleProceed}
+            >
+              {isAuthenticated ? 'Confirm & Pay' : 'Log in to book'}
+            </Button>
+          </>
+        )}
       </div>
     </div>
   );

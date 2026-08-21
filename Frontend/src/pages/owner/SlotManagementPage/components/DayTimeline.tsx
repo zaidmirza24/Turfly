@@ -65,26 +65,26 @@ export function DayTimeline({
                 onMouseDown={() => onRowMouseDown(h)}
                 onMouseEnter={() => onRowMouseEnter(h)}
                 onTouchStart={() => onRowMouseDown(h)}
-                className={cn('flex items-center gap-4 px-6 py-4 transition-colors cursor-pointer',
+                className={cn('flex items-center gap-2 sm:gap-4 px-3 sm:px-6 py-4 transition-colors cursor-pointer',
                   isSelected ? 'bg-primary/10' : 'hover:bg-muted/40',
                   isLocked && 'cursor-not-allowed')}
               >
-                <div className="w-24 shrink-0 font-black text-sm tracking-tighter text-muted-foreground">
+                <div className="w-14 sm:w-24 shrink-0 font-black text-[11px] sm:text-sm tracking-tighter text-muted-foreground">
                   {timeLabel}
                 </div>
 
-                <div className={cn('flex-1 h-11 rounded-2xl border-2 flex items-center px-4 transition-all', meta.barClass)}>
+                <div className={cn('flex-1 h-11 rounded-2xl border-2 flex items-center px-2 sm:px-4 transition-all', meta.barClass)}>
                   <span className={cn('text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-full', meta.badgeClass)}>
                     {meta.label}
                   </span>
                   {status === 'BOOKED' && (
-                    <span className="ml-auto text-[10px] font-bold text-destructive flex items-center gap-1">
-                      <UserCheck size={12} /> Customer booking
+                    <span className="ml-auto text-[10px] font-bold text-destructive flex items-center gap-1" title="Customer booking">
+                      <UserCheck size={12} /> <span className="hidden sm:inline">Customer booking</span>
                     </span>
                   )}
                 </div>
 
-                <div className="w-24 shrink-0 text-right font-black text-lg tracking-tighter flex items-center justify-end gap-2">
+                <div className="w-16 sm:w-24 shrink-0 text-right font-black text-sm sm:text-lg tracking-tighter flex items-center justify-end gap-1 sm:gap-2">
                   {slot ? <>₹{slot.price}</> : <span className="text-muted-foreground/30 text-sm">—</span>}
                   {!isLocked && (
                     <button

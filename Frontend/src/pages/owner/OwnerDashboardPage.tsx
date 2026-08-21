@@ -245,7 +245,46 @@ export default function OwnerDashboard() {
             </Button>
           </div>
           
-          <div className="glass rounded-[3rem] overflow-hidden shadow-2xl shadow-black/5 border-primary/10">
+          {bookings.length === 0 ? (
+            <div className="glass rounded-[3rem] overflow-hidden shadow-2xl shadow-black/5 border-primary/10 p-20 text-center">
+              <div className="flex flex-col items-center gap-3 opacity-30">
+                <CalendarDays size={48} />
+                <p className="font-bold tracking-tight">No bookings received yet</p>
+              </div>
+            </div>
+          ) : (
+            <div className="md:hidden space-y-3">
+              {bookings.slice(0, 6).map((b) => {
+                const turf = bookingTurf(b);
+                const customer = bookingUser(b);
+                const startTime = bookingStartTime(b);
+                return (
+                  <div key={b._id} className="glass rounded-[2rem] border-primary/10 p-5 shadow-xl shadow-black/5 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 shrink-0 rounded-xl bg-primary/10 flex items-center justify-center font-black text-primary">
+                          {turf?.name?.charAt(0) || 'A'}
+                        </div>
+                        <div className="font-black tracking-tight truncate">{turf?.name || 'Arena'}</div>
+                      </div>
+                      <BookingStatusBadge status={b.status} />
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="font-bold">{customer?.name || 'Customer'}</div>
+                        <div className="text-[10px] font-black text-primary uppercase tracking-widest mt-1">
+                          {startTime ? `${formatSlotDate(startTime)} • ${formatSlotTime(startTime)}` : '—'}
+                        </div>
+                      </div>
+                      <div className="font-black text-lg tracking-tighter text-foreground/80">₹{b.amount}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="hidden md:block glass rounded-[3rem] overflow-hidden shadow-2xl shadow-black/5 border-primary/10">
             <div className="overflow-x-auto custom-scrollbar">
               <table className="w-full text-sm">
                 <thead>
