@@ -13,8 +13,16 @@ import { UserRole } from '@/types';
 
 const allSports = ['football', 'cricket', 'badminton', 'tennis'];
 
+// Deliberately permissive: this only catches obvious typos. The field is
+// optional, and the backend does not treat phone as verified.
+const PHONE_RE = /^[0-9+\-\s]{7,15}$/;
+
 function redirectPathForRole(role: string) {
-  return role === 'OWNER' ? '/owner' : '/';
+  if (role === 'OWNER') return '/owner';
+  // ADMIN used to land on '/', with no link anywhere in the UI to /admin —
+  // the admin panel was only reachable by typing the URL.
+  if (role === 'ADMIN') return '/admin';
+  return '/';
 }
 
 /* ---------- Shared two-panel shell ---------- */
@@ -74,6 +82,11 @@ function ProgressBar({ step, total }: { step: number; total: number }) {
 export function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // Set by the route guards / the 401 interceptor: where the visitor was
+  // headed before they were asked to sign in.
+  const nextPath = searchParams.get('next');
+  const sessionExpired = searchParams.get('expired') === '1';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
@@ -91,7 +104,11 @@ export function LoginPage() {
     if (ok) {
       toast.success('Welcome back!');
       const stored = JSON.parse(localStorage.getItem('user') || '{}');
-      navigate(redirectPathForRole(stored.role));
+      // Only follow an in-app path — an attacker-supplied `next` of
+      // "https://evil.example" would otherwise be an open redirect off a page
+      // the user just typed their password into.
+      const safeNext = nextPath && nextPath.startsWith('/') && !nextPath.startsWith('//') ? nextPath : null;
+      navigate(safeNext || redirectPathForRole(stored.role), { replace: true });
     } else {
       setError('Invalid credentials. Please try again.');
     }
@@ -106,10 +123,16 @@ export function LoginPage() {
       <h1 className="font-display text-2xl font-bold tracking-tight mb-1">Log in</h1>
       <p className="text-sm text-muted-foreground mb-7">Welcome back to Turfly.</p>
 
+      {sessionExpired && (
+        <div className="bg-warning/10 border border-warning/20 text-warning text-xs font-medium p-3 rounded-lg mb-4" role="status">
+          Your session expired. Log in again to pick up where you left off.
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="space-y-1.5">
           <Label htmlFor="email" className="text-xs font-semibold">Email</Label>
-          <Input id="email" type="email" placeholder="you@email.com" className="h-11 rounded-lg"
+          <Input id="email" type="email" autoComplete="email" placeholder="you@email.com" className="h-11 rounded-lg"
             value={email} onChange={e => setEmail(e.target.value)} />
         </div>
         <div className="space-y-1.5">
@@ -118,16 +141,16 @@ export function LoginPage() {
             <Link to="/forgot-password" className="text-xs font-semibold text-primary hover:text-primary/80">Forgot?</Link>
           </div>
           <div className="relative">
-            <Input id="password" type={showPass ? 'text' : 'password'} placeholder="••••••••" className="h-11 rounded-lg pr-11"
+            <Input id="password" type={showPass ? 'text' : 'password'} autoComplete="current-password" placeholder="••••••••" className="h-11 rounded-lg pr-11"
               value={password} onChange={e => setPassword(e.target.value)} />
-            <button type="button" className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowPass(!showPass)}>
+            <button type="button" aria-label={showPass ? 'Hide password' : 'Show password'} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowPass(!showPass)}>
               {showPass ? <EyeOff size={17} /> : <Eye size={17} />}
             </button>
           </div>
         </div>
 
         {error && (
-          <div className="bg-destructive/10 border border-destructive/20 text-destructive text-xs font-medium p-3 rounded-lg">{error}</div>
+          <div role="alert" className="bg-destructive/10 border border-destructive/20 text-destructive text-xs font-medium p-3 rounded-lg">{error}</div>
         )}
 
         <Button type="submit" className="w-full h-11 rounded-lg font-semibold" disabled={loading}>
@@ -156,6 +179,7 @@ export function SignupPage() {
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState('');
@@ -163,18 +187,18 @@ export function SignupPage() {
 
   const [turfName, setTurfName] = useState('');
   const [turfLocation, setTurfLocation] = useState('');
-  const [turfSport, setTurfSport] = useState('football');
+  const [turfSports, setTurfSports] = useState<string[]>(['football']);
   const [turfPrice, setTurfPrice] = useState('');
   const [turfCreated, setTurfCreated] = useState(false);
 
-  const [favSports, setFavSports] = useState<string[]>([]);
+  const toggleTurfSport = (sport: string) => {
+    setTurfSports(prev =>
+      prev.includes(sport) ? prev.filter(s => s !== sport) : [...prev, sport]
+    );
+  };
 
   const totalSteps = role === 'OWNER' ? 4 : 3;
   const stepIndex = { role: 1, account: 2, turf: 3, done: totalSteps }[step];
-
-  const toggleFavSport = (s: string) => {
-    setFavSports(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
-  };
 
   const handleCreateAccount = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -182,8 +206,9 @@ export function SignupPage() {
     if (!name) { setError('Name is required'); return; }
     if (!email) { setError('Email is required'); return; }
     if (password.length < 6) { setError('Password must be at least 6 characters'); return; }
+    if (phone && !PHONE_RE.test(phone)) { setError('Enter a valid phone number'); return; }
     setLoading(true);
-    const ok = await signup(name, email, password, role);
+    const ok = await signup({ name, email, password, role, phone: phone || undefined });
     setLoading(false);
     if (!ok) { setError('Registration failed. Email might already be in use.'); return; }
     setStep(role === 'OWNER' ? 'turf' : 'done');
@@ -193,18 +218,19 @@ export function SignupPage() {
     e.preventDefault();
     setError('');
     if (!turfName || !turfLocation || !turfPrice) { setError('Please fill in all fields'); return; }
+    if (turfSports.length === 0) { setError('Select at least one sport'); return; }
     setLoading(true);
     try {
       await api.post('/turfs', {
         name: turfName,
         location: turfLocation,
-        sportsType: [turfSport],
+        sportsType: turfSports,
         pricePerHour: Number(turfPrice),
       });
       setTurfCreated(true);
       setStep('done');
-    } catch (err: any) {
-      setError(err.message || 'Could not create turf — you can add it later from your dashboard.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not create turf — you can add it later from your dashboard.');
     } finally {
       setLoading(false);
     }
@@ -303,24 +329,31 @@ export function SignupPage() {
               <div className="space-y-4 mb-6">
                 <div className="space-y-1.5">
                   <Label htmlFor="name" className="text-xs font-semibold">Full name</Label>
-                  <Input id="name" placeholder="Aisha Khan" className="h-11 rounded-lg" value={name} onChange={e => setName(e.target.value)} />
+                  <Input id="name" autoComplete="name" placeholder="Aisha Khan" className="h-11 rounded-lg" value={name} onChange={e => setName(e.target.value)} />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="email" className="text-xs font-semibold">Email</Label>
-                  <Input id="email" type="email" placeholder="aisha@email.com" className="h-11 rounded-lg" value={email} onChange={e => setEmail(e.target.value)} />
+                  <Input id="email" type="email" autoComplete="email" placeholder="aisha@email.com" className="h-11 rounded-lg" value={email} onChange={e => setEmail(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="phone" className="text-xs font-semibold">
+                    Phone <span className="font-normal text-muted-foreground">(optional)</span>
+                  </Label>
+                  <Input id="phone" type="tel" inputMode="tel" autoComplete="tel" placeholder="9876543210" className="h-11 rounded-lg" value={phone} onChange={e => setPhone(e.target.value)} />
+                  <p className="text-[11px] text-muted-foreground">So a venue can reach you about a booking.</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="password" className="text-xs font-semibold">Password</Label>
                   <div className="relative">
-                    <Input id="password" type={showPass ? 'text' : 'password'} placeholder="At least 6 characters" className="h-11 rounded-lg pr-11" value={password} onChange={e => setPassword(e.target.value)} />
-                    <button type="button" className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowPass(!showPass)}>
+                    <Input id="password" type={showPass ? 'text' : 'password'} autoComplete="new-password" placeholder="At least 6 characters" className="h-11 rounded-lg pr-11" value={password} onChange={e => setPassword(e.target.value)} />
+                    <button type="button" aria-label={showPass ? 'Hide password' : 'Show password'} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowPass(!showPass)}>
                       {showPass ? <EyeOff size={17} /> : <Eye size={17} />}
                     </button>
                   </div>
                 </div>
               </div>
 
-              {error && <div className="bg-destructive/10 border border-destructive/20 text-destructive text-xs font-medium p-3 rounded-lg mb-4">{error}</div>}
+              {error && <div role="alert" className="bg-destructive/10 border border-destructive/20 text-destructive text-xs font-medium p-3 rounded-lg mb-4">{error}</div>}
 
               <Button type="submit" className="w-full h-11 rounded-lg font-semibold" disabled={loading}>
                 {loading ? <Loader2 className="animate-spin" size={18} /> : 'Create account'}
@@ -345,12 +378,12 @@ export function SignupPage() {
                   <Input placeholder="e.g. Koramangala, Bangalore" className="h-11 rounded-lg" value={turfLocation} onChange={e => setTurfLocation(e.target.value)} />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold">Sport</Label>
+                  <Label className="text-xs font-semibold">Sports <span className="font-normal text-muted-foreground">(select all that apply)</span></Label>
                   <div className="flex flex-wrap gap-2">
                     {allSports.map(s => (
-                      <button key={s} type="button" onClick={() => setTurfSport(s)} className={cn(
+                      <button key={s} type="button" onClick={() => toggleTurfSport(s)} aria-pressed={turfSports.includes(s)} className={cn(
                         'px-3.5 py-2 rounded-full text-xs font-semibold border-[1.5px] capitalize transition-colors',
-                        turfSport === s ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:border-primary/30'
+                        turfSports.includes(s) ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:border-primary/30'
                       )}>{s}</button>
                     ))}
                   </div>
@@ -364,7 +397,7 @@ export function SignupPage() {
                 </div>
               </div>
 
-              {error && <div className="bg-destructive/10 border border-destructive/20 text-destructive text-xs font-medium p-3 rounded-lg mb-4">{error}</div>}
+              {error && <div role="alert" className="bg-destructive/10 border border-destructive/20 text-destructive text-xs font-medium p-3 rounded-lg mb-4">{error}</div>}
 
               <Button type="submit" className="w-full h-11 rounded-lg font-semibold mb-3" disabled={loading}>
                 {loading ? <Loader2 className="animate-spin" size={18} /> : 'Continue'}
@@ -385,15 +418,7 @@ export function SignupPage() {
               {role === 'USER' ? (
                 <>
                   <h1 className="font-display text-2xl font-bold tracking-tight mb-1">You're all set</h1>
-                  <p className="text-sm text-muted-foreground mb-5">Pick a sport or two so we can show you the right turfs first — optional.</p>
-                  <div className="flex flex-wrap gap-2 mb-7">
-                    {allSports.map(s => (
-                      <button key={s} type="button" onClick={() => toggleFavSport(s)} className={cn(
-                        'px-3.5 py-2 rounded-full text-xs font-semibold border-[1.5px] capitalize transition-colors',
-                        favSports.includes(s) ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:border-primary/30'
-                      )}>{s}</button>
-                    ))}
-                  </div>
+                  <p className="text-sm text-muted-foreground mb-7">Your account is ready — go find a slot.</p>
                   <Button type="button" className="w-full h-11 rounded-lg font-semibold mb-3 gap-2" onClick={() => navigate('/turfs')}>
                     Start exploring turfs <ArrowRight size={16} />
                   </Button>
@@ -417,7 +442,7 @@ export function SignupPage() {
                       <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary/40 to-primary/70 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
                         <div className="font-semibold text-sm truncate">{turfName}</div>
-                        <div className="text-xs text-muted-foreground truncate">{turfLocation} · {turfSport}</div>
+                        <div className="text-xs text-muted-foreground truncate">{turfLocation} · {turfSports.join(', ')}</div>
                       </div>
                       <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-warning/10 text-warning border border-warning/20 whitespace-nowrap">Pending</span>
                     </div>
@@ -439,43 +464,31 @@ export function SignupPage() {
 
 /* ---------- Forgot password ---------- */
 
+/**
+ * There is no password-reset endpoint on the backend yet (no mail transport
+ * either). This page used to accept an address and claim "Check your inbox
+ * for a reset link" — a message that is simply untrue, and one that leaves a
+ * locked-out user waiting for an email that will never arrive instead of
+ * asking for help. Until the flow exists, say so.
+ */
 export function ForgotPasswordPage() {
-  const [email, setEmail] = useState('');
-  const [sent, setSent] = useState(false);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (email) { setSent(true); toast.success('Check your inbox for a reset link.'); }
-  };
-
   return (
     <div className="min-h-screen w-full flex items-center justify-center px-4 bg-background">
-      <div className="w-full max-w-sm text-center">
-        <div className="p-9">
-          <h1 className="font-display text-2xl font-bold tracking-tight mb-1">Reset password</h1>
-          <p className="text-sm text-muted-foreground mb-7">We'll send you a link to get back in.</p>
-          {sent ? (
-            <div className="space-y-5">
-              <div className="bg-success/10 border border-success/20 text-success text-sm font-medium p-5 rounded-xl leading-relaxed">
-                Check your inbox for instructions to reset your password.
-              </div>
-              <Link to="/login">
-                <Button className="w-full h-11 rounded-lg font-semibold">Back to login</Button>
-              </Link>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-5 text-left">
-              <div className="space-y-1.5">
-                <Label htmlFor="email" className="text-xs font-semibold">Email</Label>
-                <Input id="email" type="email" placeholder="you@email.com" className="h-11 rounded-lg" value={email} onChange={e => setEmail(e.target.value)} />
-              </div>
-              <Button type="submit" className="w-full h-11 rounded-lg font-semibold">Send reset link</Button>
-              <div className="text-center">
-                <Link to="/login" className="text-xs font-semibold text-primary">Back to login</Link>
-              </div>
-            </form>
-          )}
+      <div className="w-full max-w-sm text-center p-9">
+        <h1 className="font-display text-2xl font-bold tracking-tight mb-1">Reset password</h1>
+        <p className="text-sm text-muted-foreground mb-7">
+          Self-service password reset isn't available yet.
+        </p>
+        <div className="bg-muted border text-sm text-left p-5 rounded-xl leading-relaxed mb-6">
+          If you can't get into your account, contact us at{' '}
+          <a href="mailto:support@turfly.app" className="font-semibold text-primary underline">
+            support@turfly.app
+          </a>{' '}
+          and we'll help you back in.
         </div>
+        <Link to="/login">
+          <Button className="w-full h-11 rounded-lg font-semibold">Back to login</Button>
+        </Link>
       </div>
     </div>
   );
