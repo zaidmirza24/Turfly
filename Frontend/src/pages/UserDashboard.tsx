@@ -4,10 +4,11 @@ import { apiGet } from '@/lib/api';
 import { useBooking } from '@/contexts/BookingContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { BookingCard } from '@/components/BookingCard';
+import { BookingReceiptDialog } from '@/components/BookingReceiptDialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { CalendarDays, User, Activity, ChevronRight } from 'lucide-react';
+import { CalendarDays, User, Activity, ChevronRight, XCircle } from 'lucide-react';
 import { Booking } from '@/types';
 import { bookingStartTime } from '@/lib/booking';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -22,6 +23,7 @@ export default function UserDashboard() {
   const queryClient = useQueryClient();
   const [cancelId, setCancelId] = useState<string | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [receiptBooking, setReceiptBooking] = useState<Booking | null>(null);
 
   const { data: bookingsResponse, isLoading } = useQuery({
     queryKey: ['my-bookings'],
@@ -37,17 +39,24 @@ export default function UserDashboard() {
     return b.status === 'CONFIRMED' && !!start && start.getTime() >= now;
   });
 
-  const past = bookings.filter(b => {
+  // "Completed" — played and never cancelled. Kept separate from "Cancelled"
+  // because they mean very different things to a customer glancing at their
+  // history, even though both are, mechanically, "not upcoming".
+  const completed = bookings.filter(b => {
     const start = bookingStartTime(b);
-    return b.status === 'CANCELLED' || (!!start && start.getTime() < now);
+    return b.status === 'CONFIRMED' && !!start && start.getTime() < now;
   });
+
+  const cancelled = bookings.filter(b => b.status === 'CANCELLED');
+
+  const cancelTarget = bookings.find(b => b._id === cancelId);
 
   const handleCancel = async () => {
     if (cancelId && !isCancelling) {
       setIsCancelling(true);
       try {
         await cancelBooking(cancelId);
-        toast.success('Booking cancelled successfully');
+        toast.success("Booking cancelled — you weren't charged, so there's nothing to refund");
         queryClient.invalidateQueries({ queryKey: ['my-bookings'] });
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Failed to cancel booking');
@@ -84,20 +93,27 @@ export default function UserDashboard() {
             <div className="text-2xl font-black tracking-tighter text-foreground">{upcoming.length}</div>
             <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Upcoming</div>
           </div>
+          <div className="text-center px-6 border-r border-border">
+            <div className="text-2xl font-black tracking-tighter text-muted-foreground">{completed.length}</div>
+            <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Completed</div>
+          </div>
           <div className="text-center px-6">
-            <div className="text-2xl font-black tracking-tighter text-muted-foreground">{past.length}</div>
-            <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Past</div>
+            <div className="text-2xl font-black tracking-tighter text-muted-foreground">{cancelled.length}</div>
+            <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Cancelled</div>
           </div>
         </div>
       </div>
 
       <Tabs defaultValue="upcoming" className="space-y-8">
-        <TabsList className="bg-primary/5 p-1.5 rounded-2xl border border-primary/10 h-14 w-fit">
+        <TabsList className="bg-primary/5 p-1.5 rounded-2xl border border-primary/10 h-14 w-fit flex-wrap">
           <TabsTrigger value="upcoming" className="h-full px-8 rounded-xl font-black text-xs uppercase tracking-widest transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-lg shadow-primary/20">
-            Active Plays
+            Upcoming
           </TabsTrigger>
-          <TabsTrigger value="past" className="h-full px-8 rounded-xl font-black text-xs uppercase tracking-widest transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-            History
+          <TabsTrigger value="completed" className="h-full px-8 rounded-xl font-black text-xs uppercase tracking-widest transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            Completed
+          </TabsTrigger>
+          <TabsTrigger value="cancelled" className="h-full px-8 rounded-xl font-black text-xs uppercase tracking-widest transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            Cancelled
           </TabsTrigger>
         </TabsList>
 
@@ -107,24 +123,37 @@ export default function UserDashboard() {
               {upcoming.length === 0 ? (
                 <div className="text-center py-24 glass rounded-[3rem] border-dashed border-primary/10">
                   <CalendarDays size={48} className="mx-auto mb-4 opacity-10 text-primary" />
-                  <p className="text-muted-foreground font-black tracking-widest text-[10px] uppercase">No active bookings found</p>
+                  <p className="text-muted-foreground font-black tracking-widest text-[10px] uppercase">No upcoming bookings</p>
                   <Button variant="link" className="mt-2 text-primary font-bold" onClick={() => navigate('/turfs')}>Discover Arenas <ChevronRight size={14} /></Button>
                 </div>
               ) : (
-                upcoming.map(b => <BookingCard key={b._id} booking={b} showCancel onCancel={setCancelId} />)
+                upcoming.map(b => <BookingCard key={b._id} booking={b} showCancel onCancel={setCancelId} onViewReceipt={setReceiptBooking} />)
               )}
             </motion.div>
           </TabsContent>
 
-          <TabsContent value="past" className="mt-0 outline-none">
+          <TabsContent value="completed" className="mt-0 outline-none">
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="grid gap-6">
-              {past.length === 0 ? (
+              {completed.length === 0 ? (
                 <div className="text-center py-24 glass rounded-[3rem] border-dashed border-border opacity-50">
                   <Activity size={48} className="mx-auto mb-4 opacity-10" />
-                  <p className="text-muted-foreground font-black tracking-widest text-[10px] uppercase">No past history recorded</p>
+                  <p className="text-muted-foreground font-black tracking-widest text-[10px] uppercase">No completed bookings yet</p>
                 </div>
               ) : (
-                past.map(b => <BookingCard key={b._id} booking={b} />)
+                completed.map(b => <BookingCard key={b._id} booking={b} onViewReceipt={setReceiptBooking} />)
+              )}
+            </motion.div>
+          </TabsContent>
+
+          <TabsContent value="cancelled" className="mt-0 outline-none">
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="grid gap-6">
+              {cancelled.length === 0 ? (
+                <div className="text-center py-24 glass rounded-[3rem] border-dashed border-border opacity-50">
+                  <XCircle size={48} className="mx-auto mb-4 opacity-10" />
+                  <p className="text-muted-foreground font-black tracking-widest text-[10px] uppercase">No cancelled bookings</p>
+                </div>
+              ) : (
+                cancelled.map(b => <BookingCard key={b._id} booking={b} onViewReceipt={setReceiptBooking} />)
               )}
             </motion.div>
           </TabsContent>
@@ -138,8 +167,11 @@ export default function UserDashboard() {
               <Activity size={24} />
             </div>
             <AlertDialogTitle className="text-2xl font-black tracking-tighter">Cancel Slot?</AlertDialogTitle>
-            <AlertDialogDescription className="text-muted-foreground font-medium">
-              This releases your reserved time back to the venue and can't be undone. You can only cancel before the slot starts.
+            <AlertDialogDescription className="text-muted-foreground font-medium space-y-2">
+              <span className="block">This releases your reserved time back to the venue and can't be undone. Free cancellation is only available up to 6 hours before the slot starts.</span>
+              <span className="block text-xs">
+                You paid ₹{cancelTarget?.amount ?? 0} for this slot — but since this platform doesn't process real payments yet, nothing was actually charged, so there's no refund to process either.
+              </span>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="mt-8 gap-3">
@@ -150,6 +182,8 @@ export default function UserDashboard() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <BookingReceiptDialog booking={receiptBooking} onClose={() => setReceiptBooking(null)} />
     </div>
   );
 }

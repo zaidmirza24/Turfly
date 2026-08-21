@@ -12,7 +12,7 @@ vi.mock("../slot/slot.model.js", () => ({
   },
 }));
 vi.mock("../turf/turf.model.js", () => ({
-  default: { findById: vi.fn() },
+  default: { findById: vi.fn(), findByIdAndUpdate: vi.fn() },
 }));
 vi.mock("../turf/turf.service.js", () => ({
   isTurfBookable: vi.fn(() => true),

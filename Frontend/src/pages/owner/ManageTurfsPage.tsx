@@ -7,9 +7,9 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Loader2, Images } from 'lucide-react';
+import { Plus, Loader2, Images, Pencil, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { Turf, Sport } from '@/types';
+import { Turf, Sport, VenueType } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ImageUploader, MAX_IMAGES } from '@/components/ImageUploader';
@@ -17,34 +17,193 @@ import { turfCoverImage } from '@/lib/imageUrl';
 
 const allAmenities = ['Floodlights', 'Changing Rooms', 'Parking', 'Drinking Water', 'First Aid', 'Air Conditioning', 'Cafeteria', 'Equipment Rental', 'Coaching', 'Pro Shop'];
 const allSports: Sport[] = ['football', 'cricket', 'badminton', 'tennis', 'basketball', 'volleyball'];
+const venueTypeOptions: { value: VenueType; label: string }[] = [
+  { value: 'OUTDOOR', label: 'Outdoor' },
+  { value: 'INDOOR', label: 'Indoor' },
+  { value: 'BOTH', label: 'Indoor & Outdoor' },
+];
 
-type NewTurfPayload = {
+type Faq = { question: string; answer: string };
+
+type TurfFormState = {
   name: string;
   location: string;
-  pricePerHour: number;
+  pricePerHour: string;
   sportsType: string[];
   amenities: string[];
   description: string;
   images: string[];
+  venueType: VenueType;
+  capacity: string;
+  contactPhone: string;
+  rules: string;
+  faqs: Faq[];
 };
+
+const emptyForm = (): TurfFormState => ({
+  name: '', location: '', pricePerHour: '', sportsType: [], amenities: [], description: '', images: [],
+  venueType: 'OUTDOOR', capacity: '', contactPhone: '', rules: '', faqs: [],
+});
+
+const turfToForm = (turf: Turf): TurfFormState => ({
+  name: turf.name,
+  location: turf.location,
+  pricePerHour: String(turf.pricePerHour ?? ''),
+  sportsType: turf.sportsType ?? [],
+  amenities: turf.amenities ?? [],
+  description: turf.description ?? '',
+  images: turf.images ?? [],
+  venueType: turf.venueType ?? 'OUTDOOR',
+  capacity: turf.capacity ? String(turf.capacity) : '',
+  contactPhone: turf.contactPhone ?? '',
+  rules: turf.rules ?? '',
+  faqs: turf.faqs ?? [],
+});
+
+function TurfForm({
+  formData,
+  setFormData,
+  onSubmit,
+  isSaving,
+  submitLabel,
+}: {
+  formData: TurfFormState;
+  setFormData: React.Dispatch<React.SetStateAction<TurfFormState>>;
+  onSubmit: (e: React.FormEvent) => void;
+  isSaving: boolean;
+  submitLabel: string;
+}) {
+  const toggleSport = (sport: string) => {
+    setFormData(prev => ({
+      ...prev,
+      sportsType: prev.sportsType.includes(sport) ? prev.sportsType.filter(s => s !== sport) : [...prev.sportsType, sport],
+    }));
+  };
+
+  const toggleAmenity = (amenity: string) => {
+    setFormData(prev => ({
+      ...prev,
+      amenities: prev.amenities.includes(amenity) ? prev.amenities.filter(a => a !== amenity) : [...prev.amenities, amenity],
+    }));
+  };
+
+  const updateFaq = (i: number, field: keyof Faq, value: string) => {
+    setFormData(prev => ({ ...prev, faqs: prev.faqs.map((f, idx) => idx === i ? { ...f, [field]: value } : f) }));
+  };
+  const removeFaq = (i: number) => setFormData(prev => ({ ...prev, faqs: prev.faqs.filter((_, idx) => idx !== i) }));
+  const addFaq = () => setFormData(prev => ({ ...prev, faqs: [...prev.faqs, { question: '', answer: '' }] }));
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-4 mt-2">
+      <div>
+        <Label htmlFor="name">Turf Name *</Label>
+        <Input id="name" value={formData.name} onChange={e => setFormData(p => ({ ...p, name: e.target.value }))} placeholder="e.g. Green Arena Football" />
+      </div>
+      <div>
+        <Label htmlFor="location">Location *</Label>
+        <Input id="location" value={formData.location} onChange={e => setFormData(p => ({ ...p, location: e.target.value }))} placeholder="e.g. Koramangala, Bangalore" />
+        <p className="text-[11px] text-muted-foreground mt-1">Used to place this turf on the map — be specific (area, city).</p>
+      </div>
+      <div>
+        <Label htmlFor="price">Price per Hour (₹) *</Label>
+        <Input id="price" type="number" value={formData.pricePerHour} onChange={e => setFormData(p => ({ ...p, pricePerHour: e.target.value }))} placeholder="1500" />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <Label htmlFor="capacity">Capacity (players)</Label>
+          <Input id="capacity" type="number" min={1} value={formData.capacity} onChange={e => setFormData(p => ({ ...p, capacity: e.target.value }))} placeholder="10" />
+        </div>
+        <div>
+          <Label htmlFor="phone">Contact Phone</Label>
+          <Input id="phone" type="tel" value={formData.contactPhone} onChange={e => setFormData(p => ({ ...p, contactPhone: e.target.value }))} placeholder="9876543210" />
+        </div>
+      </div>
+      <div>
+        <Label className="mb-2 block">Venue Type</Label>
+        <div className="flex flex-wrap gap-2">
+          {venueTypeOptions.map(v => (
+            <Badge
+              key={v.value}
+              variant={formData.venueType === v.value ? 'default' : 'outline'}
+              className="cursor-pointer"
+              onClick={() => setFormData(p => ({ ...p, venueType: v.value }))}
+            >
+              {v.label}
+            </Badge>
+          ))}
+        </div>
+      </div>
+      <div>
+        <Label className="mb-2 block">Sports *</Label>
+        <div className="flex flex-wrap gap-2">
+          {allSports.map(s => (
+            <Badge key={s} variant={formData.sportsType.includes(s) ? 'default' : 'outline'} className="cursor-pointer capitalize" onClick={() => toggleSport(s)}>
+              {s}
+            </Badge>
+          ))}
+        </div>
+      </div>
+      <div>
+        <Label className="mb-2 block">Amenities</Label>
+        <div className="grid grid-cols-2 gap-2">
+          {allAmenities.map(a => (
+            <label key={a} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/50 p-1 rounded transition-colors">
+              <Checkbox checked={formData.amenities.includes(a)} onCheckedChange={() => toggleAmenity(a)} />
+              {a}
+            </label>
+          ))}
+        </div>
+      </div>
+      <div>
+        <Label htmlFor="desc">Description</Label>
+        <Textarea id="desc" value={formData.description} onChange={e => setFormData(p => ({ ...p, description: e.target.value }))} placeholder="Describe your turf..." rows={3} />
+      </div>
+      <div>
+        <Label htmlFor="rules">House Rules</Label>
+        <Textarea id="rules" value={formData.rules} onChange={e => setFormData(p => ({ ...p, rules: e.target.value }))} placeholder="e.g. Non-marking shoes only, no outside food..." rows={3} />
+      </div>
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <Label>FAQs</Label>
+          <Button type="button" variant="ghost" size="sm" className="h-7 gap-1" onClick={addFaq}>
+            <Plus size={13} /> Add
+          </Button>
+        </div>
+        <div className="space-y-3">
+          {formData.faqs.map((f, i) => (
+            <div key={i} className="border rounded-lg p-3 space-y-2 relative">
+              <button type="button" onClick={() => removeFaq(i)} className="absolute top-2 right-2 text-muted-foreground hover:text-destructive" aria-label="Remove FAQ">
+                <X size={14} />
+              </button>
+              <Input placeholder="Question" value={f.question} onChange={e => updateFaq(i, 'question', e.target.value)} className="pr-8" />
+              <Textarea placeholder="Answer" value={f.answer} onChange={e => updateFaq(i, 'answer', e.target.value)} rows={2} />
+            </div>
+          ))}
+        </div>
+      </div>
+      <div>
+        <Label className="mb-2 block">Photos</Label>
+        <ImageUploader value={formData.images} onChange={images => setFormData(prev => ({ ...prev, images }))} disabled={isSaving} />
+        <p className="text-[11px] text-muted-foreground mt-2">The first photo is used as the cover image on search results.</p>
+      </div>
+      <Button type="submit" className="w-full" disabled={isSaving}>
+        {isSaving ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : null}
+        {submitLabel}
+      </Button>
+    </form>
+  );
+}
 
 export default function ManageTurfsPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingTurf, setEditingTurf] = useState<Turf | null>(null);
   /** Turf whose photos are being edited, or null when the dialog is closed. */
   const [photoTurf, setPhotoTurf] = useState<Turf | null>(null);
 
-  // Form State
-  const [formData, setFormData] = useState({
-    name: '',
-    location: '',
-    pricePerHour: '',
-    sportsType: [] as string[],
-    amenities: [] as string[],
-    description: '',
-    images: [] as string[],
-  });
+  const [formData, setFormData] = useState<TurfFormState>(emptyForm());
+  const [editFormData, setEditFormData] = useState<TurfFormState>(emptyForm());
 
   const { data: turfsResponse, isLoading } = useQuery({
     queryKey: ['my-turfs'],
@@ -53,17 +212,32 @@ export default function ManageTurfsPage() {
 
   const ownerTurfs = turfsResponse?.data ?? [];
 
+  const toPayload = (data: TurfFormState) => ({
+    ...data,
+    pricePerHour: Number(data.pricePerHour),
+    capacity: data.capacity ? Number(data.capacity) : undefined,
+    faqs: data.faqs.filter(f => f.question.trim() && f.answer.trim()),
+  });
+
   const createMutation = useMutation({
-    mutationFn: (data: NewTurfPayload) => apiPost<Turf>('/turfs', data),
+    mutationFn: (data: TurfFormState) => apiPost<Turf>('/turfs', toPayload(data)),
     onSuccess: () => {
       toast.success('Turf submitted — an admin will review it before it goes live');
       queryClient.invalidateQueries({ queryKey: ['my-turfs'] });
       setDialogOpen(false);
-      setFormData({ name: '', location: '', pricePerHour: '', sportsType: [], amenities: [], description: '', images: [] });
+      setFormData(emptyForm());
     },
-    onError: (error: Error) => {
-      toast.error(error.message || 'Failed to create turf');
-    }
+    onError: (error: Error) => toast.error(error.message || 'Failed to create turf'),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ turfId, data }: { turfId: string; data: TurfFormState }) => apiPatch<Turf>(`/turfs/${turfId}`, toPayload(data)),
+    onSuccess: () => {
+      toast.success('Turf updated');
+      queryClient.invalidateQueries({ queryKey: ['my-turfs'] });
+      setEditingTurf(null);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to update turf'),
   });
 
   const photosMutation = useMutation({
@@ -83,28 +257,22 @@ export default function ManageTurfsPage() {
       toast.error('Please fill in all required fields');
       return;
     }
-    createMutation.mutate({
-      ...formData,
-      pricePerHour: Number(formData.pricePerHour),
-    });
+    createMutation.mutate(formData);
   };
 
-  const toggleSport = (sport: string) => {
-    setFormData(prev => ({
-      ...prev,
-      sportsType: prev.sportsType.includes(sport) 
-        ? prev.sportsType.filter(s => s !== sport)
-        : [...prev.sportsType, sport]
-    }));
+  const handleUpdate = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTurf) return;
+    if (!editFormData.name || !editFormData.location || !editFormData.pricePerHour || editFormData.sportsType.length === 0) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+    updateMutation.mutate({ turfId: editingTurf._id, data: editFormData });
   };
 
-  const toggleAmenity = (amenity: string) => {
-    setFormData(prev => ({
-      ...prev,
-      amenities: prev.amenities.includes(amenity) 
-        ? prev.amenities.filter(a => a !== amenity)
-        : [...prev.amenities, amenity]
-    }));
+  const openEdit = (turf: Turf) => {
+    setEditFormData(turfToForm(turf));
+    setEditingTurf(turf);
   };
 
   if (isLoading) {
@@ -121,68 +289,7 @@ export default function ManageTurfsPage() {
           </DialogTrigger>
           <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader><DialogTitle>Add New Turf</DialogTitle></DialogHeader>
-            <form onSubmit={handleSave} className="space-y-4 mt-2">
-              <div>
-                <Label htmlFor="name">Turf Name *</Label>
-                <Input id="name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="e.g. Green Arena Football" />
-              </div>
-              <div>
-                <Label htmlFor="location">Location *</Label>
-                <Input id="location" value={formData.location} onChange={e => setFormData({...formData, location: e.target.value})} placeholder="e.g. Koramangala, Bangalore" />
-              </div>
-              <div>
-                <Label htmlFor="price">Price per Hour (₹) *</Label>
-                <Input id="price" type="number" value={formData.pricePerHour} onChange={e => setFormData({...formData, pricePerHour: e.target.value})} placeholder="1500" />
-              </div>
-              <div>
-                <Label className="mb-2 block">Sports *</Label>
-                <div className="flex flex-wrap gap-2">
-                  {allSports.map(s => (
-                    <Badge 
-                      key={s} 
-                      variant={formData.sportsType.includes(s) ? 'default' : 'outline'}
-                      className="cursor-pointer capitalize"
-                      onClick={() => toggleSport(s)}
-                    >
-                      {s}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <Label className="mb-2 block">Amenities</Label>
-                <div className="grid grid-cols-2 gap-2">
-                  {allAmenities.map(a => (
-                    <label key={a} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/50 p-1 rounded transition-colors">
-                      <Checkbox 
-                        checked={formData.amenities.includes(a)}
-                        onCheckedChange={() => toggleAmenity(a)}
-                      /> 
-                      {a}
-                    </label>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <Label htmlFor="desc">Description</Label>
-                <Textarea id="desc" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="Describe your turf..." rows={3} />
-              </div>
-              <div>
-                <Label className="mb-2 block">Photos</Label>
-                <ImageUploader
-                  value={formData.images}
-                  onChange={images => setFormData(prev => ({ ...prev, images }))}
-                  disabled={createMutation.isPending}
-                />
-                <p className="text-[11px] text-muted-foreground mt-2">
-                  The first photo is used as the cover image on search results.
-                </p>
-              </div>
-              <Button type="submit" className="w-full" disabled={createMutation.isPending}>
-                {createMutation.isPending ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : null}
-                Save Turf
-              </Button>
-            </form>
+            <TurfForm formData={formData} setFormData={setFormData} onSubmit={handleSave} isSaving={createMutation.isPending} submitLabel="Save Turf" />
           </DialogContent>
         </Dialog>
       </div>
@@ -236,12 +343,16 @@ export default function ManageTurfsPage() {
                   </div>
                 </div>
                 {/*
-                  Full turf editing and deletion still aren't built (there is no
-                  DELETE /api/turfs/:id). Photos are editable on their own
-                  because a listing without them is the single biggest gap a new
-                  owner hits; pricing and hours live in Slot Management.
+                  There is no DELETE /api/turfs/:id, so deletion still isn't
+                  offered here. Full detail editing (this dialog) and photos
+                  are separate actions for the same reason the photo dialog
+                  was split out originally — a photo-only change shouldn't
+                  risk touching the rest of the listing.
                 */}
                 <div className="flex flex-col gap-2 shrink-0">
+                  <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => openEdit(turf)}>
+                    <Pencil size={13} aria-hidden="true" /> Edit
+                  </Button>
                   <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => setPhotoTurf(turf)}>
                     <Images size={13} aria-hidden="true" /> Photos
                   </Button>
@@ -254,6 +365,13 @@ export default function ManageTurfsPage() {
           })
         )}
       </div>
+
+      <Dialog open={!!editingTurf} onOpenChange={open => !open && setEditingTurf(null)}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Edit — {editingTurf?.name}</DialogTitle></DialogHeader>
+          <TurfForm formData={editFormData} setFormData={setEditFormData} onSubmit={handleUpdate} isSaving={updateMutation.isPending} submitLabel="Save Changes" />
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!photoTurf} onOpenChange={open => !open && setPhotoTurf(null)}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">

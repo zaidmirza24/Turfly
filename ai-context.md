@@ -184,7 +184,7 @@ It arms them rather than deleting, so nothing loses its grace period.
 | Method | Route                 | Auth | Role  | Description                                  |
 |--------|-----------------------|------|-------|----------------------------------------------|
 | POST   | `/api/turfs`          | ✅   | OWNER | Create turf — always starts PENDING          |
-| GET    | `/api/turfs`          | ❌   | —     | Public listing: APPROVED + active only       |
+| GET    | `/api/turfs`          | ❌   | —     | Public listing: APPROVED + active only. Query: `sportsType` (comma list), `location`, `venueType`, `minPrice`/`maxPrice`, `amenities` (comma list), `minRating`, `sortBy`, `availableNow`, `lat`/`lng`/`maxDistanceKm` |
 | GET    | `/api/turfs/my-turfs` | ✅   | OWNER | The caller's own turfs, any approval status  |
 | GET    | `/api/turfs/:id`      | ❌   | —     | 404s unless APPROVED + active                |
 | PATCH  | `/api/turfs/:id`      | ✅   | OWNER | Own turf only; whitelisted fields            |
@@ -291,13 +291,105 @@ endpoints to secure. See "Recurring work without a scheduler" below.
   the server, a mirrored client logger, a React error boundary, and client
   error reports flowing into the same stream.
 
+## Discovery, search & venue-detail features (2026-08-21)
+
+Added the customer-facing feature set from the standard turf-booking checklist
+that didn't need payments, SMS, or a paid maps/geocoding key:
+
+- **Geolocation** — `Turf.geo` (GeoJSON Point) is best-effort geocoded
+  server-side from the owner's free-text `location` on create/update via
+  OpenStreetMap's free Nominatim API (`turf/geocode.js`), never blocking the
+  write on failure. Powers "near me" sort (`GET /turfs?lat&lng`, `$geoNear`
+  aggregation in `turf.service.js`), a distance-radius filter (`maxDistanceKm`),
+  and an embedded OpenStreetMap iframe + straight-line distance on the detail
+  page (`Frontend/src/lib/geo.ts`) — all with no API key.
+- **Ratings & reviews** — new `review` module. A review requires a real
+  `CONFIRMED` booking for that turf (`review.service.js`), one per user per
+  turf. `Turf.avgRating`/`reviewCount` are recomputed on write so listing
+  sort/filter never joins against Review at read time.
+- **Popularity** — `Turf.bookingCount` increments in `confirmSlot` (the one
+  function every booking path funnels through), backing a "Most booked" sort.
+- **Listing query** — `GET /turfs` now takes `venueType`, `minPrice`/
+  `maxPrice`, `amenities` (comma list, `$all`), `minRating`, `sortBy`
+  (`price_asc|price_desc|rating|popularity|newest`), `availableNow` (joins
+  against `Slot` for anything open in the next 2 hours), `lat`/`lng`/
+  `maxDistanceKm`. All whitelisted in `turf.controller.js` the same way the
+  original `location`/`sportsType` filters were.
+- **New turf fields**: `venueType` (INDOOR/OUTDOOR/BOTH), `capacity`,
+  `contactPhone`, `rules`, `faqs[]` — owner-editable, shown on the detail page.
+- **Frontend**: recently-viewed strip and a ratings-based "recommended"
+  section on Home (`lib/recentlyViewed.ts`, `localStorage`), search
+  autocomplete and a full filter/sort sidebar with active-filter chips on the
+  listing page, reviews UI (`components/ReviewsSection.tsx`) and an owner
+  edit-details dialog (previously only photos were editable post-creation).
+
+Deliberately **not** built, and why:
+- Offers/promotions — would need a coupon model applied at checkout, but
+  checkout is simulated (no payment layer to apply a discount against); building
+  it now would be UI over a fake transaction.
+- Duration filter — doesn't apply to this booking model: slots are
+  fixed-length per turf, set by the owner: a customer picks one or more
+  contiguous hourly slots, not an independent duration.
+- Video in the gallery — image upload is validated by magic bytes and stored
+  as MongoDB binary (2MB cap); that pipeline is deliberately not built for
+  video, which needs real object storage + streaming.
+
+## Availability, checkout & booking-lifecycle UX (2026-08-21)
+
+Extended the slot-selection, checkout, confirmation, and My Bookings screens
+against the standard booking-flow checklist, staying inside what a simulated
+payment layer can honestly claim:
+
+- **Slot selection**: Today/Tomorrow shortcuts, a calendar dot for any date
+  with an open slot (one range fetch per visible month via `/slots?
+  startDate&endDate`, not per-day), a "Peak" flame badge on slots priced
+  above that day's average (there's no explicit peak flag in the data model —
+  this reads real owner-set pricing rather than guessing).
+- **Checkout**: summary now itemizes base price per slot, states plainly that
+  no taxes/platform fee are charged (`taxes & platform fee: ₹0 — none
+  charged`), shows the cancellation policy before payment, and gates the pay
+  button on a terms/cancellation-policy checkbox. On a booking conflict (409),
+  the slot-grid and calendar-dot query caches are invalidated so retrying
+  shows real availability instead of what was true when checkout started.
+- **Confirmation screen**: duration, an honest "Paid (simulated)" status line,
+  directions (OpenStreetMap, using the geocoded `turf.geo` when present),
+  contact-venue `tel:` link, add-to-calendar (.ics download + Google Calendar
+  link), and share/copy-confirmation via the Web Share API with a clipboard
+  fallback.
+- **My Bookings**: split into Upcoming / Completed / Cancelled (previously
+  Completed and Cancelled were merged into one "past" tab); added a
+  receipt dialog (built from the booking's own data, print-styled), "Book
+  Again" (relists the turf) and "Write a Review" (deep-links to the detail
+  page's reviews section, gated the same way as everywhere else on an actual
+  CONFIRMED booking).
+- **Cancellation**: the confirm dialog and the post-cancel toast now say
+  explicitly that no charge was made and there's nothing to refund, rather
+  than staying silent on it.
+
+Deliberately **not** built, and why:
+- Coupon input, taxes, platform fee line items — there's no coupon model and
+  no real fee is charged; showing input fields or fee rows for either would
+  imply a capability that doesn't exist.
+- Refund status/amount/timeline/reference id after cancellation — no payment
+  was ever collected, so any refund UI would be fabricated data. The
+  honest equivalent (implemented) is stating plainly that nothing was charged.
+- "Payment succeeded but booking failed" recovery flow — structurally can't
+  happen today: `createBooking` is one atomic call, there's no separate
+  payment step that could succeed independently of the booking.
+- QR code on the confirmation screen — nothing at the venue can scan it (no
+  check-in tooling exists for owners/admins), so it would encode data with no
+  reader on the other end.
+- Reschedule — no `PATCH` endpoint exists for moving a booking to a different
+  slot; cancel-and-rebook is the only path today.
+- Saved payment methods / real UPI-card-netbanking integration — same gate as
+  the original payment-gateway decision (skipped for this pass).
+
 ## Still not implemented
 
 - ❌ Payment gateway — checkout is simulated; no money moves, and no commission
   is calculated or recorded anywhere despite the commission business model
 - ❌ Transactional email/SMS on booking confirm/cancel
 - ❌ Password reset (the page says so rather than pretending to send a mail)
-- ❌ Ratings and reviews — no rating exists in the data model
 - ❌ Pagination on any list endpoint
 
 ## Running the Project

@@ -2,6 +2,26 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Isolates the booking receipt when a user hits Print from its dialog —
+   without this, printing captures the whole app shell (nav, dialog chrome)
+   behind it. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #booking-receipt,
+  #booking-receipt * {
+    visibility: visible;
+  }
+  #booking-receipt {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    padding: 2rem;
+  }
+}
+
 @layer base {
   :root {
     --background: 240 20% 99%;

@@ -91,11 +91,67 @@ const turfSchema = new mongoose.Schema(
       default: "PENDING",
       index: true,
     },
+    venueType: {
+      type: String,
+      enum: ["INDOOR", "OUTDOOR", "BOTH"],
+      default: "OUTDOOR",
+    },
+    capacity: {
+      type: Number,
+      min: [1, "Capacity must be at least 1"],
+    },
+    // Shown to customers on the detail page as a way to reach the venue
+    // directly. Deliberately separate from the owner's account email/phone —
+    // that's login credentials, not a public contact line.
+    contactPhone: {
+      type: String,
+      trim: true,
+      maxlength: 20,
+    },
+    rules: {
+      type: String,
+      trim: true,
+      maxlength: [1000, "Rules cannot exceed 1000 characters"],
+      default: "",
+    },
+    faqs: {
+      type: [
+        {
+          question: { type: String, trim: true, maxlength: 200, required: true },
+          answer: { type: String, trim: true, maxlength: 1000, required: true },
+        },
+      ],
+      default: [],
+    },
+    // GeoJSON point, best-effort geocoded server-side from `location` on
+    // create/update (see turf.service.js geocodeLocation). Optional — a
+    // failed/skipped geocode just means this turf can't power distance sort,
+    // "nearby", or the map embed; it never blocks the listing itself.
+    geo: {
+      type: { type: String, enum: ["Point"], default: "Point" },
+      coordinates: { type: [Number], default: undefined }, // [lng, lat]
+    },
+    // Denormalized so listing/sort queries never need a live join against
+    // Booking/Review on every request.
+    bookingCount: {
+      type: Number,
+      default: 0,
+    },
+    avgRating: {
+      type: Number,
+      default: 0,
+    },
+    reviewCount: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,
   }
 );
+
+turfSchema.index({ geo: "2dsphere" });
 
 const Turf = mongoose.model("Turf", turfSchema);
 export default Turf;

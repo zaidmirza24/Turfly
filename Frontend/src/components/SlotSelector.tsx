@@ -1,6 +1,6 @@
 import { TimeSlot } from '@/types';
 import { cn } from '@/lib/utils';
-import { CalendarIcon, CheckCircle2, Lock, XCircle } from 'lucide-react';
+import { CalendarIcon, CheckCircle2, Lock, XCircle, Flame } from 'lucide-react';
 
 const DISABLED_STATUS_META: Record<string, { label: string; icon: typeof Lock }> = {
   BOOKED: { label: 'Booked', icon: XCircle },
@@ -37,6 +37,15 @@ export function SlotSelector({ slots: allSlots, selectedSlotIds, onToggle }: Slo
     );
   }
 
+  // A slot priced above this day's average is flagged "Peak" — the model
+  // doesn't carry an explicit peak flag, but owners already price individual
+  // slots (or the whole weekend) higher for high-demand hours, so the
+  // average is a real signal rather than a guess.
+  const bookableSlots = slots.filter(s => s.status.toUpperCase() === 'AVAILABLE');
+  const avgPrice = bookableSlots.length
+    ? bookableSlots.reduce((sum, s) => sum + s.price, 0) / bookableSlots.length
+    : 0;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap gap-4 px-2 py-3 bg-primary/5 rounded-2xl border border-primary/10">
@@ -72,6 +81,7 @@ export function SlotSelector({ slots: allSlots, selectedSlotIds, onToggle }: Slo
 
           const disabledMeta = isDisabled ? DISABLED_STATUS_META[status] : undefined;
           const DisabledIcon = disabledMeta?.icon;
+          const isPeak = status === 'AVAILABLE' && avgPrice > 0 && slot.price > avgPrice;
 
           return (
             <button
@@ -79,7 +89,7 @@ export function SlotSelector({ slots: allSlots, selectedSlotIds, onToggle }: Slo
               onClick={() => !isDisabled && onToggle(slot)}
               disabled={isDisabled}
               aria-pressed={isSelected}
-              aria-label={disabledMeta ? `${time}, ${disabledMeta.label}` : `${time}, ₹${slot.price}${isSelected ? ', selected' : ''}`}
+              aria-label={disabledMeta ? `${time}, ${disabledMeta.label}` : `${time}, ₹${slot.price}${isPeak ? ' (peak pricing)' : ''}${isSelected ? ', selected' : ''}`}
               className={cn(
                 'relative group p-4 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden',
                 isSelected ? 'gradient-primary border-transparent shadow-xl shadow-primary/20 scale-105 z-10' :
@@ -89,6 +99,12 @@ export function SlotSelector({ slots: allSlots, selectedSlotIds, onToggle }: Slo
             >
               {isSelected && (
                 <CheckCircle2 size={14} className="absolute top-2 right-2 text-primary-foreground/80" aria-hidden="true" />
+              )}
+              {isPeak && !isSelected && (
+                <div className="absolute top-2 right-2 flex items-center gap-0.5 text-warning" title="Peak pricing">
+                  <Flame size={11} aria-hidden="true" />
+                  <span className="sr-only">Peak pricing</span>
+                </div>
               )}
               <div className={cn("text-[10px] font-black uppercase tracking-widest mb-1",
                 isSelected ? "text-primary-foreground/80" : "text-muted-foreground")}>

@@ -1,8 +1,9 @@
 import { Link } from 'react-router-dom';
-import { MapPin } from 'lucide-react';
+import { MapPin, Star } from 'lucide-react';
 import { Turf } from '@/types';
 import { Badge } from '@/components/ui/badge';
 import { turfCoverImage } from '@/lib/imageUrl';
+import { formatDistance } from '@/lib/geo';
 
 interface TurfCardProps {
   turf: Turf;
@@ -12,6 +13,8 @@ export function TurfCard({ turf }: TurfCardProps) {
   const sports = turf.sportsType ?? [];
   const image = turfCoverImage(turf.images);
   const price = turf.pricePerHour || 500;
+  const hasRating = (turf.reviewCount ?? 0) > 0;
+  const distance = turf.distanceMeters != null ? formatDistance(turf.distanceMeters / 1000) : null;
 
   return (
     <Link to={`/turfs/${turf._id}`} className="group block">
@@ -34,10 +37,19 @@ export function TurfCard({ turf }: TurfCardProps) {
           </div>
         </div>
         <div className="p-5">
-          <h3 className="font-bold text-lg truncate group-hover:text-primary transition-colors tracking-tight">{turf.name}</h3>
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="font-bold text-lg truncate group-hover:text-primary transition-colors tracking-tight">{turf.name}</h3>
+            {hasRating && (
+              <span className="flex items-center gap-1 text-xs font-bold shrink-0">
+                <Star size={13} className="fill-amber-400 text-amber-400" />
+                {turf.avgRating?.toFixed(1)}
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-1.5 text-muted-foreground text-xs mt-1 font-medium">
             <MapPin size={14} className="text-primary" />
             <span className="truncate">{turf.location}</span>
+            {distance && <span className="shrink-0">· {distance}</span>}
           </div>
           <div className="flex items-center justify-end mt-5 pt-4 border-t">
             <div className="text-right">

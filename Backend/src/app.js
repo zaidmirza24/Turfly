@@ -15,6 +15,7 @@ import bookingRoutes from "./modules/booking/booking.routes.js";
 import adminRoutes from "./modules/admin/admin.routes.js";
 import imageRoutes from "./modules/image/image.routes.js";
 import logRoutes from "./modules/logs/logs.routes.js";
+import reviewRoutes from "./modules/review/review.routes.js";
 
 /**
  * Pure Express app — no app.listen(), no background jobs.
@@ -100,6 +101,7 @@ app.use("/api/bookings", bookingRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/images", imageRoutes);
 app.use("/api/logs", logRoutes);
+app.use("/api/reviews", reviewRoutes);
 
 // ── 404 Handler ──
 app.use((_req, res) => {

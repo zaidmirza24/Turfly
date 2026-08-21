@@ -1,13 +1,15 @@
 import { Booking } from '@/types';
 import { Button } from '@/components/ui/button';
 import { BookingStatusBadge } from '@/components/BookingStatusBadge';
-import { Calendar, Clock, MapPin } from 'lucide-react';
+import { Calendar, Clock, MapPin, Receipt, RotateCcw, Star } from 'lucide-react';
 import { bookingStartTime, bookingTurf } from '@/lib/booking';
 import { formatSlotDate, formatSlotTime } from '@/lib/dateKey';
+import { useNavigate } from 'react-router-dom';
 
 interface BookingCardProps {
   booking: Booking;
   onCancel?: (id: string) => void;
+  onViewReceipt?: (booking: Booking) => void;
   showCancel?: boolean;
 }
 
@@ -17,10 +19,12 @@ interface BookingCardProps {
 // server is what actually enforces the rule.
 const CANCELLATION_CUTOFF_MS = 6 * 60 * 60 * 1000;
 
-export function BookingCard({ booking, onCancel, showCancel }: BookingCardProps) {
+export function BookingCard({ booking, onCancel, onViewReceipt, showCancel }: BookingCardProps) {
+  const navigate = useNavigate();
   const turf = bookingTurf(booking);
   const startTime = bookingStartTime(booking);
   const isPast = startTime ? startTime < new Date() : false;
+  const isCompleted = booking.status === 'CONFIRMED' && isPast;
   const isPastCancellationCutoff = startTime
     ? startTime.getTime() - Date.now() < CANCELLATION_CUTOFF_MS
     : false;
@@ -49,17 +53,41 @@ export function BookingCard({ booking, onCancel, showCancel }: BookingCardProps)
           <span>{startTime ? formatSlotTime(startTime) : 'N/A'}</span>
         </div>
       </div>
+
+      {booking.status === 'CANCELLED' && (
+        <p className="text-xs text-muted-foreground mt-3 bg-muted/50 rounded-lg px-3 py-2">
+          Cancelled — no charge was made for this booking, so there's nothing to refund.
+        </p>
+      )}
+
       <div className="flex items-center justify-between mt-3 pt-3 border-t">
         <span className="font-bold text-lg">₹{booking.amount}</span>
-        {showCancel && booking.status === 'CONFIRMED' && !isPast && onCancel && (
-          isPastCancellationCutoff ? (
-            <span className="text-xs text-muted-foreground">Too close to start time to cancel</span>
-          ) : (
-            <Button variant="destructive" size="sm" onClick={() => onCancel(booking._id)}>
-              Cancel
+        <div className="flex items-center gap-2">
+          {onViewReceipt && (
+            <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => onViewReceipt(booking)}>
+              <Receipt size={14} /> Receipt
             </Button>
-          )
-        )}
+          )}
+          {isCompleted && turf?._id && (
+            <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => navigate(`/turfs/${turf._id}#reviews`)}>
+              <Star size={14} /> Review
+            </Button>
+          )}
+          {(isCompleted || booking.status === 'CANCELLED') && turf?._id && (
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate(`/turfs/${turf._id}`)}>
+              <RotateCcw size={14} /> Book Again
+            </Button>
+          )}
+          {showCancel && booking.status === 'CONFIRMED' && !isPast && onCancel && (
+            isPastCancellationCutoff ? (
+              <span className="text-xs text-muted-foreground">Too close to start time to cancel</span>
+            ) : (
+              <Button variant="destructive" size="sm" onClick={() => onCancel(booking._id)}>
+                Cancel
+              </Button>
+            )
+          )}
+        </div>
       </div>
     </div>
   );

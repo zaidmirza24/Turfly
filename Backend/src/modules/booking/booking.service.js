@@ -179,6 +179,11 @@ export const confirmSlot = async (userId, slotId, groupId = null) => {
   // Link booking to slot
   await Slot.findByIdAndUpdate(slotId, { bookingId: booking._id });
 
+  // Denormalized popularity signal for listing sort/"recommended" — every
+  // booking path (single, instant, multi) funnels through this one function,
+  // so incrementing here is the single place that needs to know about it.
+  await Turf.findByIdAndUpdate(slotBeforeConfirm.turfId, { $inc: { bookingCount: 1 } });
+
   return booking;
 };
 

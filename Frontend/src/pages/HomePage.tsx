@@ -1,14 +1,17 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '@/lib/api';
-import { Search, MapPin, Zap, ShieldCheck, ChevronRight, Loader2, Check } from 'lucide-react';
+import { Search, MapPin, Zap, ShieldCheck, ChevronRight, Loader2, Check, History, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { TurfCard } from '@/components/TurfCard';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Turf } from '@/types';
 import { motion } from 'framer-motion';
+import { getCurrentPosition, getCachedPosition } from '@/lib/geo';
+import { getRecentlyViewedIds } from '@/lib/recentlyViewed';
+import { toast } from 'sonner';
 
 const sportsList = ['Football', 'Cricket', 'Badminton', 'Tennis', 'Basketball', 'Volleyball'];
 
@@ -29,15 +32,53 @@ const faqs = [
 export default function HomePage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
+  const [locating, setLocating] = useState(false);
+  const [recentIds, setRecentIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    setRecentIds(getRecentlyViewedIds());
+  }, []);
 
   const { data: turfsResponse, isLoading } = useQuery({
     queryKey: ['featured-turfs'],
     queryFn: () => apiGet<Turf[]>('/turfs?limit=3'),
   });
 
+  const { data: recommendedResponse } = useQuery({
+    queryKey: ['recommended-turfs'],
+    queryFn: () => apiGet<Turf[]>('/turfs?limit=3&sortBy=rating'),
+  });
+
+  const { data: recentTurfsResponse } = useQuery({
+    queryKey: ['recent-turfs', recentIds.join(',')],
+    queryFn: () => apiGet<Turf[]>(`/turfs?limit=${recentIds.length}`),
+    enabled: recentIds.length > 0,
+  });
+
   const featuredTurfs = turfsResponse?.data ?? [];
+  const recommendedTurfs = recommendedResponse?.data ?? [];
+  // Preserve most-recently-viewed-first order and drop ids that no longer
+  // resolve (delisted, rejected) — the fetch above pulls from the live
+  // public listing, so it can't tell us which of the stored ids matched.
+  const recentTurfsById = new Map((recentTurfsResponse?.data ?? []).map(t => [t._id, t]));
+  const recentTurfs = recentIds.map(id => recentTurfsById.get(id)).filter((t): t is Turf => !!t);
 
   const goToSearch = () => navigate(search ? `/turfs?q=${encodeURIComponent(search)}` : '/turfs');
+
+  // Caches the coordinates (getCurrentPosition writes to sessionStorage) and
+  // sends the customer to /turfs, which picks the cached location straight
+  // up rather than needing it round-tripped through the URL.
+  const useMyLocation = async () => {
+    setLocating(true);
+    try {
+      await getCurrentPosition();
+      navigate('/turfs');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not get your location');
+    } finally {
+      setLocating(false);
+    }
+  };
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
@@ -73,9 +114,27 @@ export default function HomePage() {
                 onKeyDown={(e) => e.key === 'Enter' && goToSearch()}
               />
             </div>
+            <Button variant="ghost" size="lg" className="h-12 px-4 rounded-full font-bold gap-2" onClick={useMyLocation} disabled={locating}>
+              {locating ? <Loader2 size={16} className="animate-spin" /> : <MapPin size={16} />}
+              <span className="hidden sm:inline">Near me</span>
+            </Button>
             <Button size="lg" className="h-12 px-8 rounded-full font-bold" onClick={goToSearch}>
               Search
             </Button>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.25, duration: 0.4 }}
+            className="mt-4"
+          >
+            <button
+              onClick={() => navigate('/turfs?availableNow=true')}
+              className="inline-flex items-center gap-1.5 text-xs font-bold text-primary hover:underline"
+            >
+              <Zap size={13} /> Show turfs available right now
+            </button>
           </motion.div>
         </div>
       </section>
@@ -173,6 +232,40 @@ export default function HomePage() {
           )}
         </div>
       </section>
+
+      {/* Recently viewed */}
+      {recentTurfs.length > 0 && (
+        <section className="py-16 bg-muted/40 border-y">
+          <div className="container mx-auto px-4">
+            <div className="flex items-center gap-2 mb-8">
+              <History size={20} className="text-primary" />
+              <h2 className="font-display text-2xl md:text-3xl font-bold">Recently viewed</h2>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {recentTurfs.map((turf) => (
+                <TurfCard key={turf._id} turf={turf} />
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Recommended */}
+      {recommendedTurfs.length > 0 && (
+        <section className="py-16">
+          <div className="container mx-auto px-4">
+            <div className="flex items-center gap-2 mb-8">
+              <Star size={20} className="text-primary fill-primary" />
+              <h2 className="font-display text-2xl md:text-3xl font-bold">Top rated for you</h2>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {recommendedTurfs.map((turf) => (
+                <TurfCard key={turf._id} turf={turf} />
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Owner CTA */}
       <section className="py-16 px-4">

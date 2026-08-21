@@ -1,7 +1,9 @@
 import Turf from "./turf.model.js";
+import Slot from "../slot/slot.model.js";
 import ApiError from "../../common/utils/ApiError.js";
 import logger from "../../common/utils/logger.js";
 import { attachImagesToTurf } from "../image/image.service.js";
+import { geocodeLocation } from "./geocode.js";
 
 // Fields an owner may edit on their own turf via PATCH /api/turfs/:id.
 // ownerId and approvalStatus are deliberately excluded — approvalStatus is
@@ -21,7 +23,17 @@ const OWNER_EDITABLE_FIELDS = [
   "is24x7",
   "openHour",
   "closeHour",
+  "venueType",
+  "capacity",
+  "contactPhone",
+  "rules",
+  "faqs",
 ];
+
+// How far ahead "Available now" looks for an open slot — a slot that opens
+// in the next couple of hours is still useful to someone deciding right now,
+// while one that's actually in progress may already be too late to catch.
+const AVAILABLE_NOW_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 /**
  * Create a new turf (owner only).
@@ -43,8 +55,11 @@ export const createTurf = async (ownerId, data) => {
   const requestedImages = safeData.images;
   delete safeData.images;
 
+  const geo = await geocodeLocation(safeData.location);
+
   const turf = await Turf.create({
     ...safeData,
+    ...(geo ? { geo } : {}),
     ownerId,
     approvalStatus: "PENDING",
   });
@@ -58,13 +73,59 @@ export const createTurf = async (ownerId, data) => {
   return turf;
 };
 
+const SORT_STAGES = {
+  price_asc: { pricePerHour: 1 },
+  price_desc: { pricePerHour: -1 },
+  rating: { avgRating: -1, reviewCount: -1 },
+  popularity: { bookingCount: -1 },
+  newest: { createdAt: -1 },
+};
+
 /**
  * Get all active turfs (public).
+ *
+ * `near`/`availableNow` are opt-in extras layered on top of the plain
+ * `filter` — most callers (owner's-own-turfs, admin) pass neither and get
+ * the original createdAt-sorted listing untouched.
  */
-export const getAllTurfs = async (filter = {}, { limit } = {}) => {
-  let query = Turf.find(filter)
+export const getAllTurfs = async (filter = {}, { limit, sortBy, near, availableNow } = {}) => {
+  let effectiveFilter = filter;
+
+  if (availableNow) {
+    const now = new Date();
+    const windowEnd = new Date(now.getTime() + AVAILABLE_NOW_WINDOW_MS);
+    const openTurfIds = await Slot.distinct("turfId", {
+      status: "AVAILABLE",
+      startTime: { $gte: now, $lte: windowEnd },
+    });
+    effectiveFilter = { ...filter, _id: { $in: openTurfIds } };
+  }
+
+  // A $geoNear-sorted result can't also be populated via a plain .find(), so
+  // "near" runs as its own aggregation pipeline; everything else keeps using
+  // the simpler find()/sort()/limit() chain.
+  if (near) {
+    const geoNearStage = {
+      near: { type: "Point", coordinates: [near.lng, near.lat] },
+      distanceField: "distanceMeters",
+      spherical: true,
+      query: effectiveFilter,
+    };
+    if (near.maxDistanceKm) {
+      geoNearStage.maxDistance = near.maxDistanceKm * 1000; // meters
+    }
+    const pipeline = [{ $geoNear: geoNearStage }];
+    if (limit) pipeline.push({ $limit: Number(limit) });
+    pipeline.push(
+      { $lookup: { from: "users", localField: "ownerId", foreignField: "_id", as: "ownerId" } },
+      { $unwind: { path: "$ownerId", preserveNullAndEmptyArrays: true } }
+    );
+    return Turf.aggregate(pipeline);
+  }
+
+  let query = Turf.find(effectiveFilter)
     .populate("ownerId", "name email")
-    .sort({ createdAt: -1 });
+    .sort(SORT_STAGES[sortBy] || SORT_STAGES.newest);
 
   if (limit) {
     query = query.limit(Number(limit));
@@ -111,6 +172,15 @@ export const updateTurf = async (turfId, ownerId, data) => {
   // third-party URLs. attachImagesToTurf returns the normalised list.
   if (safeData.images !== undefined) {
     safeData.images = await attachImagesToTurf(ownerId, turfId, safeData.images);
+  }
+
+  // Re-resolve coordinates whenever the address text actually changes, so an
+  // owner correcting a typo'd location also fixes distance/map for it —
+  // but a same-value edit or an edit of unrelated fields shouldn't spend a
+  // Nominatim lookup for nothing.
+  if (safeData.location !== undefined && safeData.location !== turf.location) {
+    const geo = await geocodeLocation(safeData.location);
+    if (geo) safeData.geo = geo;
   }
 
   const updatedTurf = await Turf.findByIdAndUpdate(turfId, { $set: safeData }, { new: true });

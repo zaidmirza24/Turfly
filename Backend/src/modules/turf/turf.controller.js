@@ -11,11 +11,16 @@ import ApiResponse from "../../common/utils/ApiResponse.js";
  * listing is supposed to hide (`?approvalStatus=PENDING`, `?isActive=false`,
  * `?ownerId=<someone-else>`).
  */
+const VALID_SORTS = new Set(["newest", "price_asc", "price_desc", "rating", "popularity"]);
+const VALID_VENUE_TYPES = new Set(["INDOOR", "OUTDOOR", "BOTH"]);
+
 const buildPublicTurfFilter = (query) => {
   const filter = {};
 
   if (query.sportsType !== undefined) {
-    filter.sportsType = String(query.sportsType);
+    const sports = String(query.sportsType).split(",").map((s) => s.trim()).filter(Boolean);
+    if (sports.length === 1) filter.sportsType = sports[0];
+    else if (sports.length > 1) filter.sportsType = { $in: sports };
   }
 
   if (query.location !== undefined) {
@@ -26,11 +31,54 @@ const buildPublicTurfFilter = (query) => {
     if (term) filter.location = new RegExp(term, "i");
   }
 
+  if (query.venueType !== undefined && VALID_VENUE_TYPES.has(String(query.venueType).toUpperCase())) {
+    filter.venueType = String(query.venueType).toUpperCase();
+  }
+
+  const minPrice = Number(query.minPrice);
+  const maxPrice = Number(query.maxPrice);
+  if (Number.isFinite(minPrice) || Number.isFinite(maxPrice)) {
+    filter.pricePerHour = {};
+    if (Number.isFinite(minPrice)) filter.pricePerHour.$gte = minPrice;
+    if (Number.isFinite(maxPrice)) filter.pricePerHour.$lte = maxPrice;
+  }
+
+  if (query.amenities !== undefined) {
+    const list = String(query.amenities).split(",").map((a) => a.trim()).filter(Boolean);
+    if (list.length) filter.amenities = { $all: list };
+  }
+
+  const minRating = Number(query.minRating);
+  if (Number.isFinite(minRating)) {
+    filter.avgRating = { $gte: minRating };
+  }
+
   // The public listing only ever shows live, admin-approved turfs.
   filter.isActive = true;
   filter.approvalStatus = "APPROVED";
 
   return filter;
+};
+
+const buildPublicTurfOptions = (query) => {
+  const options = { limit: query.limit };
+
+  if (VALID_SORTS.has(query.sortBy)) options.sortBy = query.sortBy;
+  if (query.availableNow === "true") options.availableNow = true;
+
+  const lat = Number(query.lat);
+  const lng = Number(query.lng);
+  if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+    options.near = { lat, lng };
+    options.sortBy = undefined; // $geoNear already sorts by distance
+
+    const maxDistanceKm = Number(query.maxDistanceKm);
+    if (Number.isFinite(maxDistanceKm) && maxDistanceKm > 0) {
+      options.near.maxDistanceKm = maxDistanceKm;
+    }
+  }
+
+  return options;
 };
 
 export const createTurf = async (req, res) => {
@@ -39,9 +87,10 @@ export const createTurf = async (req, res) => {
 };
 
 export const getAllTurfs = async (req, res) => {
-  const turfs = await turfService.getAllTurfs(buildPublicTurfFilter(req.query), {
-    limit: req.query.limit,
-  });
+  const turfs = await turfService.getAllTurfs(
+    buildPublicTurfFilter(req.query),
+    buildPublicTurfOptions(req.query)
+  );
   new ApiResponse(200, "Turfs fetched successfully", turfs).send(res);
 };
 

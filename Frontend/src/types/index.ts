@@ -9,6 +9,7 @@ export type SlotStatus = 'AVAILABLE' | 'LOCKED' | 'BOOKED' | 'CLOSED' | 'FULL';
 export type BookingStatus = 'CONFIRMED' | 'CANCELLED';
 export type TurfApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 export type UserRole = 'USER' | 'OWNER' | 'ADMIN';
+export type VenueType = 'INDOOR' | 'OUTDOOR' | 'BOTH';
 
 export interface User {
   _id: string;
@@ -39,6 +40,26 @@ export interface Turf {
   closeHour?: number; // 0-23, inclusive of the last slot's start hour
   defaultWeekdayPrice?: number;
   defaultWeekendPrice?: number;
+  venueType?: VenueType;
+  capacity?: number;
+  contactPhone?: string;
+  rules?: string;
+  faqs?: { question: string; answer: string }[];
+  geo?: { type: 'Point'; coordinates: [number, number] }; // [lng, lat]
+  bookingCount?: number;
+  avgRating?: number;
+  reviewCount?: number;
+  distanceMeters?: number; // present only on $geoNear ("near") results
+}
+
+export interface Review {
+  _id: string;
+  turfId: string;
+  userId: string | { _id: string; name: string };
+  bookingId: string;
+  rating: number;
+  comment: string;
+  createdAt: string;
 }
 
 export interface TimeSlot {

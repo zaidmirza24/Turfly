@@ -6,7 +6,7 @@ import { SlotSelector } from '@/components/SlotSelector';
 import { useBooking } from '@/contexts/BookingContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { MapPin, Wifi, Car, Droplets, Shield, ChevronLeft, Calendar, Loader2, Zap, Sparkles } from 'lucide-react';
+import { MapPin, Wifi, Car, Droplets, Shield, ChevronLeft, Calendar, Loader2, Zap, Sparkles, Phone, Users, Building2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { TimeSlot, Turf } from '@/types';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -15,6 +15,10 @@ import { toDateKey, getISTDay, formatSlotDate, formatSlotTime } from '@/lib/date
 import { resolveImageUrl, TURF_PLACEHOLDER_IMAGE } from '@/lib/imageUrl';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { recordTurfView } from '@/lib/recentlyViewed';
+import { getCachedPosition, distanceKm, formatDistance } from '@/lib/geo';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { ReviewsSection } from '@/components/ReviewsSection';
 
 const MAX_SLOTS_PER_BOOKING = 10;
 
@@ -48,6 +52,24 @@ export default function TurfDetailPage() {
 
   const turf = turfResponse?.data;
 
+  useEffect(() => {
+    if (turf?._id) recordTurfView(turf._id);
+  }, [turf?._id]);
+
+  // BookingCard's "Review" action links to /turfs/:id#reviews — a client-side
+  // route change doesn't trigger the browser's native hash-scroll, so once
+  // the section is actually in the DOM (turf loaded), scroll to it ourselves.
+  useEffect(() => {
+    if (turf && window.location.hash === '#reviews') {
+      document.getElementById('reviews')?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [turf]);
+
+  const userLocation = getCachedPosition();
+  const distanceLabel = userLocation && turf?.geo?.coordinates
+    ? formatDistance(distanceKm(userLocation, { lat: turf.geo.coordinates[1], lng: turf.geo.coordinates[0] }))
+    : null;
+
   const { data: slotsResponse, isLoading: isLoadingSlots } = useQuery({
     queryKey: ['slots', id, dateStr],
     queryFn: () => apiGet<TimeSlot[]>(`/slots?turfId=${id}&date=${dateStr}`),
@@ -55,6 +77,23 @@ export default function TurfDetailPage() {
   });
 
   const slots = slotsResponse?.data ?? [];
+
+  // Powers the calendar's availability dots — one range fetch per visible
+  // month rather than one request per day, so paging the calendar doesn't
+  // fan out into 30+ requests.
+  const [visibleMonth, setVisibleMonth] = useState(today);
+  const monthStart = toDateKey(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1));
+  const monthEnd = toDateKey(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 0));
+  const { data: monthSlotsResponse } = useQuery({
+    queryKey: ['slots-month', id, monthStart, monthEnd],
+    queryFn: () => apiGet<TimeSlot[]>(`/slots?turfId=${id}&startDate=${monthStart}&endDate=${monthEnd}`),
+    enabled: !!id,
+  });
+  const datesWithAvailability = new Set(
+    (monthSlotsResponse?.data ?? [])
+      .filter(s => s.status === 'AVAILABLE' && new Date(s.startTime).getTime() > Date.now())
+      .map(s => toDateKey(new Date(s.startTime)))
+  );
 
   // Slot selection lives in a provider shared by every turf page. Landing on
   // a different turf must drop a selection made elsewhere, or the sidebar
@@ -146,13 +185,50 @@ export default function TurfDetailPage() {
             <div className="flex flex-wrap gap-2 mb-4">
               {sports.map(s => <Badge key={s} variant="secondary" className="capitalize px-3 py-1 rounded-full">{s}</Badge>)}
               {turf.isActive && <Badge className="bg-success hover:bg-success/90 rounded-full">Open Now</Badge>}
+              {turf.venueType && (
+                <Badge variant="outline" className="rounded-full gap-1">
+                  <Building2 size={12} /> {turf.venueType === 'BOTH' ? 'Indoor & Outdoor' : turf.venueType.charAt(0) + turf.venueType.slice(1).toLowerCase()}
+                </Badge>
+              )}
+              {turf.capacity && (
+                <Badge variant="outline" className="rounded-full gap-1">
+                  <Users size={12} /> Up to {turf.capacity} players
+                </Badge>
+              )}
             </div>
             <h1 className="text-3xl md:text-5xl font-black tracking-tight mb-2">{turf.name}</h1>
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <MapPin size={18} className="text-primary" /> 
-              <span className="text-lg">{turf.location}</span>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <MapPin size={18} className="text-primary" />
+                <span className="text-lg">{turf.location}</span>
+              </div>
+              {distanceLabel && <span className="text-sm font-bold text-primary">{distanceLabel}</span>}
             </div>
+            <p className="text-sm text-muted-foreground mt-2">
+              {turf.is24x7
+                ? 'Open 24/7'
+                : `Open ${String(turf.openHour ?? 0).padStart(2, '0')}:00 – ${String(turf.closeHour ?? 23).padStart(2, '0')}:00`}
+              {turf.contactPhone && (
+                <>
+                  {' · '}
+                  <a href={`tel:${turf.contactPhone}`} className="inline-flex items-center gap-1 hover:text-primary">
+                    <Phone size={13} /> {turf.contactPhone}
+                  </a>
+                </>
+              )}
+            </p>
           </section>
+
+          {turf.geo?.coordinates && (
+            <section className="rounded-3xl overflow-hidden border h-64">
+              <iframe
+                title={`Map showing ${turf.name}`}
+                className="w-full h-full"
+                loading="lazy"
+                src={`https://www.openstreetmap.org/export/embed.html?bbox=${turf.geo.coordinates[0] - 0.01}%2C${turf.geo.coordinates[1] - 0.01}%2C${turf.geo.coordinates[0] + 0.01}%2C${turf.geo.coordinates[1] + 0.01}&layer=mapnik&marker=${turf.geo.coordinates[1]}%2C${turf.geo.coordinates[0]}`}
+              />
+            </section>
+          )}
 
           <section className="bg-muted/30 p-8 rounded-3xl">
             <h2 className="text-xl font-bold mb-4">About the Arena</h2>
@@ -177,6 +253,32 @@ export default function TurfDetailPage() {
             </div>
           </section>
 
+          <section className={cn(!turf.rules && 'hidden')}>
+            <h2 className="text-xl font-bold mb-4">House Rules</h2>
+            <p className="text-muted-foreground leading-relaxed whitespace-pre-line">{turf.rules}</p>
+          </section>
+
+          <section className={cn((turf.faqs ?? []).length === 0 && 'hidden')}>
+            <h2 className="text-xl font-bold mb-4">Frequently Asked Questions</h2>
+            <Accordion type="single" collapsible>
+              {(turf.faqs ?? []).map((f, i) => (
+                <AccordionItem key={i} value={`faq-${i}`}>
+                  <AccordionTrigger className="text-left font-semibold">{f.question}</AccordionTrigger>
+                  <AccordionContent className="text-muted-foreground leading-relaxed">{f.answer}</AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-bold mb-4">Cancellation Policy</h2>
+            <p className="text-muted-foreground leading-relaxed">
+              Free cancellation up to 6 hours before your slot starts, from My Bookings. Once inside that window, or after the slot has started, it can no longer be cancelled.
+            </p>
+          </section>
+
+          <ReviewsSection turfId={turf._id} />
+
           <section id="booking" className="scroll-mt-24 space-y-6">
             <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold flex items-center gap-3">
@@ -185,19 +287,45 @@ export default function TurfDetailPage() {
             </div>
 
             <div className="grid md:grid-cols-2 gap-8 items-start">
-              <div className="glass rounded-[2.5rem] p-6 shadow-2xl">
+              <div className="glass rounded-[2.5rem] p-6 shadow-2xl space-y-4">
+                <div className="flex gap-2">
+                  <Button
+                    variant={toDateKey(selectedDate) === toDateKey(today) ? 'default' : 'outline'}
+                    size="sm"
+                    className="rounded-full font-bold"
+                    onClick={() => setSelectedDate(today)}
+                  >
+                    Today
+                  </Button>
+                  <Button
+                    variant={toDateKey(selectedDate) === toDateKey(new Date(today.getTime() + 86400000)) ? 'default' : 'outline'}
+                    size="sm"
+                    className="rounded-full font-bold"
+                    onClick={() => setSelectedDate(new Date(today.getTime() + 86400000))}
+                  >
+                    Tomorrow
+                  </Button>
+                </div>
                 <MonthCalendar
                   mode="single"
                   selected={selectedDate}
                   onSelect={(date) => date && setSelectedDate(date)}
+                  onMonthChange={setVisibleMonth}
                   // Mirrors booking.service.js's MAX_ADVANCE_BOOKING_MS (30 days) —
                   // kept in sync manually since the two run in different codebases.
                   disabled={(date) =>
                     date < new Date(new Date().setHours(0, 0, 0, 0)) ||
                     date > new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
                   }
+                  modifiers={{ hasAvailability: (date) => datesWithAvailability.has(toDateKey(date)) }}
+                  modifiersClassNames={{
+                    hasAvailability: "relative after:content-[''] after:absolute after:bottom-1 after:left-1/2 after:-translate-x-1/2 after:w-1 after:h-1 after:rounded-full after:bg-success",
+                  }}
                   className="w-full"
                 />
+                <p className="text-[10px] text-muted-foreground flex items-center gap-1.5 px-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-success" /> Dates with open slots
+                </p>
               </div>
 
               <div className="space-y-4">

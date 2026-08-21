@@ -6,9 +6,14 @@ import { useBooking } from '@/contexts/BookingContext';
 import { formatSlotDate, formatSlotTime } from '@/lib/dateKey';
 import { turfCoverImage } from '@/lib/imageUrl';
 import { Button } from '@/components/ui/button';
-import { CheckCircle2, XCircle, ChevronLeft, CreditCard, Loader2 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  CheckCircle2, XCircle, ChevronLeft, CreditCard, Loader2, ShieldAlert,
+  Navigation, Phone, CalendarPlus, Share2, Copy,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { Turf, Booking } from '@/types';
+import { downloadIcsFile, googleCalendarUrl, directionsUrl } from '@/lib/calendarExport';
 
 type Step = 'summary' | 'payment' | 'success' | 'failure';
 
@@ -20,6 +25,7 @@ export default function BookingFlowPage() {
 
   const [step, setStep] = useState<Step>('summary');
   const [loading, setLoading] = useState(false);
+  const [agreedToPolicy, setAgreedToPolicy] = useState(false);
   const [confirmedBookings, setConfirmedBookings] = useState<Booking[]>([]);
   const [failureReason, setFailureReason] = useState<string | null>(null);
 
@@ -57,6 +63,18 @@ export default function BookingFlowPage() {
   }
 
   const total = sortedSlots.reduce((sum, s) => sum + s.price, 0);
+  const durationHours = sortedSlots.length;
+
+  // A slot conflict (someone else confirmed it while this customer was on the
+  // summary/payment screen) surfaces as a 409 from the server. The stale
+  // availability that led to it lives in these two query caches — the
+  // per-date grid and the calendar's month-range dots — so a retry from
+  // /turfs/:id should see the real state rather than what was true when this
+  // checkout started.
+  const invalidateAvailability = () => {
+    queryClient.invalidateQueries({ queryKey: ['slots', id] });
+    queryClient.invalidateQueries({ queryKey: ['slots-month', id] });
+  };
 
   const handlePayment = async () => {
     // `loading` also guards the double-submit case: the button is disabled
@@ -73,7 +91,7 @@ export default function BookingFlowPage() {
 
       // Invalidate queries to update UI elsewhere
       queryClient.invalidateQueries({ queryKey: ['all-slots', id] });
-      queryClient.invalidateQueries({ queryKey: ['slots', id] });
+      invalidateAvailability();
       queryClient.invalidateQueries({ queryKey: ['my-bookings'] });
 
       toast.success(sortedSlots.length > 1 ? 'Slots booked!' : 'Booking confirmed!');
@@ -82,6 +100,7 @@ export default function BookingFlowPage() {
       const message = error instanceof Error ? error.message : 'Booking failed';
       toast.error(message);
       setFailureReason(message);
+      invalidateAvailability();
       setStep('failure');
     } finally {
       setLoading(false);
@@ -95,6 +114,35 @@ export default function BookingFlowPage() {
     const chargedTotal = confirmedBookings.reduce((sum, b) => sum + (b.amount ?? 0), 0);
     const groupId = confirmedBookings[0]?.groupId;
     const reference = groupId || confirmedBookings[0]?._id;
+    const firstSlot = sortedSlots[0];
+    const lastSlot = sortedSlots[sortedSlots.length - 1];
+
+    const calendarEvent = turf && firstSlot ? {
+      title: `${turf.name} — Turf Booking`,
+      description: `Booking reference: ${reference}\n${sortedSlots.length} slot(s), ₹${chargedTotal} paid.`,
+      location: turf.location,
+      start: new Date(firstSlot.startTime),
+      end: new Date(lastSlot.endTime),
+      uid: reference || 'booking',
+    } : null;
+
+    const shareText = turf
+      ? `Booking confirmed at ${turf.name} — ${formatSlotDate(firstSlot.startTime)} · ${formatSlotTime(firstSlot.startTime)}. Ref: ${reference}`
+      : '';
+
+    const handleShare = async () => {
+      if (navigator.share) {
+        try {
+          await navigator.share({ title: 'Booking Confirmation', text: shareText });
+          return;
+        } catch {
+          // User cancelled the native share sheet — fall through to clipboard.
+        }
+      }
+      await navigator.clipboard.writeText(shareText);
+      toast.success('Confirmation copied to clipboard');
+    };
+
     return (
       <div className="container mx-auto px-4 py-16 max-w-lg text-center">
         <div className="bg-card border rounded-2xl p-8 shadow-sm">
@@ -104,18 +152,49 @@ export default function BookingFlowPage() {
             {sortedSlots.length > 1 ? `Your ${sortedSlots.length} slots have been successfully booked.` : 'Your slot has been successfully booked.'}
           </p>
           <div className="bg-muted/50 rounded-lg p-4 mt-6 text-sm space-y-2 text-left">
-            <div className="flex justify-between"><span className="text-muted-foreground">Turf</span><span className="font-medium">{turf?.name}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Venue</span><span className="font-medium">{turf?.name}</span></div>
             {sortedSlots.map(slot => (
               <div key={slot._id} className="flex justify-between">
                 <span className="text-muted-foreground">{formatSlotDate(slot.startTime)}</span>
                 <span className="font-medium">{formatSlotTime(slot.startTime)}</span>
               </div>
             ))}
+            <div className="flex justify-between"><span className="text-muted-foreground">Duration</span><span className="font-medium">{durationHours} hour{durationHours > 1 ? 's' : ''}</span></div>
             <div className="flex justify-between font-bold border-t pt-2"><span>Total Paid</span><span className="text-primary">₹{chargedTotal}</span></div>
-            <div className="flex justify-between text-[10px] text-muted-foreground mt-2"><span>Booking Reference</span><span>{reference}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Payment status</span><span className="font-medium text-success">Paid (simulated)</span></div>
+            <div className="flex justify-between text-[10px] text-muted-foreground mt-2"><span>Booking Reference</span><span>#{reference}</span></div>
           </div>
+
+          <div className="grid grid-cols-2 gap-2 mt-4">
+            <Button variant="outline" size="sm" className="gap-1.5" asChild>
+              <a href={directionsUrl(turf?.location ?? '', turf?.geo)} target="_blank" rel="noopener noreferrer">
+                <Navigation size={14} /> Directions
+              </a>
+            </Button>
+            {turf?.contactPhone && (
+              <Button variant="outline" size="sm" className="gap-1.5" asChild>
+                <a href={`tel:${turf.contactPhone}`}><Phone size={14} /> Contact venue</a>
+              </Button>
+            )}
+            {calendarEvent && (
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => downloadIcsFile(calendarEvent)}>
+                <CalendarPlus size={14} /> Add to calendar
+              </Button>
+            )}
+            {calendarEvent && (
+              <Button variant="outline" size="sm" className="gap-1.5" asChild>
+                <a href={googleCalendarUrl(calendarEvent)} target="_blank" rel="noopener noreferrer">
+                  <CalendarPlus size={14} /> Google Calendar
+                </a>
+              </Button>
+            )}
+            <Button variant="outline" size="sm" className={turf?.contactPhone ? 'gap-1.5 col-span-2' : 'gap-1.5'} onClick={handleShare}>
+              {navigator.share ? <Share2 size={14} /> : <Copy size={14} />} Share confirmation
+            </Button>
+          </div>
+
           <div className="flex gap-3 mt-6">
-            <Button variant="outline" className="flex-1" onClick={() => navigate('/dashboard')}>My Bookings</Button>
+            <Button variant="outline" className="flex-1" onClick={() => navigate('/dashboard')}>Manage in My Bookings</Button>
             <Button className="flex-1" onClick={() => navigate('/turfs')}>Book Another</Button>
           </div>
         </div>
@@ -164,6 +243,7 @@ export default function BookingFlowPage() {
         </div>
 
         <div className="space-y-3 text-sm border-t pt-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Base price</div>
           {sortedSlots.map(slot => (
             <div key={slot._id} className="flex justify-between">
               <span className="text-muted-foreground">
@@ -172,10 +252,16 @@ export default function BookingFlowPage() {
               <span className="font-medium">₹{slot.price}</span>
             </div>
           ))}
-          <div className="flex justify-between"><span className="text-muted-foreground">Duration</span><span className="font-medium">{sortedSlots.length} hour{sortedSlots.length > 1 ? 's' : ''}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Duration</span><span className="font-medium">{durationHours} hour{durationHours > 1 ? 's' : ''}</span></div>
+          <div className="flex justify-between text-muted-foreground"><span>Taxes &amp; platform fee</span><span>₹0 — none charged</span></div>
           <div className="flex justify-between text-lg font-bold border-t pt-3">
             <span>Total Amount</span><span className="text-primary">₹{total}</span>
           </div>
+        </div>
+
+        <div className="mt-6 border rounded-xl p-4 bg-muted/30 text-xs text-muted-foreground space-y-1">
+          <p className="font-semibold text-foreground">Cancellation policy</p>
+          <p>Free cancellation up to 6 hours before your slot starts, from My Bookings. No charge is made until you confirm below, so there's nothing to refund if you cancel in time.</p>
         </div>
 
         {step === 'summary' && (
@@ -188,7 +274,10 @@ export default function BookingFlowPage() {
           <div className="mt-6 space-y-4">
             <div className="border rounded-xl p-4 bg-muted/30">
               <h3 className="font-medium mb-3">Payment Method (Phase 1)</h3>
-              <p className="text-xs text-muted-foreground mb-3 italic">Payment is simulated for this phase.</p>
+              <div className="flex items-start gap-2 text-xs text-muted-foreground mb-3 bg-warning/10 border border-warning/20 rounded-lg p-2.5">
+                <ShieldAlert size={14} className="shrink-0 mt-0.5 text-warning" />
+                <span>This checkout is simulated — no real payment is processed and no money is charged. A real gateway (UPI/cards/net banking) will replace this before launch.</span>
+              </div>
               <div className="space-y-2">
                 {['UPI / Google Pay', 'Credit / Debit Card', 'Net Banking'].map((method, i) => (
                   <label key={method} className="flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/50">
@@ -198,7 +287,13 @@ export default function BookingFlowPage() {
                 ))}
               </div>
             </div>
-            <Button className="w-full" size="lg" onClick={handlePayment} disabled={loading}>
+
+            <label className="flex items-start gap-2.5 text-xs text-muted-foreground cursor-pointer">
+              <Checkbox checked={agreedToPolicy} onCheckedChange={(v) => setAgreedToPolicy(!!v)} className="mt-0.5" />
+              <span>I agree to the booking terms and the cancellation policy above.</span>
+            </label>
+
+            <Button className="w-full" size="lg" onClick={handlePayment} disabled={loading || !agreedToPolicy}>
               {loading ? <><Loader2 size={18} className="mr-2 animate-spin" /> Processing...</> : `Confirm & Pay ₹${total}`}
             </Button>
           </div>
