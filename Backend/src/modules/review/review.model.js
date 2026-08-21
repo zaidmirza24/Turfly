@@ -30,6 +30,28 @@ const reviewSchema = new mongoose.Schema(
       maxlength: [500, "Review cannot exceed 500 characters"],
       default: "",
     },
+    // Optional per-facility breakdown — all-or-nothing isn't required because
+    // a reviewer may only have an opinion on some of these.
+    facilityRatings: {
+      turfQuality: { type: Number, min: 1, max: 5 },
+      cleanliness: { type: Number, min: 1, max: 5 },
+      staffBehavior: { type: Number, min: 1, max: 5 },
+    },
+    images: {
+      type: [String],
+      default: [],
+    },
+    ownerResponse: {
+      text: { type: String, trim: true, maxlength: 500 },
+      respondedAt: { type: Date },
+    },
+    // Users who've reported this review — a Set-like array (not just a
+    // count) so the same user can't inflate it by reporting twice, and so a
+    // future moderation view can show who flagged it.
+    reportedBy: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+      default: [],
+    },
   },
   { timestamps: true }
 );

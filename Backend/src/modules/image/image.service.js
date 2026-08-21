@@ -218,6 +218,68 @@ export const deleteImage = async (user, imageId) => {
   logger.info("Image deleted", { imageId: String(imageId), turfsUpdated: modifiedCount });
 };
 
+/**
+ * Validate ownership of a set of uploaded images and clear their expiry.
+ *
+ * Shared by avatar and review-photo attachment — both are simpler than
+ * turf.images's attachImagesToTurf: neither needs the cross-document
+ * "is this image still used elsewhere" check turf photos do, because an
+ * avatar or a review's photos are only ever referenced from that one
+ * document. Callers are responsible for re-arming expiry on whatever URLs
+ * they replace (see rearmImagesByUrl below).
+ */
+const verifyAndClaimImages = async (ownerId, urls, max) => {
+  if (!Array.isArray(urls)) {
+    throw new ApiError(400, "images must be an array");
+  }
+
+  const ids = [];
+  for (const url of urls) {
+    const id = imageIdFromUrl(url);
+    if (!id) {
+      throw new ApiError(400, "Images must be uploaded through this site before they can be used");
+    }
+    if (!ids.includes(id)) ids.push(id);
+  }
+
+  if (ids.length > max) {
+    throw new ApiError(400, `At most ${max} image${max > 1 ? "s" : ""} allowed here`);
+  }
+
+  if (ids.length > 0) {
+    const owned = await Image.find({ _id: { $in: ids }, ownerId }).select("_id").lean();
+    if (owned.length !== ids.length) {
+      throw new ApiError(403, "One or more images don't exist or don't belong to you");
+    }
+    await Image.updateMany({ _id: { $in: ids } }, { $unset: { expiresAt: "" } });
+  }
+
+  return ids.map(imageUrl);
+};
+
+/** A single avatar image (or none, if `url` is null/undefined). */
+export const attachAvatarImage = async (userId, url) => {
+  if (url === undefined || url === null) return url;
+  const [claimed] = await verifyAndClaimImages(userId, [url], 1);
+  return claimed;
+};
+
+const MAX_IMAGES_PER_REVIEW = 4;
+
+/** Up to `MAX_IMAGES_PER_REVIEW` photos a reviewer attaches to their review. */
+export const attachReviewImages = async (userId, urls) => verifyAndClaimImages(userId, urls, MAX_IMAGES_PER_REVIEW);
+
+/**
+ * Re-arms expiry on images a document no longer references (an avatar just
+ * replaced, or photos removed from a review edit) — otherwise they'd be
+ * "attached" (expiresAt cleared) forever with nothing pointing at them.
+ */
+export const rearmImagesByUrl = async (urls) => {
+  const ids = (urls ?? []).map(imageIdFromUrl).filter(Boolean);
+  if (ids.length === 0) return;
+  await Image.updateMany({ _id: { $in: ids } }, { $set: { expiresAt: orphanExpiry() } });
+};
+
 /** Images uploaded by this owner, newest first (metadata only — no binaries). */
 export const listOwnerImages = async (ownerId, { turfId } = {}) => {
   const filter = { ownerId };

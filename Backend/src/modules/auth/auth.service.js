@@ -54,6 +54,7 @@ export const registerUser = async ({ name, email, phone, password, role }) => {
       email: user.email,
       phone: user.phone,
       role: user.role,
+      avatar: user.avatar,
     },
     token,
   };
@@ -80,6 +81,16 @@ export const loginUser = async ({ email, password }) => {
     throw new ApiError(401, "Invalid email or password");
   }
 
+  // Checked after the password match (not before) so a deleted account's
+  // existence isn't distinguishable from a wrong-password response — the
+  // same reasoning as the generic "Invalid email or password" message above.
+  if (user.isDeleted) {
+    throw new ApiError(401, "This account has been deleted");
+  }
+  if (user.isBanned) {
+    throw new ApiError(403, "Account suspended");
+  }
+
   const token = generateToken(user._id);
 
   return {
@@ -89,6 +100,7 @@ export const loginUser = async ({ email, password }) => {
       email: user.email,
       phone: user.phone,
       role: user.role,
+      avatar: user.avatar,
     },
     token,
   };

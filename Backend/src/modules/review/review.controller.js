@@ -6,6 +6,21 @@ export const createReview = async (req, res) => {
   new ApiResponse(201, "Review submitted", review).send(res);
 };
 
+export const updateReview = async (req, res) => {
+  const review = await reviewService.updateReview(req.user._id, req.params.reviewId, req.body);
+  new ApiResponse(200, "Review updated", review).send(res);
+};
+
+export const reportReview = async (req, res) => {
+  await reviewService.reportReview(req.user._id, req.params.reviewId);
+  new ApiResponse(200, "Review reported — our team will take a look", null).send(res);
+};
+
+export const respondToReview = async (req, res) => {
+  const review = await reviewService.respondToReview(req.user._id, req.params.reviewId, req.body.text);
+  new ApiResponse(200, "Response posted", review).send(res);
+};
+
 export const getReviewsForTurf = async (req, res) => {
   const reviews = await reviewService.getReviewsForTurf(req.params.turfId);
   new ApiResponse(200, "Reviews fetched", reviews).send(res);

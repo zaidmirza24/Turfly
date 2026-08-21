@@ -32,6 +32,10 @@ export const protect = async (req, _res, next) => {
     throw new ApiError(403, "Account suspended");
   }
 
+  if (user.isDeleted) {
+    throw new ApiError(401, "This account has been deleted");
+  }
+
   // Everything logged from here on carries who it was for. The id and role
   // only — never the email or name, which are the user's personal data and
   // have no business being replicated into a log store.

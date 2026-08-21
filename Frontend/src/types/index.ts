@@ -17,8 +17,9 @@ export interface User {
   email: string;
   phone: string;
   role: UserRole;
-  avatar?: string;
+  avatar?: string | null;
   isBanned?: boolean;
+  favorites?: (string | Turf)[];
   createdAt: string;
 }
 
@@ -59,6 +60,10 @@ export interface Review {
   bookingId: string;
   rating: number;
   comment: string;
+  facilityRatings?: { turfQuality?: number; cleanliness?: number; staffBehavior?: number };
+  images?: string[];
+  ownerResponse?: { text: string; respondedAt: string };
+  reportedBy?: string[];
   createdAt: string;
 }
 

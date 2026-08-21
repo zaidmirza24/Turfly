@@ -37,6 +37,27 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Always one of our own `/api/images/:id` paths (see user.service.js) —
+    // never an arbitrary URL, for the same reason turf.images is validated.
+    avatar: {
+      type: String,
+      default: null,
+    },
+    favorites: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: "Turf" }],
+      default: [],
+    },
+    // Soft delete: account deletion anonymizes the document in place rather
+    // than removing it, because bookings/reviews/turfs elsewhere reference
+    // this _id and a hard delete would leave those with a dangling ref (or
+    // require a cascade this platform has no product need for — a deleted
+    // customer's past bookings should still make sense to the owner who
+    // hosted them). `protect` refuses any request from a deleted account,
+    // the same way it already refuses a banned one.
+    isDeleted: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     timestamps: true, // createdAt + updatedAt

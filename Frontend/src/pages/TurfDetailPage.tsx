@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '@/lib/api';
@@ -6,7 +6,8 @@ import { SlotSelector } from '@/components/SlotSelector';
 import { useBooking } from '@/contexts/BookingContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { MapPin, Wifi, Car, Droplets, Shield, ChevronLeft, Calendar, Loader2, Zap, Sparkles, Phone, Users, Building2 } from 'lucide-react';
+import { MapPin, Wifi, Car, Droplets, Shield, ChevronLeft, Calendar, Loader2, Zap, Sparkles, Phone, Users, Building2, Heart, BadgeCheck } from 'lucide-react';
+import { useFavorites } from '@/hooks/useFavorites';
 import { cn } from '@/lib/utils';
 import { TimeSlot, Turf } from '@/types';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -39,6 +40,8 @@ export default function TurfDetailPage() {
   // of a 403 at the payment step.
   const canBook = !isAuthenticated || user?.role === 'USER';
   const [selectedImage, setSelectedImage] = useState(0);
+  const touchStartX = useRef<number | null>(null);
+  const { favoriteIds, toggleFavorite, isCustomer } = useFavorites();
 
   const today = new Date();
   const [selectedDate, setSelectedDate] = useState(today);
@@ -141,6 +144,7 @@ export default function TurfDetailPage() {
     ? turf.images.map(url => resolveImageUrl(url) as string)
     : [TURF_PLACEHOLDER_IMAGE];
   const pricePerHour = turf.pricePerHour || 500;
+  const isFavorite = favoriteIds.has(turf._id);
 
   return (
     <div className="container mx-auto px-4 py-6 max-w-6xl pb-28 lg:pb-6">
@@ -153,12 +157,46 @@ export default function TurfDetailPage() {
         animate={{ opacity: 1, y: 0 }}
         className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10"
       >
-        <div className="md:col-span-2 aspect-[16/9] rounded-3xl overflow-hidden shadow-2xl bg-muted">
+        <div
+          className="md:col-span-2 aspect-[16/9] rounded-3xl overflow-hidden shadow-2xl bg-muted relative touch-pan-y"
+          onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; }}
+          onTouchEnd={(e) => {
+            if (touchStartX.current == null || images.length < 2) return;
+            const delta = e.changedTouches[0].clientX - touchStartX.current;
+            // 40px threshold keeps an ordinary vertical scroll (which still
+            // drifts a little horizontally) from being misread as a swipe.
+            if (Math.abs(delta) > 40) {
+              setSelectedImage(prev => {
+                const next = delta < 0 ? prev + 1 : prev - 1;
+                return (next + images.length) % images.length;
+              });
+            }
+            touchStartX.current = null;
+          }}
+        >
           <img
             src={images[selectedImage] ?? images[0]}
             alt={`${turf.name} — photo ${selectedImage + 1} of ${images.length}`}
             className="w-full h-full object-cover"
           />
+          {isCustomer && (
+            <button
+              type="button"
+              onClick={() => toggleFavorite(turf._id)}
+              aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+              aria-pressed={isFavorite}
+              className="absolute top-4 right-4 w-11 h-11 rounded-full glass flex items-center justify-center hover:scale-110 transition-transform"
+            >
+              <Heart size={20} className={cn(isFavorite ? 'fill-destructive text-destructive' : 'text-foreground')} />
+            </button>
+          )}
+          {images.length > 1 && (
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 md:hidden">
+              {images.map((_, i) => (
+                <span key={i} className={cn('w-1.5 h-1.5 rounded-full', i === selectedImage ? 'bg-white' : 'bg-white/40')} />
+              ))}
+            </div>
+          )}
         </div>
         {/* The thumbnail strip is pointless with a single photo. */}
         {images.length > 1 && (
@@ -185,6 +223,9 @@ export default function TurfDetailPage() {
             <div className="flex flex-wrap gap-2 mb-4">
               {sports.map(s => <Badge key={s} variant="secondary" className="capitalize px-3 py-1 rounded-full">{s}</Badge>)}
               {turf.isActive && <Badge className="bg-success hover:bg-success/90 rounded-full">Open Now</Badge>}
+              <Badge variant="outline" className="rounded-full gap-1 border-primary/30 text-primary" title="Reviewed and approved by our team before going live">
+                <BadgeCheck size={12} /> Verified Venue
+              </Badge>
               {turf.venueType && (
                 <Badge variant="outline" className="rounded-full gap-1">
                   <Building2 size={12} /> {turf.venueType === 'BOTH' ? 'Indoor & Outdoor' : turf.venueType.charAt(0) + turf.venueType.slice(1).toLowerCase()}

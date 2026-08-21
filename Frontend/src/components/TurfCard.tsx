@@ -1,9 +1,11 @@
 import { Link } from 'react-router-dom';
-import { MapPin, Star } from 'lucide-react';
+import { MapPin, Star, Heart } from 'lucide-react';
 import { Turf } from '@/types';
 import { Badge } from '@/components/ui/badge';
 import { turfCoverImage } from '@/lib/imageUrl';
 import { formatDistance } from '@/lib/geo';
+import { useFavorites } from '@/hooks/useFavorites';
+import { cn } from '@/lib/utils';
 
 interface TurfCardProps {
   turf: Turf;
@@ -15,6 +17,8 @@ export function TurfCard({ turf }: TurfCardProps) {
   const price = turf.pricePerHour || 500;
   const hasRating = (turf.reviewCount ?? 0) > 0;
   const distance = turf.distanceMeters != null ? formatDistance(turf.distanceMeters / 1000) : null;
+  const { favoriteIds, toggleFavorite, isCustomer } = useFavorites();
+  const isFavorite = favoriteIds.has(turf._id);
 
   return (
     <Link to={`/turfs/${turf._id}`} className="group block">
@@ -35,6 +39,17 @@ export function TurfCard({ turf }: TurfCardProps) {
               </Badge>
             ))}
           </div>
+          {isCustomer && (
+            <button
+              type="button"
+              onClick={(e) => { e.preventDefault(); toggleFavorite(turf._id); }}
+              aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+              aria-pressed={isFavorite}
+              className="absolute top-4 right-4 w-9 h-9 rounded-full glass flex items-center justify-center hover:scale-110 transition-transform"
+            >
+              <Heart size={16} className={cn(isFavorite ? 'fill-destructive text-destructive' : 'text-foreground')} />
+            </button>
+          )}
         </div>
         <div className="p-5">
           <div className="flex items-center justify-between gap-2">
