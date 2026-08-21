@@ -152,17 +152,17 @@ export default function BookingFlowPage() {
             {sortedSlots.length > 1 ? `Your ${sortedSlots.length} slots have been successfully booked.` : 'Your slot has been successfully booked.'}
           </p>
           <div className="bg-muted/50 rounded-lg p-4 mt-6 text-sm space-y-2 text-left">
-            <div className="flex justify-between"><span className="text-muted-foreground">Venue</span><span className="font-medium">{turf?.name}</span></div>
+            <div className="flex justify-between gap-3"><span className="text-muted-foreground shrink-0">Venue</span><span className="font-medium text-right truncate min-w-0">{turf?.name}</span></div>
             {sortedSlots.map(slot => (
-              <div key={slot._id} className="flex justify-between">
-                <span className="text-muted-foreground">{formatSlotDate(slot.startTime)}</span>
-                <span className="font-medium">{formatSlotTime(slot.startTime)}</span>
+              <div key={slot._id} className="flex justify-between gap-3">
+                <span className="text-muted-foreground truncate min-w-0">{formatSlotDate(slot.startTime)}</span>
+                <span className="font-medium shrink-0">{formatSlotTime(slot.startTime)}</span>
               </div>
             ))}
-            <div className="flex justify-between"><span className="text-muted-foreground">Duration</span><span className="font-medium">{durationHours} hour{durationHours > 1 ? 's' : ''}</span></div>
-            <div className="flex justify-between font-bold border-t pt-2"><span>Total Paid</span><span className="text-primary">₹{chargedTotal}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Payment status</span><span className="font-medium text-success">Paid (simulated)</span></div>
-            <div className="flex justify-between text-[10px] text-muted-foreground mt-2"><span>Booking Reference</span><span>#{reference}</span></div>
+            <div className="flex justify-between gap-3"><span className="text-muted-foreground">Duration</span><span className="font-medium">{durationHours} hour{durationHours > 1 ? 's' : ''}</span></div>
+            <div className="flex justify-between gap-3 font-bold border-t pt-2"><span>Total Paid</span><span className="text-primary">₹{chargedTotal}</span></div>
+            <div className="flex justify-between gap-3"><span className="text-muted-foreground">Payment status</span><span className="font-medium text-success">Paid (simulated)</span></div>
+            <div className="flex justify-between gap-3 text-[10px] text-muted-foreground mt-2"><span className="shrink-0">Booking Reference</span><span className="truncate min-w-0">#{reference}</span></div>
           </div>
 
           <div className="grid grid-cols-2 gap-2 mt-4">
@@ -242,28 +242,28 @@ export default function BookingFlowPage() {
 
       <div className="bg-card border rounded-2xl p-6 shadow-sm">
         <div className="flex gap-4 mb-6">
-          <img src={image} alt="" className="w-24 h-24 rounded-xl object-cover bg-muted shrink-0" loading="lazy" />
-          <div>
-            <h2 className="font-semibold text-lg">{turf?.name}</h2>
-            <p className="text-sm text-muted-foreground">{turf?.location}</p>
-            <p className="text-sm text-muted-foreground capitalize mt-1">{sports.join(', ')}</p>
+          <img src={image} alt="" className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl object-cover bg-muted shrink-0" loading="lazy" />
+          <div className="min-w-0">
+            <h2 className="font-semibold text-lg truncate">{turf?.name}</h2>
+            <p className="text-sm text-muted-foreground truncate">{turf?.location}</p>
+            <p className="text-sm text-muted-foreground capitalize mt-1 truncate">{sports.join(', ')}</p>
           </div>
         </div>
 
         <div className="space-y-3 text-sm border-t pt-4">
           <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Base price</div>
           {sortedSlots.map(slot => (
-            <div key={slot._id} className="flex justify-between">
-              <span className="text-muted-foreground">
+            <div key={slot._id} className="flex justify-between gap-3">
+              <span className="text-muted-foreground truncate min-w-0">
                 {formatSlotDate(slot.startTime)} · {formatSlotTime(slot.startTime)}
               </span>
-              <span className="font-medium">₹{slot.price}</span>
+              <span className="font-medium shrink-0">₹{slot.price}</span>
             </div>
           ))}
-          <div className="flex justify-between"><span className="text-muted-foreground">Duration</span><span className="font-medium">{durationHours} hour{durationHours > 1 ? 's' : ''}</span></div>
-          <div className="flex justify-between text-muted-foreground"><span>Taxes &amp; platform fee</span><span>₹0 — none charged</span></div>
-          <div className="flex justify-between text-lg font-bold border-t pt-3">
-            <span>Total Amount</span><span className="text-primary">₹{total}</span>
+          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Duration</span><span className="font-medium">{durationHours} hour{durationHours > 1 ? 's' : ''}</span></div>
+          <div className="flex justify-between gap-3 text-muted-foreground"><span>Taxes &amp; platform fee</span><span className="shrink-0">₹0 — none charged</span></div>
+          <div className="flex justify-between gap-3 text-lg font-bold border-t pt-3">
+            <span>Total Amount</span><span className="text-primary shrink-0">₹{total}</span>
           </div>
         </div>
 

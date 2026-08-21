@@ -102,25 +102,27 @@ export default function HomePage() {
             initial={{ opacity: 0, scale: 0.97 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.15, duration: 0.4 }}
-            className="flex flex-col sm:flex-row items-stretch gap-2 max-w-xl mx-auto p-2 bg-card border rounded-full shadow-lg"
+            className="flex flex-col sm:flex-row items-stretch gap-2 max-w-xl mx-auto p-2 bg-card border rounded-2xl sm:rounded-full shadow-lg"
           >
-            <div className="relative flex-1">
+            <div className="relative flex-1 min-w-0">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" size={18} />
               <Input
                 placeholder="Search by turf name or locality..."
-                className="pl-11 h-12 border-none rounded-full focus-visible:ring-0 bg-transparent"
+                className="pl-11 h-11 sm:h-12 border-none rounded-xl sm:rounded-full focus-visible:ring-0 bg-transparent"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && goToSearch()}
               />
             </div>
-            <Button variant="ghost" size="lg" className="h-12 px-4 rounded-full font-bold gap-2" onClick={useMyLocation} disabled={locating}>
-              {locating ? <Loader2 size={16} className="animate-spin" /> : <MapPin size={16} />}
-              <span className="hidden sm:inline">Near me</span>
-            </Button>
-            <Button size="lg" className="h-12 px-8 rounded-full font-bold" onClick={goToSearch}>
-              Search
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="ghost" size="lg" className="h-11 sm:h-12 px-4 flex-1 sm:flex-none rounded-xl sm:rounded-full font-bold gap-2" onClick={useMyLocation} disabled={locating}>
+                {locating ? <Loader2 size={16} className="animate-spin" /> : <MapPin size={16} />}
+                Near me
+              </Button>
+              <Button size="lg" className="h-11 sm:h-12 px-8 flex-1 sm:flex-none rounded-xl sm:rounded-full font-bold" onClick={goToSearch}>
+                Search
+              </Button>
+            </div>
           </motion.div>
 
           <motion.div

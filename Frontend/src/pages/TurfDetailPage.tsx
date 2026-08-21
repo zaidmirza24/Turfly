@@ -403,7 +403,7 @@ export default function TurfDetailPage() {
 
         <div className="lg:col-span-1">
           <div className="sticky top-24 space-y-6">
-            <div className="glass p-8 rounded-[2.5rem] shadow-2xl relative overflow-hidden border-primary/10">
+            <div className="glass p-5 sm:p-8 rounded-[2.5rem] shadow-2xl relative overflow-hidden border-primary/10">
               <div className="absolute top-0 left-0 w-full h-1.5 gradient-primary" />
               
               {selectedSlots.length === 0 ? (
@@ -435,20 +435,18 @@ export default function TurfDetailPage() {
                         const istDay = getISTDay(slot.startTime);
                         const isWeekend = istDay === 0 || istDay === 6;
                         return (
-                          <div key={slot._id} className="flex justify-between items-center p-3 rounded-xl bg-card/60">
-                            <div>
-                              <div className="font-black text-sm tracking-tight flex items-center gap-1.5">
-                                {formatSlotDate(slot.startTime)}
-                                {' · '}
-                                {formatSlotTime(slot.startTime)}
-                                {isWeekend && <Sparkles size={11} className="text-success" aria-label="Weekend rate" />}
+                          <div key={slot._id} className="flex justify-between items-center gap-2 p-3 rounded-xl bg-card/60">
+                            <div className="min-w-0">
+                              <div className="font-black text-sm tracking-tight flex items-center gap-1.5 flex-wrap">
+                                <span className="truncate">{formatSlotDate(slot.startTime)} · {formatSlotTime(slot.startTime)}</span>
+                                {isWeekend && <Sparkles size={11} className="text-success shrink-0" aria-label="Weekend rate" />}
                               </div>
                               <div className="text-[10px] text-muted-foreground font-bold">₹{slot.price}</div>
                             </div>
                             <button
                               onClick={() => toggleSlot(slot)}
                               aria-label={`Remove ${formatSlotDate(slot.startTime)} ${formatSlotTime(slot.startTime)} from selection`}
-                              className="text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:text-destructive transition-colors px-2"
+                              className="shrink-0 text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:text-destructive transition-colors px-2"
                             >
                               Remove
                             </button>
