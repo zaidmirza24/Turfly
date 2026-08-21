@@ -1,8 +1,9 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { LayoutDashboard, MapPin, Calendar, ClipboardList, ChevronLeft, User, LogOut, Bell } from 'lucide-react';
+import { LayoutDashboard, MapPin, Calendar, ClipboardList, ChevronLeft, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
+import { UserMenu } from '@/components/UserMenu';
 
 const links = [
   { to: '/owner', label: 'Dashboard', icon: LayoutDashboard },
@@ -38,7 +39,7 @@ export default function OwnerLayout() {
           {links.map(l => {
             const isActive = pathname === l.to;
             return (
-              <Link key={l.to} to={l.to}>
+              <Link key={l.to} to={l.to} aria-current={isActive ? 'page' : undefined}>
                 <Button 
                   variant="ghost" 
                   className={cn(
@@ -98,10 +99,20 @@ export default function OwnerLayout() {
       <main className="flex-1 min-h-screen relative">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-primary/5 via-transparent to-transparent pointer-events-none" />
         <div className="p-4 sm:p-8 md:p-12 pb-32 md:pb-12 max-w-7xl mx-auto relative z-10">
-          <header className="flex items-center justify-end mb-10 md:hidden">
-             <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/20">
-                <User size={20} />
-             </div>
+          {/*
+            The sidebar — and with it the only Sign Out control — is hidden
+            below md. This slot used to hold a User icon that wasn't a button
+            and did nothing, so a phone user had no way to log out at all.
+            UserMenu is the same account menu the public navbar uses.
+          */}
+          <header className="flex items-center justify-between gap-3 mb-8 md:hidden">
+            <div className="min-w-0">
+              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-muted-foreground">
+                Owner panel
+              </div>
+              <div className="text-sm font-bold truncate">{user?.name || 'Owner'}</div>
+            </div>
+            <UserMenu />
           </header>
           <Outlet />
         </div>
