@@ -1,4 +1,5 @@
 import connectDB from "../src/common/config/db.js";
+import env from "../src/common/config/env.js";
 import mongoose from "mongoose";
 import User from "../src/modules/user/user.model.js";
 import Turf from "../src/modules/turf/turf.model.js";
@@ -12,6 +13,24 @@ const hoursFromMidnight = (date, hour) => {
 };
 
 const run = async () => {
+  // This script deletes every user, turf, slot and booking before seeding.
+  // It reads MONGO_URI from the same .env the server uses, so running it with
+  // production credentials loaded — a one-line mistake — wipes the live
+  // database with no confirmation and no backup. Two guards: never in
+  // production, and require an explicit opt-in flag.
+  if (env.NODE_ENV === "production") {
+    console.error("Refusing to run: seed:test wipes all data and NODE_ENV is 'production'.");
+    process.exit(1);
+  }
+  if (!process.argv.includes("--yes-wipe-all-data")) {
+    console.error(
+      "This deletes ALL users, turfs, slots and bookings in " +
+        env.MONGO_URI.replace(/\/\/[^@]*@/, "//<credentials>@") +
+        "\nRe-run with --yes-wipe-all-data if that is what you want."
+    );
+    process.exit(1);
+  }
+
   await connectDB();
 
   console.log("Clearing existing data...");

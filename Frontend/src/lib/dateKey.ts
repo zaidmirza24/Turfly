@@ -43,3 +43,34 @@ export function getISTDay(iso: string): number {
   const ist = new Date(new Date(iso).getTime() + IST_OFFSET_MS);
   return ist.getUTCDay();
 }
+
+const IST_TZ = 'Asia/Kolkata';
+
+/**
+ * Formatters pinned to the turf's own timezone (India).
+ *
+ * A booking's time is a property of the venue, not of the device looking at
+ * it: a customer checking their bookings from another timezone must still see
+ * the hour they'll actually turn up to play, and an owner's dashboard must
+ * agree with the slot grid. Passing no timeZone (the browser default) makes
+ * those disagree by whole hours — and, near midnight, by a whole day.
+ */
+export function formatSlotDate(iso: string | Date, opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' }): string {
+  return new Date(iso).toLocaleDateString('en-IN', { ...opts, timeZone: IST_TZ });
+}
+
+export function formatSlotTime(iso: string | Date): string {
+  return new Date(iso).toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: IST_TZ,
+  });
+}
+
+/** "YYYY-MM-DD" IST calendar day for an instant — the key the API buckets by. */
+export function toISTDateKey(iso: string | Date): string {
+  const d = new Date(iso);
+  const ist = new Date(d.getTime() + IST_OFFSET_MS);
+  return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, '0')}-${String(ist.getUTCDate()).padStart(2, '0')}`;
+}

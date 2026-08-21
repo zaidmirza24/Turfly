@@ -21,7 +21,24 @@ const PUBLIC_REGISTRATION_ROLES = ["USER", "OWNER"];
  * Register a new user.
  */
 export const registerUser = async ({ name, email, phone, password, role }) => {
-  const existingUser = await User.findOne({ email });
+  // Explicit checks before touching the DB. Without them a missing password
+  // reaches Mongoose as `undefined` and surfaces as a schema ValidationError,
+  // and a non-string email (`?email[$ne]=null` style payloads) reaches
+  // User.findOne as a Mongo operator object rather than a value.
+  if (typeof name !== "string" || name.trim().length === 0) {
+    throw new ApiError(400, "Name is required");
+  }
+  if (typeof email !== "string" || !/^\S+@\S+\.\S+$/.test(email)) {
+    throw new ApiError(400, "A valid email is required");
+  }
+  if (typeof password !== "string" || password.length < 6) {
+    throw new ApiError(400, "Password must be at least 6 characters");
+  }
+  if (phone !== undefined && phone !== null && typeof phone !== "string") {
+    throw new ApiError(400, "Phone must be a string");
+  }
+
+  const existingUser = await User.findOne({ email: email.toLowerCase() });
   if (existingUser) {
     throw new ApiError(409, "User with this email already exists");
   }
@@ -46,7 +63,14 @@ export const registerUser = async ({ name, email, phone, password, role }) => {
  * Login user with email & password.
  */
 export const loginUser = async ({ email, password }) => {
-  const user = await User.findOne({ email }).select("+password");
+  // Both must be strings before they reach the query: an object value here
+  // (`{"email": {"$ne": null}}`) would otherwise be interpreted by Mongo as an
+  // operator and match an arbitrary account.
+  if (typeof email !== "string" || typeof password !== "string") {
+    throw new ApiError(400, "Email and password are required");
+  }
+
+  const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
   if (!user) {
     throw new ApiError(401, "Invalid email or password");
   }

@@ -44,8 +44,7 @@ export function SlotSelector({ slots: allSlots, selectedSlotIds, onToggle }: Slo
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         {slots.map(slot => {
-          const id = slot._id || (slot as any).id;
-          const isSelected = selectedSlotIds.includes(id);
+          const isSelected = selectedSlotIds.includes(slot._id);
           const status = slot.status.toUpperCase();
           const isDisabled = status === 'BOOKED' || status === 'LOCKED' || status === 'FULL';
 
@@ -61,7 +60,7 @@ export function SlotSelector({ slots: allSlots, selectedSlotIds, onToggle }: Slo
 
           return (
             <button
-              key={id}
+              key={slot._id}
               onClick={() => !isDisabled && onToggle(slot)}
               disabled={isDisabled}
               aria-pressed={isSelected}

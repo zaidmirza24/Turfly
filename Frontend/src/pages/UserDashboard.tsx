@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import api from '@/lib/api';
+import { apiGet } from '@/lib/api';
 import { useBooking } from '@/contexts/BookingContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { BookingCard } from '@/components/BookingCard';
@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { CalendarDays, User, Activity, ChevronRight } from 'lucide-react';
 import { Booking } from '@/types';
+import { bookingStartTime } from '@/lib/booking';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
@@ -20,38 +21,38 @@ export default function UserDashboard() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [cancelId, setCancelId] = useState<string | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   const { data: bookingsResponse, isLoading } = useQuery({
     queryKey: ['my-bookings'],
-    queryFn: () => api.get('/bookings'),
+    queryFn: () => apiGet<Booking[]>('/bookings'),
     enabled: !!user,
   });
 
-  const bookings = (bookingsResponse as any)?.data as Booking[] || [];
+  const bookings = bookingsResponse?.data ?? [];
 
+  const now = Date.now();
   const upcoming = bookings.filter(b => {
-    const status = b.status.toUpperCase();
-    const startTime = (b.slotId as any)?.startTime || (b as any).startTime;
-    const isUpcoming = startTime ? new Date(startTime) >= new Date() : false;
-    return status === 'CONFIRMED' && isUpcoming;
+    const start = bookingStartTime(b);
+    return b.status === 'CONFIRMED' && !!start && start.getTime() >= now;
   });
 
   const past = bookings.filter(b => {
-    const status = b.status.toUpperCase();
-    const startTime = (b.slotId as any)?.startTime || (b as any).startTime;
-    const isPast = startTime ? new Date(startTime) < new Date() : false;
-    return status === 'CANCELLED' || isPast;
+    const start = bookingStartTime(b);
+    return b.status === 'CANCELLED' || (!!start && start.getTime() < now);
   });
 
   const handleCancel = async () => {
-    if (cancelId) {
+    if (cancelId && !isCancelling) {
+      setIsCancelling(true);
       try {
         await cancelBooking(cancelId);
         toast.success('Booking cancelled successfully');
         queryClient.invalidateQueries({ queryKey: ['my-bookings'] });
-      } catch (err: any) {
-        toast.error(err.message || 'Failed to cancel booking');
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Failed to cancel booking');
       } finally {
+        setIsCancelling(false);
         setCancelId(null);
       }
     }
@@ -110,7 +111,7 @@ export default function UserDashboard() {
                   <Button variant="link" className="mt-2 text-primary font-bold" onClick={() => navigate('/turfs')}>Discover Arenas <ChevronRight size={14} /></Button>
                 </div>
               ) : (
-                upcoming.map(b => <BookingCard key={b._id || b.id} booking={b} showCancel onCancel={setCancelId} />)
+                upcoming.map(b => <BookingCard key={b._id} booking={b} showCancel onCancel={setCancelId} />)
               )}
             </motion.div>
           </TabsContent>
@@ -123,7 +124,7 @@ export default function UserDashboard() {
                   <p className="text-muted-foreground font-black tracking-widest text-[10px] uppercase">No past history recorded</p>
                 </div>
               ) : (
-                past.map(b => <BookingCard key={b._id || b.id} booking={b} />)
+                past.map(b => <BookingCard key={b._id} booking={b} />)
               )}
             </motion.div>
           </TabsContent>
@@ -138,12 +139,14 @@ export default function UserDashboard() {
             </div>
             <AlertDialogTitle className="text-2xl font-black tracking-tighter">Cancel Slot?</AlertDialogTitle>
             <AlertDialogDescription className="text-muted-foreground font-medium">
-              This action releases your reserved time back to the arena. Refund policies may apply.
+              This releases your reserved time back to the venue and can't be undone. You can only cancel before the slot starts.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="mt-8 gap-3">
             <AlertDialogCancel className="rounded-xl font-bold h-12 border-border hover:bg-muted">Keep Slot</AlertDialogCancel>
-            <AlertDialogAction onClick={handleCancel} className="rounded-xl h-12 font-black bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-xl shadow-destructive/20">Confirm Cancellation</AlertDialogAction>
+            <AlertDialogAction onClick={handleCancel} disabled={isCancelling} className="rounded-xl h-12 font-black bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-xl shadow-destructive/20">
+              {isCancelling ? 'Cancelling…' : 'Confirm Cancellation'}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

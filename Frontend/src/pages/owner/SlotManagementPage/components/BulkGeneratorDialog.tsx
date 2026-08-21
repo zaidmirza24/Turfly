@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { UseMutationResult } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -17,13 +16,14 @@ import { Label } from '@/components/ui/label';
 import { Turf } from '@/types';
 import { toDateKey } from '@/lib/dateKey';
 import { buildBulkSlots } from '../utils';
+import { CreateSlotsMutation } from '../types';
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   selectedTurfId: string;
   currentTurf: Turf | undefined;
-  createSlotsMutation: UseMutationResult<any, any, { turfId: string; slots: { startTime: string; endTime: string; price: number }[] }, any>;
+  createSlotsMutation: CreateSlotsMutation;
 };
 
 export function BulkGeneratorDialog({ open, onOpenChange, selectedTurfId, currentTurf, createSlotsMutation }: Props) {

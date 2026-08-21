@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import api from '@/lib/api';
+import { apiGet } from '@/lib/api';
 import { TimeSlot } from '@/types';
 
 export function useSlotsQuery(selectedTurfId: string, startDateStr: string, endDateStr: string) {
@@ -8,11 +8,11 @@ export function useSlotsQuery(selectedTurfId: string, startDateStr: string, endD
 
   const { data: slotsResponse, isLoading: isLoadingSlots, isFetching: isFetchingSlots, isError: isSlotsError, refetch: refetchSlots } = useQuery({
     queryKey: slotsQueryKey,
-    queryFn: () => api.get(`/slots?turfId=${selectedTurfId}&startDate=${startDateStr}&endDate=${endDateStr}`),
+    queryFn: () => apiGet<TimeSlot[]>(`/slots?turfId=${selectedTurfId}&startDate=${startDateStr}&endDate=${endDateStr}`),
     enabled: !!selectedTurfId,
   });
 
-  const slots = (slotsResponse as any)?.data as TimeSlot[] || [];
+  const slots = slotsResponse?.data ?? [];
 
   return { slots, slotsQueryKey, isLoadingSlots, isFetchingSlots, isSlotsError, refetchSlots };
 }

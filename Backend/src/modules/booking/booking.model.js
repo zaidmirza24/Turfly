@@ -25,6 +25,16 @@ const bookingSchema = new mongoose.Schema(
       enum: ["CONFIRMED", "CANCELLED"],
       default: "CONFIRMED",
     },
+    // Who cancelled this booking, distinct from just knowing that it's
+    // cancelled — needed for refund policy and reporting once real payments
+    // exist. Only CUSTOMER is reachable today (there is no admin/owner
+    // cancellation endpoint yet); the other values are here so a future
+    // admin-cancel flow doesn't need a schema migration.
+    cancelledBy: {
+      type: String,
+      enum: ["CUSTOMER", "OWNER", "ADMIN", "SYSTEM"],
+      default: null,
+    },
     amount: {
       type: Number,
       required: [true, "Booking amount is required"],

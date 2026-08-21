@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { AlertTriangle, Calendar as CalendarIcon, Info, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { TimeSlot } from '@/types';
-import { toDateKey } from '@/lib/dateKey';
+import { getISTDay, toDateKey } from '@/lib/dateKey';
 
 import { useTurfSelection } from './hooks/useTurfSelection';
 import { useWeekView } from './hooks/useWeekView';
@@ -85,7 +85,8 @@ export default function SlotManagementPage() {
 
   const openPriceEditor = (date: Date, hour: number) => {
     if (isMutatingSlots) return;
-    const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+    const istDay = getISTDay(date.toISOString());
+    const isWeekend = istDay === 0 || istDay === 6;
     const existing = getSlotForHour(date, hour);
     const defaultPrice = isWeekend ? currentTurf?.defaultWeekendPrice : currentTurf?.defaultWeekdayPrice;
     setEditingSlot({ date, hour, price: existing?.price ?? Number(defaultPrice || currentTurf?.pricePerHour || 1000) });

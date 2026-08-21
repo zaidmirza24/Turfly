@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import env from "../config/env.js";
 import ApiError from "../utils/ApiError.js";
+import { addContext } from "../utils/logger.js";
 import User from "../../modules/user/user.model.js";
 
 /**
@@ -30,6 +31,11 @@ export const protect = async (req, _res, next) => {
   if (user.isBanned) {
     throw new ApiError(403, "Account suspended");
   }
+
+  // Everything logged from here on carries who it was for. The id and role
+  // only — never the email or name, which are the user's personal data and
+  // have no business being replicated into a log store.
+  addContext({ userId: user._id.toString(), role: user.role });
 
   req.user = user;
   next();

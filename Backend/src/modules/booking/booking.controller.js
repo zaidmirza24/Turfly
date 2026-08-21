@@ -35,7 +35,7 @@ export const cancelBooking = async (req, res) => {
 };
 
 export const getTurfBookings = async (req, res) => {
-  const bookings = await bookingService.getBookingsByTurf(req.params.turfId);
+  const bookings = await bookingService.getBookingsByTurf(req.user._id, req.params.turfId);
   new ApiResponse(200, "Turf bookings fetched successfully", bookings).send(
     res
   );

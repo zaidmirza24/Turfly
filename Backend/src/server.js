@@ -1,26 +1,60 @@
 import env from "./common/config/env.js";
 import connectDB from "./common/config/db.js";
 import app from "./app.js";
-import { initSlotCleanupJob } from "./common/jobs/slotCleanup.js";
+import logger from "./common/utils/logger.js";
 
 /**
  * Local/traditional (long-running process) entry point.
- * Not used on Vercel — see api/index.js for the serverless entry point,
- * which reuses the same app.js but skips app.listen() and node-cron
- * (neither works in a serverless function).
+ * Not used on Vercel — see api/index.js for the serverless entry point, which
+ * reuses the same app.js but skips app.listen().
+ *
+ * There are no background jobs to start. Both recurring chores are handled
+ * without a scheduler: expired slot locks self-heal (see
+ * common/jobs/releaseExpiredLocks.js) and abandoned image uploads carry their
+ * own MongoDB TTL expiry (see modules/image/image.model.js). That keeps this
+ * entry point and the serverless one behaving identically.
  */
+
+/**
+ * Last-resort handlers.
+ *
+ * A rejected promise outside a request (a background job, a driver callback)
+ * has no error middleware to reach. Without these, Node prints its own trace
+ * and — for an unhandled rejection on Node 15+ — exits, leaving no structured
+ * record of why the process died.
+ */
+process.on("unhandledRejection", (reason) => {
+  logger.error("Unhandled promise rejection", { err: reason });
+});
+
+process.on("uncaughtException", (err) => {
+  // The process is in an undefined state after this, so the only safe move is
+  // to record it and let the supervisor restart us.
+  logger.error("Uncaught exception — shutting down", { err });
+  process.exit(1);
+});
+
 const start = async () => {
   try {
     await connectDB();
 
-    // Background jobs only make sense with a persistent process.
-    initSlotCleanupJob();
-
-    app.listen(env.PORT, () => {
-      console.log(`🚀 Server running on port ${env.PORT} [${env.NODE_ENV}]`);
+    const server = app.listen(env.PORT, () => {
+      logger.info("Server listening", { port: env.PORT, env: env.NODE_ENV });
     });
+
+    // Stop accepting new connections and let in-flight requests finish, rather
+    // than dropping them mid-response when the platform sends SIGTERM.
+    const shutdown = (signal) => {
+      logger.info("Shutting down", { signal });
+      server.close(() => process.exit(0));
+      // Don't hang forever on a stuck keep-alive connection.
+      setTimeout(() => process.exit(1), 10_000).unref();
+    };
+
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
   } catch (error) {
-    console.error(`❌ Failed to start server: ${error.message}`);
+    logger.error("Failed to start server", { err: error });
     process.exit(1);
   }
 };

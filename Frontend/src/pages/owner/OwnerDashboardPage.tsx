@@ -1,8 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import api from '@/lib/api';
+import { apiGet } from '@/lib/api';
 import { DollarSign, CalendarDays, TrendingUp, MapPin, ChevronRight, Activity } from 'lucide-react';
 import { Booking, Turf } from '@/types';
+import { bookingStartTime, bookingTurf, bookingUser } from '@/lib/booking';
+import { formatSlotDate, formatSlotTime, toISTDateKey } from '@/lib/dateKey';
+import { turfCoverImage } from '@/lib/imageUrl';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
@@ -15,52 +18,82 @@ export default function OwnerDashboard() {
   const navigate = useNavigate();
   const { data: turfsResponse, isLoading: isLoadingTurfs } = useQuery({
     queryKey: ['my-turfs'],
-    queryFn: () => api.get('/turfs/my-turfs'),
+    queryFn: () => apiGet<Turf[]>('/turfs/my-turfs'),
   });
 
   const { data: bookingsResponse, isLoading: isLoadingBookings } = useQuery({
     queryKey: ['owner-bookings'],
-    queryFn: () => api.get('/bookings/owner'),
+    queryFn: () => apiGet<Booking[]>('/bookings/owner'),
   });
 
-  const turfs = (turfsResponse as any)?.data as Turf[] || [];
-  const bookings = (bookingsResponse as any)?.data as Booking[] || [];
+  const turfs = turfsResponse?.data ?? [];
+  const bookings = bookingsResponse?.data ?? [];
 
-  const revenue = bookings
-    .filter(b => b.status.toUpperCase() === 'CONFIRMED')
-    .reduce((s, b) => s + (b.totalAmount || b.amount || 0), 0);
+  const confirmed = bookings.filter(b => b.status === 'CONFIRMED');
+  const revenue = confirmed.reduce((sum, b) => sum + (b.amount || 0), 0);
 
-  const upcoming = bookings.filter(b => {
-    const startTimeStr = (b.slotId as any)?.startTime || (b as any).startTime;
-    const isUpcoming = startTimeStr ? new Date(startTimeStr) >= new Date() : false;
-    return b.status.toUpperCase() === 'CONFIRMED' && isUpcoming;
+  const now = Date.now();
+  const upcoming = confirmed.filter(b => {
+    const start = bookingStartTime(b);
+    return !!start && start.getTime() >= now;
   });
 
+  // Each stat carries a real caption derived from the same data, not a
+  // hardcoded trend. The previous "+12% / +8.4% / +2 / Stable since last week"
+  // values were literals in this array — they never moved, and they were shown
+  // to owners as if they were measured performance.
   const stats = [
-    { label: 'Total Bookings', value: bookings.length, icon: CalendarDays, trend: '+12%', color: 'from-blue-500/15 to-blue-600/15 text-blue-600' },
-    { label: 'Total Revenue', value: `₹${revenue.toLocaleString()}`, icon: DollarSign, trend: '+8.4%', color: 'from-success/15 to-success/25 text-success' },
-    { label: 'Upcoming', value: upcoming.length, icon: TrendingUp, trend: '+2', color: 'from-warning/15 to-warning/25 text-warning' },
-    { label: 'Active Turfs', value: turfs.filter(t => t.isActive).length, icon: MapPin, trend: 'Stable', color: 'from-purple-500/15 to-purple-600/15 text-purple-600' },
+    {
+      label: 'Total Bookings',
+      value: bookings.length,
+      caption: `${confirmed.length} confirmed`,
+      icon: CalendarDays,
+      color: 'from-blue-500/15 to-blue-600/15 text-blue-600',
+    },
+    {
+      label: 'Revenue',
+      value: `₹${revenue.toLocaleString('en-IN')}`,
+      caption: 'From confirmed bookings',
+      icon: DollarSign,
+      color: 'from-success/15 to-success/25 text-success',
+    },
+    {
+      label: 'Upcoming',
+      value: upcoming.length,
+      caption: 'Slots still to play',
+      icon: TrendingUp,
+      color: 'from-warning/15 to-warning/25 text-warning',
+    },
+    {
+      label: 'Active Turfs',
+      value: turfs.filter(t => t.isActive).length,
+      caption: `${turfs.length} listed`,
+      icon: MapPin,
+      color: 'from-purple-500/15 to-purple-600/15 text-purple-600',
+    },
   ];
 
   // Prepare chart data
+  // Buckets are IST calendar days. The previous version keyed both sides off
+  // `toISOString().split('T')[0]` — a UTC day. IST is UTC+5:30, so every slot
+  // between 00:00 and 05:29 IST belongs to the previous UTC day and was
+  // charted a column early, and the row labels (built with the browser's local
+  // weekday) could disagree with the bucket they sat above.
   const chartData = useMemo(() => {
     const last7Days = Array.from({ length: 7 }, (_, i) => {
       const d = new Date();
       d.setDate(d.getDate() - (6 - i));
-      return d.toISOString().split('T')[0];
+      return { key: toISTDateKey(d), label: formatSlotDate(d, { weekday: 'short' }) };
     });
 
-    return last7Days.map(date => {
-      const dayBookings = bookings.filter(b => {
-        const bDate = ((b.slotId as any)?.startTime || (b as any).startTime || '').split('T')[0];
-        return bDate === date && b.status.toUpperCase() === 'CONFIRMED';
-      });
-      const amount = dayBookings.reduce((s, b) => s + (b.totalAmount || b.amount || 0), 0);
-      return {
-        date: new Date(date).toLocaleDateString(undefined, { weekday: 'short' }),
-        revenue: amount
-      };
+    return last7Days.map(({ key, label }) => {
+      const revenueForDay = bookings.reduce((sum, b) => {
+        if (b.status !== 'CONFIRMED') return sum;
+        const start = bookingStartTime(b);
+        if (!start || toISTDateKey(start) !== key) return sum;
+        return sum + (b.amount || 0);
+      }, 0);
+      return { date: label, revenue: revenueForDay };
     });
   }, [bookings]);
 
@@ -102,8 +135,7 @@ export default function OwnerDashboard() {
               </div>
             </div>
             <div className="flex items-center gap-2 pt-4 border-t border-primary/5">
-              <span className="text-[10px] font-black text-success bg-success/10 px-2 py-0.5 rounded-full">{s.trend}</span>
-              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Since last week</span>
+              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{s.caption}</span>
             </div>
           </motion.div>
         ))}
@@ -174,18 +206,21 @@ export default function OwnerDashboard() {
           <div className="glass rounded-[2.5rem] p-6 space-y-4">
              <div className="space-y-4">
                {upcoming.length > 0 ? (
-                 upcoming.slice(0, 3).map((b, i) => (
-                   <div key={b._id} className="flex items-center gap-4 p-4 rounded-2xl bg-muted border group hover:border-primary/20 transition-all">
-                     <div className="w-12 h-12 rounded-xl bg-primary/10 flex flex-col items-center justify-center text-primary font-black">
-                        <span className="text-[10px] leading-none uppercase">{new Date((b.slotId as any)?.startTime || (b as any).startTime).toLocaleDateString(undefined, {month: 'short'})}</span>
-                        <span className="text-lg leading-none">{new Date((b.slotId as any)?.startTime || (b as any).startTime).getDate()}</span>
+                 upcoming.slice(0, 3).map(b => {
+                   const start = bookingStartTime(b);
+                   return (
+                     <div key={b._id} className="flex items-center gap-4 p-4 rounded-2xl bg-muted border group hover:border-primary/20 transition-all">
+                       <div className="w-12 h-12 rounded-xl bg-primary/10 flex flex-col items-center justify-center text-primary font-black shrink-0">
+                          <span className="text-[10px] leading-none uppercase">{start ? formatSlotDate(start, { month: 'short' }) : '--'}</span>
+                          <span className="text-lg leading-none">{start ? formatSlotDate(start, { day: 'numeric' }) : '--'}</span>
+                       </div>
+                       <div className="min-w-0">
+                         <div className="font-bold text-sm">{start ? formatSlotTime(start) : 'Upcoming'}</div>
+                         <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest truncate">{bookingTurf(b)?.name}</div>
+                       </div>
                      </div>
-                     <div>
-                       <div className="font-bold text-sm">Upcoming Match</div>
-                       <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">{(b as any).turfId?.name}</div>
-                     </div>
-                   </div>
-                 ))
+                   );
+                 })
                ) : (
                  <div className="text-center py-10 opacity-30">
                     <Activity size={40} className="mx-auto mb-2" />
@@ -233,17 +268,16 @@ export default function OwnerDashboard() {
                     </tr>
                   ) : (
                     bookings.slice(0, 6).map((b, i) => {
-                      const turf = (b as any).turfId;
-                      const user = (b as any).userId;
-                      const startTimeStr = (b.slotId as any)?.startTime || (b as any).startTime;
-                      const startTime = startTimeStr ? new Date(startTimeStr) : new Date();
+                      const turf = bookingTurf(b);
+                      const customer = bookingUser(b);
+                      const startTime = bookingStartTime(b);
                       
                       return (
                         <motion.tr 
                           initial={{ opacity: 0, x: -10 }}
                           animate={{ opacity: 1, x: 0 }}
                           transition={{ delay: 0.3 + (i * 0.05) }}
-                          key={b._id || b.id} 
+                          key={b._id} 
                           className="group hover:bg-primary/[0.02] transition-colors"
                         >
                           <td className="p-6">
@@ -255,12 +289,12 @@ export default function OwnerDashboard() {
                             </div>
                           </td>
                           <td className="p-6">
-                            <div className="font-bold">{user?.name || 'Customer'}</div>
+                            <div className="font-bold">{customer?.name || 'Customer'}</div>
                             <div className="text-[10px] font-black text-primary uppercase tracking-widest mt-1">
-                              {startTime.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})} • {startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              {startTime ? `${formatSlotDate(startTime)} • ${formatSlotTime(startTime)}` : '—'}
                             </div>
                           </td>
-                          <td className="p-6 font-black text-lg tracking-tighter text-foreground/80">₹{b.totalAmount || b.amount}</td>
+                          <td className="p-6 font-black text-lg tracking-tighter text-foreground/80">₹{b.amount}</td>
                           <td className="p-6">
                             <BookingStatusBadge status={b.status} />
                           </td>
@@ -286,7 +320,7 @@ export default function OwnerDashboard() {
                 className="glass p-5 rounded-[2rem] border-primary/10 flex items-center gap-4 group cursor-pointer hover:border-primary/30 transition-all shadow-xl shadow-black/5"
               >
                 <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-lg shadow-black/10">
-                  <img src={t.images?.[0] || 'https://images.unsplash.com/photo-1574629810360-7efbbe195018'} alt="" className="w-full h-full object-cover transition-transform group-hover:scale-110" />
+                  <img src={turfCoverImage(t.images)} alt="" className="w-full h-full object-cover bg-muted transition-transform group-hover:scale-110" loading="lazy" />
                 </div>
                 <div className="flex-1">
                   <div className="font-black tracking-tight group-hover:text-primary transition-colors">{t.name}</div>

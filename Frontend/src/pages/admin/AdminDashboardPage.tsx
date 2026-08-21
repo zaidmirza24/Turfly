@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import api from '@/lib/api';
+import { apiGet } from '@/lib/api';
 import { Users, MapPin, CalendarDays, DollarSign } from 'lucide-react';
 import { TableSkeleton } from '@/components/Skeletons';
 
@@ -13,10 +13,10 @@ interface AdminStats {
 export default function AdminDashboardPage() {
   const { data, isLoading } = useQuery({
     queryKey: ['admin-stats'],
-    queryFn: () => api.get('/admin/stats'),
+    queryFn: () => apiGet<AdminStats>('/admin/stats'),
   });
 
-  const stats = (data as any)?.data as AdminStats | undefined;
+  const stats = data?.data;
 
   const cards = [
     { label: 'Total Users', value: stats?.totalUsers ?? 0, icon: Users },

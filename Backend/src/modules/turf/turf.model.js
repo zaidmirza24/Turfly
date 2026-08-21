@@ -21,6 +21,15 @@ const turfSchema = new mongoose.Schema(
       required: [true, "Location is required"],
       trim: true,
     },
+    // Owners are asked for this at onboarding and in "Add Turf"; without a
+    // schema field Mongoose silently discarded it and the public detail page
+    // fell back to generic filler copy for every venue on the platform.
+    description: {
+      type: String,
+      trim: true,
+      maxlength: [1000, "Description cannot exceed 1000 characters"],
+      default: "",
+    },
     sportsType: {
       type: [String],
       required: [true, "At least one sport type is required"],
@@ -30,6 +39,16 @@ const turfSchema = new mongoose.Schema(
       },
     },
     amenities: {
+      type: [String],
+      default: [],
+    },
+    /**
+     * Photo URLs, always our own `/api/images/:id` paths — never an arbitrary
+     * external URL. turf.service validates and normalises this through
+     * image.service.attachImagesToTurf on every write; the first entry is the
+     * one used as the card/listing thumbnail.
+     */
+    images: {
       type: [String],
       default: [],
     },

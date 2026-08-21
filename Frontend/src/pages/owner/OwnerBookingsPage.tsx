@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import api from '@/lib/api';
+import { apiGet } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Search, Filter, CalendarDays, User, MapPin, Activity } from 'lucide-react';
 import { Booking } from '@/types';
+import { bookingStartTime, bookingTurf, bookingUser } from '@/lib/booking';
+import { formatSlotDate, formatSlotTime } from '@/lib/dateKey';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { SyncingIndicator } from '@/components/SyncingIndicator';
@@ -15,18 +17,17 @@ export default function OwnerBookingsPage() {
 
   const { data: bookingsResponse, isLoading } = useQuery({
     queryKey: ['owner-bookings'],
-    queryFn: () => api.get('/bookings/owner'),
+    queryFn: () => apiGet<Booking[]>('/bookings/owner'),
   });
 
-  const bookings = (bookingsResponse as any)?.data as Booking[] || [];
+  const bookings = bookingsResponse?.data ?? [];
 
   const filtered = bookings.filter(b => {
-    const matchesFilter = filter === 'all' || b.status.toLowerCase() === filter.toLowerCase();
-    const user = (b as any).userId;
-    const turf = (b as any).turfId;
-    const matchesSearch = !search || 
-      user?.name?.toLowerCase().includes(search.toLowerCase()) || 
-      turf?.name?.toLowerCase().includes(search.toLowerCase());
+    const matchesFilter = filter === 'all' || b.status.toLowerCase() === filter;
+    const q = search.trim().toLowerCase();
+    const matchesSearch = !q ||
+      bookingUser(b)?.name?.toLowerCase().includes(q) ||
+      bookingTurf(b)?.name?.toLowerCase().includes(q);
     return matchesFilter && matchesSearch;
   });
 
@@ -55,6 +56,7 @@ export default function OwnerBookingsPage() {
             placeholder="Search customer or turf..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search bookings by customer or turf"
             className="w-full h-12 pl-12 pr-4 rounded-2xl bg-primary/5 border-2 border-transparent focus:border-primary/20 focus:bg-background outline-none font-bold transition-all"
           />
         </div>
@@ -103,10 +105,9 @@ export default function OwnerBookingsPage() {
                   </motion.tr>
                 ) : (
                   filtered.map((b, i) => {
-                    const user = (b as any).userId;
-                    const turf = (b as any).turfId;
-                    const startTimeStr = (b.slotId as any)?.startTime || (b as any).startTime;
-                    const startTime = startTimeStr ? new Date(startTimeStr) : new Date();
+                    const customer = bookingUser(b);
+                    const turf = bookingTurf(b);
+                    const startTime = bookingStartTime(b);
                     
                     return (
                       <motion.tr 
@@ -115,7 +116,7 @@ export default function OwnerBookingsPage() {
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, scale: 0.95 }}
                         transition={{ delay: i * 0.05 }}
-                        key={b._id || b.id} 
+                        key={b._id} 
                         className="group hover:bg-primary/[0.02] transition-colors"
                       >
                         <td className="p-6">
@@ -124,8 +125,11 @@ export default function OwnerBookingsPage() {
                               <User size={18} className="text-primary" />
                             </div>
                             <div>
-                              <div className="font-black tracking-tight">{user?.name || 'Guest User'}</div>
-                              <div className="text-[10px] font-bold text-muted-foreground">{user?.email}</div>
+                              <div className="font-black tracking-tight">{customer?.name || 'Guest User'}</div>
+                              <div className="text-[10px] font-bold text-muted-foreground">{customer?.email}</div>
+                              {customer?.phone && (
+                                <a href={`tel:${customer.phone}`} className="text-[10px] font-bold text-primary hover:underline">{customer.phone}</a>
+                              )}
                             </div>
                           </div>
                         </td>
@@ -139,15 +143,16 @@ export default function OwnerBookingsPage() {
                         <td className="p-6">
                           <div className="flex items-center gap-2 mb-1">
                             <CalendarDays size={14} className="text-primary" />
-                            <span className="font-black tracking-tight">{startTime.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                            <span className="font-black tracking-tight">
+                              {startTime ? formatSlotDate(startTime, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                            </span>
                           </div>
                           <div className="text-[10px] font-black text-primary uppercase tracking-[0.2em] ml-6">
-                            {startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {startTime ? formatSlotTime(startTime) : ''}
                           </div>
                         </td>
                         <td className="p-6">
-                          <div className="font-black text-lg tracking-tighter">₹{b.totalAmount || b.amount}</div>
-                          <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Paid via Wallet</div>
+                          <div className="font-black text-lg tracking-tighter">₹{b.amount}</div>
                         </td>
                         <td className="p-6">
                           <BookingStatusBadge status={b.status} />

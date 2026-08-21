@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import api from '@/lib/api';
+import { apiGet } from '@/lib/api';
 import { Turf } from '@/types';
 
 export function useTurfSelection() {
@@ -8,10 +8,10 @@ export function useTurfSelection() {
 
   const { data: turfsResponse, isLoading: isLoadingTurfs, isError: isTurfsError, refetch: refetchTurfs } = useQuery({
     queryKey: ['my-turfs'],
-    queryFn: () => api.get('/turfs/my-turfs'),
+    queryFn: () => apiGet<Turf[]>('/turfs/my-turfs'),
   });
 
-  const turfs = (turfsResponse as any)?.data as Turf[] || [];
+  const turfs = turfsResponse?.data ?? [];
   const currentTurf = turfs.find(t => t._id === selectedTurfId);
 
   // Auto-select the first turf once turfs load (effect, not during render).

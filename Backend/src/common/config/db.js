@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import env from "./env.js";
+import logger from "../utils/logger.js";
 
 /**
  * Cached across invocations so serverless platforms (Vercel) reuse the
@@ -20,7 +21,7 @@ const connectDB = async () => {
     cached.promise = mongoose
       .connect(env.MONGO_URI, { bufferCommands: false })
       .then((mongooseInstance) => {
-        console.log(`✅ MongoDB connected: ${mongooseInstance.connection.host}`);
+        logger.info("MongoDB connected", { host: mongooseInstance.connection.host });
         return mongooseInstance;
       });
   }
@@ -28,7 +29,10 @@ const connectDB = async () => {
   try {
     cached.conn = await cached.promise;
   } catch (error) {
+    // Reset the memoised promise so the next request retries the connection
+    // instead of re-awaiting a rejected one for the life of the process.
     cached.promise = null;
+    logger.error("MongoDB connection failed", { err: error });
     throw error;
   }
 

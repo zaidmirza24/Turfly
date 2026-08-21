@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { UseMutationResult } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Loader2, Plus, Settings, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -16,13 +15,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Turf } from '@/types';
+import { ApplyDefaultsMutation, UpdateTurfMutation } from '../types';
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   currentTurf: Turf | undefined;
-  updateTurfMutation: UseMutationResult<any, any, any, any>;
-  applyDefaultsMutation: UseMutationResult<any, any, void, any>;
+  updateTurfMutation: UpdateTurfMutation;
+  applyDefaultsMutation: ApplyDefaultsMutation;
 };
 
 export function TurfSettingsDialog({ open, onOpenChange, currentTurf, updateTurfMutation, applyDefaultsMutation }: Props) {

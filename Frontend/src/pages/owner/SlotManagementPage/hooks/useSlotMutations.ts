@@ -1,10 +1,10 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import api from '@/lib/api';
-import { Turf } from '@/types';
-import { parseDateKey } from '@/lib/dateKey';
+import { apiPost, apiPatch, apiDelete } from '@/lib/api';
+import { TimeSlot, Turf } from '@/types';
+import { getISTDay, parseDateKey } from '@/lib/dateKey';
 import { STATUS_META } from '../constants';
-import { SlotAction, SlotsApiResponse } from '../types';
+import { SlotAction, SlotsApiResponse, CreateSlotsPayload, TurfSettingsPayload } from '../types';
 
 type Params = {
   selectedTurfId: string;
@@ -54,8 +54,8 @@ export function useSlotMutations({ selectedTurfId, currentTurf, slotsQueryKey, o
   };
 
   const updateTurfMutation = useMutation({
-    mutationFn: (data: any) => api.patch(`/turfs/${selectedTurfId}`, data),
-    onMutate: async (data: any) => {
+    mutationFn: (data: TurfSettingsPayload) => apiPatch<Turf>(`/turfs/${selectedTurfId}`, data),
+    onMutate: async (data: TurfSettingsPayload) => {
       await queryClient.cancelQueries({ queryKey: ['my-turfs'] });
       const previous = queryClient.getQueryData<{ data: Turf[] }>(['my-turfs']);
       queryClient.setQueryData<{ data: Turf[] }>(['my-turfs'], (old) => {
@@ -65,7 +65,7 @@ export function useSlotMutations({ selectedTurfId, currentTurf, slotsQueryKey, o
       onSettingsSaved();
       return { previous };
     },
-    onError: (error: any, _data, context) => {
+    onError: (error: Error, _data, context) => {
       if (context?.previous) queryClient.setQueryData(['my-turfs'], context.previous);
       toast.error(error.message || 'Failed to save settings');
     },
@@ -77,7 +77,7 @@ export function useSlotMutations({ selectedTurfId, currentTurf, slotsQueryKey, o
     mutationFn: () => {
       const weekday = currentTurf?.defaultWeekdayPrice || 1000;
       const weekend = currentTurf?.defaultWeekendPrice || 1500;
-      return api.patch('/slots', { turfId: selectedTurfId, weekdayPrice: weekday, weekendPrice: weekend });
+      return apiPatch<null>('/slots', { turfId: selectedTurfId, weekdayPrice: weekday, weekendPrice: weekend });
     },
     onMutate: async () => {
       const previous = await snapshotSlots();
@@ -89,7 +89,11 @@ export function useSlotMutations({ selectedTurfId, currentTurf, slotsQueryKey, o
           ...old,
           data: old.data.map(s => {
             if (s.status !== 'AVAILABLE') return s;
-            const day = new Date(s.startTime).getDay();
+            // IST, matching the server's $dayOfWeek timezone. Using the
+            // browser's local day here made the optimistic price flip to the
+            // wrong tier for early-morning IST slots, then silently correct
+            // itself on refetch.
+            const day = getISTDay(s.startTime);
             const isWeekend = day === 0 || day === 6;
             return { ...s, price: isWeekend ? weekend : weekday };
           })
@@ -97,7 +101,7 @@ export function useSlotMutations({ selectedTurfId, currentTurf, slotsQueryKey, o
       });
       return { previous };
     },
-    onError: (error: any, _v, context) => {
+    onError: (error: Error, _v, context) => {
       rollbackSlots(context?.previous);
       toast.error(error.message || 'Failed to apply default prices');
     },
@@ -106,7 +110,7 @@ export function useSlotMutations({ selectedTurfId, currentTurf, slotsQueryKey, o
   });
 
   const createSlotsMutation = useMutation({
-    mutationFn: (data: { turfId: string; slots: { startTime: string; endTime: string; price: number }[] }) => api.post('/slots', data),
+    mutationFn: (data: CreateSlotsPayload) => apiPost<TimeSlot[]>('/slots', data),
     onMutate: async (data) => {
       const previous = await snapshotSlots();
       queryClient.setQueryData<SlotsApiResponse>(slotsQueryKey, (old) =>
@@ -115,7 +119,7 @@ export function useSlotMutations({ selectedTurfId, currentTurf, slotsQueryKey, o
       onBulkOrSlotCreated();
       return { previous };
     },
-    onError: (error: any, _data, context) => {
+    onError: (error: Error, _data, context) => {
       rollbackSlots(context?.previous);
       toast.error(error.message || 'Failed to update slots');
     },
@@ -125,7 +129,7 @@ export function useSlotMutations({ selectedTurfId, currentTurf, slotsQueryKey, o
 
   const setStatusMutation = useMutation({
     mutationFn: (data: { turfId: string; slots: { startTime: string; endTime: string }[]; status: SlotAction }) =>
-      api.patch('/slots/status', data),
+      apiPatch<TimeSlot[]>('/slots/status', data),
     onMutate: async (data) => {
       const previous = await snapshotSlots();
       queryClient.setQueryData<SlotsApiResponse>(slotsQueryKey, (old) =>
@@ -134,7 +138,7 @@ export function useSlotMutations({ selectedTurfId, currentTurf, slotsQueryKey, o
       onSelectionApplied();
       return { previous };
     },
-    onError: (error: any, _data, context) => {
+    onError: (error: Error, _data, context) => {
       rollbackSlots(context?.previous);
       toast.error(error.message || 'Failed to update slot status');
     },
@@ -146,7 +150,7 @@ export function useSlotMutations({ selectedTurfId, currentTurf, slotsQueryKey, o
   });
 
   const deleteSlotsMutation = useMutation({
-    mutationFn: (date: string) => api.delete('/slots', { params: { turfId: selectedTurfId, date } }),
+    mutationFn: (date: string) => apiDelete<null>('/slots', { params: { turfId: selectedTurfId, date } }),
     onMutate: async (dateIso: string) => {
       const previous = await snapshotSlots();
       const target = parseDateKey(dateIso);
@@ -164,7 +168,7 @@ export function useSlotMutations({ selectedTurfId, currentTurf, slotsQueryKey, o
       onSelectionApplied();
       return { previous };
     },
-    onError: (error: any, _date, context) => {
+    onError: (error: Error, _date, context) => {
       rollbackSlots(context?.previous);
       toast.error(error.message || 'Failed to clear slots');
     },

@@ -1,15 +1,18 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
-import { TimeSlot } from '@/types';
-import api from '@/lib/api';
-
-const getSlotId = (slot: TimeSlot) => slot._id || (slot as any).id;
+import { TimeSlot, Booking } from '@/types';
+import { apiPost, apiDelete } from '@/lib/api';
 
 interface BookingContextType {
+  /** Slots currently selected, always all belonging to `selectedTurfId`. */
   selectedSlots: TimeSlot[];
+  /** The turf the current selection belongs to, or null when nothing is selected. */
+  selectedTurfId: string | null;
   toggleSlot: (slot: TimeSlot) => void;
+  /** Drops the selection unless it already belongs to `turfId`. */
+  keepSelectionFor: (turfId: string) => void;
   clearSelection: () => void;
-  createBooking: (slotIds: string[]) => Promise<any>;
-  cancelBooking: (bookingId: string) => Promise<any>;
+  createBooking: (slotIds: string[]) => Promise<Booking | Booking[]>;
+  cancelBooking: (bookingId: string) => Promise<Booking>;
 }
 
 const BookingContext = createContext<BookingContextType | undefined>(undefined);
@@ -17,13 +20,23 @@ const BookingContext = createContext<BookingContextType | undefined>(undefined);
 export function BookingProvider({ children }: { children: React.ReactNode }) {
   const [selectedSlots, setSelectedSlots] = useState<TimeSlot[]>([]);
 
+  const selectedTurfId = selectedSlots[0]?.turfId ?? null;
+
   const toggleSlot = useCallback((slot: TimeSlot) => {
-    const id = getSlotId(slot);
     setSelectedSlots(prev => {
-      const exists = prev.some(s => getSlotId(s) === id);
-      if (exists) return prev.filter(s => getSlotId(s) !== id);
-      return [...prev, slot];
+      const exists = prev.some(s => s._id === slot._id);
+      if (exists) return prev.filter(s => s._id !== slot._id);
+      // Selecting a slot from a different venue replaces the selection rather
+      // than adding to it. A checkout is per-turf: the confirmation screen
+      // shows one turf's name and price, and the API rejects a mixed-turf
+      // booking outright.
+      const sameTurf = prev.filter(s => s.turfId === slot.turfId);
+      return [...sameTurf, slot];
     });
+  }, []);
+
+  const keepSelectionFor = useCallback((turfId: string) => {
+    setSelectedSlots(prev => (prev.length && prev[0].turfId !== turfId ? [] : prev));
   }, []);
 
   const clearSelection = useCallback(() => setSelectedSlots([]), []);
@@ -33,20 +46,22 @@ export function BookingProvider({ children }: { children: React.ReactNode }) {
   // /bookings/multi (all-or-nothing, returns an array of Bookings sharing a
   // groupId). Callers should normalize the result to an array either way.
   const createBooking = useCallback(async (slotIds: string[]) => {
-    const res: any = slotIds.length === 1
-      ? await api.post('/bookings', { slotId: slotIds[0] })
-      : await api.post('/bookings/multi', { slotIds });
+    const res = slotIds.length === 1
+      ? await apiPost<Booking>('/bookings', { slotId: slotIds[0] })
+      : await apiPost<Booking[]>('/bookings/multi', { slotIds });
     setSelectedSlots([]);
     return res.data;
   }, []);
 
   const cancelBooking = useCallback(async (bookingId: string) => {
-    const res: any = await api.delete(`/bookings/${bookingId}`);
+    const res = await apiDelete<Booking>(`/bookings/${bookingId}`);
     return res.data;
   }, []);
 
   return (
-    <BookingContext.Provider value={{ selectedSlots, toggleSlot, clearSelection, createBooking, cancelBooking }}>
+    <BookingContext.Provider
+      value={{ selectedSlots, selectedTurfId, toggleSlot, keepSelectionFor, clearSelection, createBooking, cancelBooking }}
+    >
       {children}
     </BookingContext.Provider>
   );

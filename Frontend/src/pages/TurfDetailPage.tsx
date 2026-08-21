@@ -1,17 +1,19 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import api from '@/lib/api';
+import { apiGet } from '@/lib/api';
 import { SlotSelector } from '@/components/SlotSelector';
 import { useBooking } from '@/contexts/BookingContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { MapPin, Wifi, Car, Droplets, Shield, ChevronLeft, Calendar, Loader2, Info, Zap, Sparkles } from 'lucide-react';
+import { MapPin, Wifi, Car, Droplets, Shield, ChevronLeft, Calendar, Loader2, Zap, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { TimeSlot, Turf } from '@/types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Calendar as MonthCalendar } from '@/components/ui/calendar';
-import { toDateKey, getISTDay } from '@/lib/dateKey';
+import { toDateKey, getISTDay, formatSlotDate, formatSlotTime } from '@/lib/dateKey';
+import { resolveImageUrl, TURF_PLACEHOLDER_IMAGE } from '@/lib/imageUrl';
+import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 
 const MAX_SLOTS_PER_BOOKING = 10;
@@ -26,7 +28,12 @@ const amenityIcons: Record<string, React.ReactNode> = {
 export default function TurfDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { toggleSlot, selectedSlots, clearSelection } = useBooking();
+  const { toggleSlot, selectedSlots, clearSelection, keepSelectionFor } = useBooking();
+  const { user, isAuthenticated } = useAuth();
+  // Only customers can hold a booking (POST /api/bookings is USER-only), so
+  // an owner or admin browsing the site gets an explanation up front instead
+  // of a 403 at the payment step.
+  const canBook = !isAuthenticated || user?.role === 'USER';
   const [selectedImage, setSelectedImage] = useState(0);
 
   const today = new Date();
@@ -35,26 +42,33 @@ export default function TurfDetailPage() {
 
   const { data: turfResponse, isLoading: isLoadingTurf, error: turfError } = useQuery({
     queryKey: ['turf', id],
-    queryFn: () => api.get(`/turfs/${id}`),
+    queryFn: () => apiGet<Turf>(`/turfs/${id}`),
     enabled: !!id,
   });
 
-  const turf = (turfResponse as any)?.data as Turf;
+  const turf = turfResponse?.data;
 
   const { data: slotsResponse, isLoading: isLoadingSlots } = useQuery({
     queryKey: ['slots', id, dateStr],
-    queryFn: () => api.get(`/slots?turfId=${id}&date=${dateStr}`),
+    queryFn: () => apiGet<TimeSlot[]>(`/slots?turfId=${id}&date=${dateStr}`),
     enabled: !!id && !!dateStr,
   });
 
-  const slots = (slotsResponse as any)?.data as TimeSlot[] || [];
+  const slots = slotsResponse?.data ?? [];
 
-  const selectedSlotIds = selectedSlots.map(s => s._id || (s as any).id);
+  // Slot selection lives in a provider shared by every turf page. Landing on
+  // a different turf must drop a selection made elsewhere, or the sidebar
+  // would total up — and the checkout would try to book — another venue's
+  // slots under this venue's name.
+  useEffect(() => {
+    if (id) keepSelectionFor(id);
+  }, [id, keepSelectionFor]);
+
+  const selectedSlotIds = selectedSlots.map(s => s._id);
   const totalPrice = selectedSlots.reduce((sum, s) => sum + s.price, 0);
 
   const handleSlotToggle = (slot: TimeSlot) => {
-    const slotId = slot._id || (slot as any).id;
-    const alreadySelected = selectedSlotIds.includes(slotId);
+    const alreadySelected = selectedSlotIds.includes(slot._id);
     if (!alreadySelected && selectedSlots.length >= MAX_SLOTS_PER_BOOKING) {
       toast.error(`You can select up to ${MAX_SLOTS_PER_BOOKING} slots at a time`);
       return;
@@ -63,7 +77,7 @@ export default function TurfDetailPage() {
   };
 
   const handleProceed = () => {
-    if (selectedSlots.length > 0) navigate(`/booking/${turf?._id || (turf as any).id}`);
+    if (selectedSlots.length > 0) navigate(`/booking/${turf._id}`);
   };
 
   if (isLoadingTurf) {
@@ -83,8 +97,10 @@ export default function TurfDetailPage() {
     );
   }
 
-  const sports = turf.sportsType || (turf as any).sport || [];
-  const images = turf.images?.length ? turf.images : ['https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&q=80&w=800'];
+  const sports = turf.sportsType || [];
+  const images = turf.images?.length
+    ? turf.images.map(url => resolveImageUrl(url) as string)
+    : [TURF_PLACEHOLDER_IMAGE];
   const pricePerHour = turf.pricePerHour || 500;
 
   return (
@@ -98,18 +114,30 @@ export default function TurfDetailPage() {
         animate={{ opacity: 1, y: 0 }}
         className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10"
       >
-        <div className="md:col-span-2 aspect-[16/9] rounded-3xl overflow-hidden shadow-2xl">
-          <img src={images[selectedImage]} alt={turf.name} className="w-full h-full object-cover" />
+        <div className="md:col-span-2 aspect-[16/9] rounded-3xl overflow-hidden shadow-2xl bg-muted">
+          <img
+            src={images[selectedImage] ?? images[0]}
+            alt={`${turf.name} — photo ${selectedImage + 1} of ${images.length}`}
+            className="w-full h-full object-cover"
+          />
         </div>
-        <div className="grid grid-cols-4 md:grid-cols-1 gap-3">
-          {images.slice(0, 4).map((img, i) => (
-            <button key={i} onClick={() => setSelectedImage(i)}
-              className={cn('rounded-2xl overflow-hidden border-4 transition-all aspect-video shadow-md', 
-                i === selectedImage ? 'border-primary' : 'border-transparent opacity-60 hover:opacity-100 hover:scale-105')}>
-              <img src={img} alt="" className="w-full h-full object-cover" />
-            </button>
-          ))}
-        </div>
+        {/* The thumbnail strip is pointless with a single photo. */}
+        {images.length > 1 && (
+          <div className="grid grid-cols-4 md:grid-cols-1 gap-3">
+            {images.slice(0, 4).map((img, i) => (
+              <button
+                key={img}
+                type="button"
+                onClick={() => setSelectedImage(i)}
+                aria-label={`Show photo ${i + 1}`}
+                aria-current={i === selectedImage}
+                className={cn('rounded-2xl overflow-hidden border-4 transition-all aspect-video shadow-md bg-muted',
+                  i === selectedImage ? 'border-primary' : 'border-transparent opacity-60 hover:opacity-100 hover:scale-105')}>
+                <img src={img} alt="" className="w-full h-full object-cover" loading="lazy" />
+              </button>
+            ))}
+          </div>
+        )}
       </motion.div>
 
       <div className="grid lg:grid-cols-3 gap-10">
@@ -124,12 +152,6 @@ export default function TurfDetailPage() {
               <MapPin size={18} className="text-primary" /> 
               <span className="text-lg">{turf.location}</span>
             </div>
-            <div className="mt-4 flex items-center gap-4">
-              <div className="flex items-center gap-1 text-sm font-medium">
-                <Info size={16} className="text-muted-foreground" />
-                <span>Popular Venue</span>
-              </div>
-            </div>
           </section>
 
           <section className="bg-muted/30 p-8 rounded-3xl">
@@ -139,12 +161,12 @@ export default function TurfDetailPage() {
             </p>
           </section>
 
-          <section>
+          <section className={cn((turf.amenities ?? []).length === 0 && 'hidden')}>
             <h2 className="text-xl font-bold mb-6 flex items-center gap-3">
               <Shield size={24} className="text-primary" /> Available Amenities
             </h2>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {turf.amenities.map(a => (
+              {(turf.amenities ?? []).map(a => (
                 <div key={a} className="flex flex-col items-center gap-3 p-5 rounded-2xl bg-card border text-center card-hover">
                   <div className="p-3 rounded-xl bg-primary/10 text-primary">
                     {amenityIcons[a] || <Shield size={18} />}
@@ -233,21 +255,22 @@ export default function TurfDetailPage() {
                       .slice()
                       .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
                       .map(slot => {
-                        const slotId = slot._id || (slot as any).id;
-                        const isWeekend = getISTDay(slot.startTime) === 0 || getISTDay(slot.startTime) === 6;
+                        const istDay = getISTDay(slot.startTime);
+                        const isWeekend = istDay === 0 || istDay === 6;
                         return (
-                          <div key={slotId} className="flex justify-between items-center p-3 rounded-xl bg-card/60">
+                          <div key={slot._id} className="flex justify-between items-center p-3 rounded-xl bg-card/60">
                             <div>
                               <div className="font-black text-sm tracking-tight flex items-center gap-1.5">
-                                {new Date(slot.startTime).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'Asia/Kolkata' })}
+                                {formatSlotDate(slot.startTime)}
                                 {' · '}
-                                {new Date(slot.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })}
-                                {isWeekend && <Sparkles size={11} className="text-success" />}
+                                {formatSlotTime(slot.startTime)}
+                                {isWeekend && <Sparkles size={11} className="text-success" aria-label="Weekend rate" />}
                               </div>
                               <div className="text-[10px] text-muted-foreground font-bold">₹{slot.price}</div>
                             </div>
                             <button
                               onClick={() => toggleSlot(slot)}
+                              aria-label={`Remove ${formatSlotDate(slot.startTime)} ${formatSlotTime(slot.startTime)} from selection`}
                               className="text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:text-destructive transition-colors px-2"
                             >
                               Remove
@@ -257,12 +280,21 @@ export default function TurfDetailPage() {
                       })}
                   </div>
 
+                  {!canBook && (
+                    <p className="text-xs font-bold text-warning bg-warning/10 border border-warning/20 rounded-2xl p-3">
+                      You're signed in as {user?.role === 'OWNER' ? 'a turf owner' : 'an admin'}. Bookings can only be made from a player account.
+                    </p>
+                  )}
                   <div className="flex gap-3">
                     <Button variant="ghost" className="rounded-2xl font-bold" onClick={clearSelection}>
                       Clear
                     </Button>
-                    <Button className="flex-1 h-16 rounded-2xl text-xl font-black gradient-primary shadow-xl shadow-primary/30 hover:scale-[1.02] transition-transform" onClick={handleProceed}>
-                      Confirm & Pay
+                    <Button
+                      disabled={!canBook}
+                      className="flex-1 h-16 rounded-2xl text-xl font-black gradient-primary shadow-xl shadow-primary/30 hover:scale-[1.02] transition-transform"
+                      onClick={handleProceed}
+                    >
+                      {isAuthenticated ? 'Confirm & Pay' : 'Log in to book'}
                     </Button>
                   </div>
                 </motion.div>
@@ -279,11 +311,11 @@ export default function TurfDetailPage() {
               )}
             </div>
             
-            <div className="p-6 rounded-3xl bg-success/10 border border-success/20 text-success">
+            <div className="p-6 rounded-3xl bg-muted/50 border text-muted-foreground">
               <div className="flex gap-3">
-                <Zap size={20} className="shrink-0 mt-0.5" />
+                <Zap size={20} className="shrink-0 mt-0.5 text-primary" />
                 <div className="text-xs font-medium leading-relaxed">
-                  <strong>Fast Booking</strong>: This venue usually fills up quickly for weekends. Secure your slot now!
+                  <strong className="text-foreground">Instant confirmation</strong> — your slot is held the moment you pay, and you can cancel any time before it starts.
                 </div>
               </div>
             </div>

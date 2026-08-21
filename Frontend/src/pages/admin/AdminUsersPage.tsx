@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import api from '@/lib/api';
+import { apiGet, apiPatch } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -15,19 +15,19 @@ export default function AdminUsersPage() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin-users'],
-    queryFn: () => api.get('/admin/users'),
+    queryFn: () => apiGet<User[]>('/admin/users'),
   });
 
-  const users = ((data as any)?.data as User[]) || [];
+  const users = data?.data ?? [];
   const filtered = users.filter(u => u.name.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase()));
 
   const banMutation = useMutation({
-    mutationFn: ({ id, isBanned }: { id: string; isBanned: boolean }) => api.patch(`/admin/users/${id}/ban`, { isBanned }),
+    mutationFn: ({ id, isBanned }: { id: string; isBanned: boolean }) => apiPatch<User>(`/admin/users/${id}/ban`, { isBanned }),
     onSuccess: (_res, variables) => {
       toast.success(variables.isBanned ? 'User banned' : 'User unbanned');
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
     },
-    onError: (error: any) => toast.error(error.message || 'Failed to update user'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to update user'),
   });
 
   return (
@@ -39,6 +39,10 @@ export default function AdminUsersPage() {
       </div>
       {isLoading ? (
         <TableSkeleton rows={6} />
+      ) : filtered.length === 0 ? (
+        <div className="border-2 border-dashed rounded-xl py-16 text-center text-muted-foreground">
+          <p className="font-medium">{search ? 'No users match that search' : 'No users yet'}</p>
+        </div>
       ) : (
         <div className="border rounded-xl overflow-hidden">
           <div className="overflow-x-auto">

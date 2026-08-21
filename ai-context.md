@@ -15,7 +15,7 @@ A turf/sports-facility booking platform with a phased architecture designed for 
 | Database  | MongoDB                                 |
 | Auth      | JWT (Bearer tokens) + bcryptjs          |
 | UI/UX     | Framer Motion (Animations), Recharts (Analytics), Lucide (Icons) |
-| Dev Tools | nodemon, Vitest (frontend tests)        |
+| Dev Tools | nodemon, Vitest (both packages)         |
 
 ---
 
@@ -35,6 +35,8 @@ Backend/src/
 │       ├── ApiError.js              # Custom error class
 │       └── ApiResponse.js           # Standardized response wrapper
 ├── modules/
+│   ├── image/                       # upload, validation, storage, serving
+│   ├── logs/                        # client error ingestion
 │   ├── auth/
 │   │   ├── auth.service.js          # Register, login, token generation
 │   │   ├── auth.controller.js       # Thin HTTP layer
@@ -63,23 +65,33 @@ Backend/src/
 ## Key Design Decisions
 
 ### 1. Service Layer Pattern
-- **Controllers are thin** — they only parse req/res and call services
-- **Services contain ALL business logic** — validation, DB operations, error throwing
-- **Why:** In Phase 2, ONLY `booking.service.js` needs to change for atomic locking
+- **Controllers are thin** — they parse req/res and call services
+- **Services contain the business logic** — validation, DB operations, error throwing
+- Authorization lives in the service too, next to the data it protects
 
-### 2. Future-Proofed Slot Schema
-The Slot model already includes fields for Phase 2:
+### 2. Slot lifecycle
 ```js
-status: "AVAILABLE" | "LOCKED" | "BOOKED"  // LOCKED not used yet
-lockedBy: ObjectId | null                    // not used yet
-lockExpiresAt: Date | null                   // not used yet
+status: "AVAILABLE" | "LOCKED" | "BOOKED" | "CLOSED" | "FULL"
+lockedBy: ObjectId | null      // who holds the lock
+lockExpiresAt: Date | null     // 5 minutes from lock
 ```
-**Phase 1** only transitions: `AVAILABLE ↔ BOOKED`  
-**Phase 2** will add: `AVAILABLE → LOCKED → BOOKED` with atomic operations
+Transitions: `AVAILABLE → LOCKED → BOOKED`, with `LOCKED → AVAILABLE` on expiry
+and `BOOKED → AVAILABLE` on cancellation. `CLOSED` (outside operating hours) and
+`FULL` (taken offline by the owner) are set manually and are not bookable.
+
+A unique `(turfId, startTime)` index is what makes default-slot provisioning
+idempotent under concurrency — two simultaneous readers of the same day race
+into a duplicate-key error rather than creating two slot documents.
 
 ### 3. Role-Based Access
-- `USER` — can browse turfs, view slots, book, cancel
-- `OWNER` — can create turfs, create slots, view their bookings
+- `USER` — browse turfs, view slots, book, cancel their own bookings
+- `OWNER` — create/edit their own turfs, manage that turf's slots, view bookings for their own turfs
+- `ADMIN` — approve/reject turf listings, view platform stats, ban/unban non-admin users.
+  Provisioned only by `npm run seed:admin`; the public register endpoint refuses the role.
+
+Ownership is enforced server-side on every turf/slot/booking mutation *and* on
+the owner read paths — role alone is never sufficient, because any owner could
+otherwise pass another owner's turf id.
 
 ### 4. Midnight Elite Design System
 - **Aesthetic**: Obsidian dark mode with glassmorphism effects.
@@ -89,40 +101,142 @@ lockExpiresAt: Date | null                   // not used yet
 ### 5. Error Handling
 - `express-async-errors` — catches all async errors globally
 - `ApiError` — throw from anywhere with status code
-- `errorHandler` middleware — normalizes Mongoose/JWT/custom errors
+- `errorHandler` middleware — normalizes Mongoose/JWT/Multer/custom errors, and
+  is the single place an error becomes both a response and a log record
+
+### 6. Logging
+`common/utils/logger.js` — dependency-free structured logger. JSON lines in
+production, readable lines in development, filtered by `LOG_LEVEL`.
+
+- **Never call `console.*` directly.** The logger is what applies level
+  filtering, redaction and structure; a raw `console.log` bypasses all three.
+- **Request correlation**: `requestContext` middleware assigns an `x-request-id`
+  (accepting the caller's when well-formed), echoes it in the response header,
+  and puts it in an `AsyncLocalStorage` store so a service five calls deep logs
+  it without a `req`. It is also pinned to `req.requestId`, because the async
+  store does not survive multipart streaming.
+- **Levels**: `error` = something is broken; `warn` = a request was rejected as
+  expected, or a client reported a problem; `info` = one line per request plus
+  notable state changes; `debug` = development tracing.
+- **Redaction is not optional.** Credentials *and* personal data (email, phone,
+  name, address) are stripped by key, and connection strings / bearer tokens /
+  JWTs are stripped by shape from free text — those turn up inside driver error
+  messages where no key name protects them. See `logger.test.js`.
+- The frontend mirrors all of this in `Frontend/src/lib/logger.ts`, and posts
+  its `warn`/`error` records to `/api/logs/client` so both halves of a failure
+  land in one stream, joined by the same request id.
+
+### 7. Image storage
+Uploads are stored as binary in MongoDB (`modules/image/image.model.js`), not
+on disk: every deployment target is serverless, where the filesystem is
+ephemeral. The `data` field is `select: false` so listings never pull binaries.
+
+The format is decided by the file's **magic bytes**, never by the client's
+`Content-Type` or file extension — see `image.validation.js`. SVG is refused on
+purpose: it is a document format that executes script.
+
+A turf's `images` array only ever holds our own `/api/images/:id` paths, and
+every write goes through `attachImagesToTurf`, which verifies each id exists
+and belongs to the caller. That is what stops the field becoming a way to point
+the site at arbitrary third-party URLs.
+
+### 8. Recurring work without a scheduler
+
+**There are no cron jobs, and adding one should be a last resort.** A scheduler
+is a second thing to configure, secure and monitor, and it behaves differently
+in every environment this runs in — node-cron needs a process that never
+sleeps, Vercel Cron needs a public endpoint plus a shared secret and only fires
+daily on the free tier. Both chores that looked like they needed one are
+handled by mechanisms that cannot drift out of sync with the data:
+
+**Expired slot locks** — `lockSlot` folds the expiry check into its atomic
+`findOneAndUpdate`, matching a slot that is `AVAILABLE` *or* `LOCKED` with a
+`lockExpiresAt` in the past. An abandoned checkout therefore stops blocking a
+slot the moment its five minutes are up, whether or not anything has swept the
+record. Correctness never depends on a sweep. The only thing left is cosmetic —
+a stale `LOCKED` label in the grid — and `releaseExpiredLocks({ turfId })` runs
+on the slot read path, so the act of looking at a schedule is what corrects it.
+A slot nobody is looking at does not need correcting.
+
+**Abandoned image uploads** — a file is stored the moment the owner picks it,
+but the turf is only saved on submit, so an abandoned form leaves a binary
+nothing references. Rather than hunt for those on a timer, every upload is
+written with an `expiresAt` and MongoDB's own TTL monitor removes it. Attaching
+the image to a turf clears the field (a live listing's photo must never vanish);
+removing it from the turf sets it again. The lifetime is a property of the
+document, so it stays correct with no traffic, no process and no configuration.
+
+`npm run images:prune` exists only to backfill documents written before
+`expiresAt` did — a TTL index cannot see a document that has no expiry field.
+It arms them rather than deleting, so nothing loses its grace period.
 
 ---
 
 ## API Endpoints
 
 ### Auth
-| Method | Route               | Auth | Description        |
-|--------|---------------------|------|--------------------|
-| POST   | `/api/auth/register` | ❌   | Register user      |
-| POST   | `/api/auth/login`    | ❌   | Login user         |
+| Method | Route                | Auth | Notes                                  |
+|--------|----------------------|------|----------------------------------------|
+| POST   | `/api/auth/register` | ❌   | Rate limited. Role is USER or OWNER only |
+| POST   | `/api/auth/login`    | ❌   | Rate limited (10 / 15 min per IP)       |
 
 ### Turfs
-| Method | Route             | Auth  | Role  | Description       |
-|--------|-------------------|-------|-------|-------------------|
-| POST   | `/api/turfs`      | ✅    | OWNER | Create turf       |
-| GET    | `/api/turfs`      | ❌    | —     | List all turfs    |
-| GET    | `/api/turfs/:id`  | ❌    | —     | Get turf details  |
+| Method | Route                 | Auth | Role  | Description                                  |
+|--------|-----------------------|------|-------|----------------------------------------------|
+| POST   | `/api/turfs`          | ✅   | OWNER | Create turf — always starts PENDING          |
+| GET    | `/api/turfs`          | ❌   | —     | Public listing: APPROVED + active only       |
+| GET    | `/api/turfs/my-turfs` | ✅   | OWNER | The caller's own turfs, any approval status  |
+| GET    | `/api/turfs/:id`      | ❌   | —     | 404s unless APPROVED + active                |
+| PATCH  | `/api/turfs/:id`      | ✅   | OWNER | Own turf only; whitelisted fields            |
 
 ### Slots
-| Method | Route          | Auth  | Role  | Description                  |
-|--------|----------------|-------|-------|------------------------------|
-| POST   | `/api/slots`   | ✅    | OWNER | Create slots (bulk)          |
-| GET    | `/api/slots`   | ❌    | —     | Get slots (query: turfId, date, status) |
+| Method | Route                | Auth | Role  | Description                                      |
+|--------|----------------------|------|-------|--------------------------------------------------|
+| GET    | `/api/slots`         | ❌   | —     | `turfId` required; `date` or `startDate`/`endDate` |
+| POST   | `/api/slots`         | ✅   | OWNER | Bulk create (max 1500 per request)               |
+| PATCH  | `/api/slots`         | ✅   | OWNER | Bulk price update                                |
+| PATCH  | `/api/slots/status`  | ✅   | OWNER | Bulk AVAILABLE / CLOSED / FULL                   |
+| DELETE | `/api/slots`         | ✅   | OWNER | Clear non-BOOKED slots for a date                |
 
 ### Bookings
-| Method | Route                         | Auth | Role  | Description           |
-|--------|-------------------------------|------|-------|-----------------------|
-| POST   | `/api/bookings`               | ✅   | USER  | Book a slot           |
-| GET    | `/api/bookings/me`            | ✅   | —     | My bookings           |
-| DELETE | `/api/bookings/:id`           | ✅   | USER  | Cancel booking        |
-| GET    | `/api/bookings/turf/:turfId`  | ✅   | OWNER | Turf's bookings       |
+| Method | Route                        | Auth | Role  | Description                          |
+|--------|------------------------------|------|-------|--------------------------------------|
+| POST   | `/api/bookings/lock`         | ✅   | USER  | Atomic 5-minute lock                 |
+| POST   | `/api/bookings/confirm`      | ✅   | USER  | Lock → booking                       |
+| POST   | `/api/bookings`              | ✅   | USER  | Instant book (lock + confirm)        |
+| POST   | `/api/bookings/multi`        | ✅   | USER  | Up to 10 slots, one turf, all-or-nothing |
+| GET    | `/api/bookings`              | ✅   | any   | Role-dependent: owner vs own bookings |
+| GET    | `/api/bookings/me`           | ✅   | any   | Own bookings                         |
+| GET    | `/api/bookings/owner`        | ✅   | OWNER | All bookings across the caller's turfs |
+| GET    | `/api/bookings/turf/:turfId` | ✅   | OWNER | Own turf only — returns customer PII  |
+| DELETE | `/api/bookings/:id`          | ✅   | USER  | Own booking, before the slot starts   |
 
----
+### Admin (all require role ADMIN)
+| Method | Route                            | Description                       |
+|--------|----------------------------------|-----------------------------------|
+| GET    | `/api/admin/stats`               | Platform totals                   |
+| GET    | `/api/admin/turfs`               | All turfs, any status             |
+| PATCH  | `/api/admin/turfs/:id/approve`   | Put a listing live                |
+| PATCH  | `/api/admin/turfs/:id/reject`    | Unlist / reject                   |
+| GET    | `/api/admin/users`               | All users                         |
+| PATCH  | `/api/admin/users/:id/ban`       | Ban/unban — ADMIN accounts refused |
+
+### Images
+| Method | Route              | Auth | Role         | Description                                     |
+|--------|--------------------|------|--------------|-------------------------------------------------|
+| POST   | `/api/images`      | ✅   | OWNER        | Multipart, field `image`. Rate limited          |
+| GET    | `/api/images/:id`  | ❌   | —            | Serves the bytes; immutable cache headers       |
+| GET    | `/api/images`      | ✅   | OWNER/ADMIN  | Caller's uploads (metadata only)                |
+| DELETE | `/api/images/:id`  | ✅   | OWNER/ADMIN  | Uploader or admin; unlinks it from any turf     |
+
+### Logs
+| Method | Route               | Auth | Description                                        |
+|--------|---------------------|------|----------------------------------------------------|
+| POST   | `/api/logs/client`  | ❌   | Browser error reports. Rate limited, size capped   |
+
+### Scheduled work
+There is none, by design — no cron entries, no scheduler, and no HTTP job
+endpoints to secure. See "Recurring work without a scheduler" below.
 
 ## Request/Response Shapes
 
@@ -160,38 +274,31 @@ lockExpiresAt: Date | null                   // not used yet
 
 ---
 
-## Phase 2 Upgrade Path (DO NOT implement yet)
+## Implemented since this doc was first written
 
-When upgrading to Phase 2, the ONLY changes needed:
+- **Atomic slot locking** — `lockSlot()` uses a single `findOneAndUpdate` whose
+  filter carries the status check, so concurrent requests for the same slot
+  cannot both win. Expired locks are re-lockable at read time, independent of
+  the cleanup job.
+- **Lock expiry** — handled without a scheduler; see "Recurring work without a
+  scheduler" below.
+- **Admin panel** — approval workflow, user ban/unban, platform stats.
+- **Multi-slot checkout** — `/api/bookings/multi`, all-or-nothing with
+  compensating rollback, all slots must belong to one turf.
+- **Image upload** — owner uploads, magic-byte validation, MongoDB storage,
+  public serving with immutable cache headers, self-expiring orphan uploads.
+- **Structured logging and error tracking** — request-correlated JSON logs on
+  the server, a mirrored client logger, a React error boundary, and client
+  error reports flowing into the same stream.
 
-1. **`booking.service.js` → `bookSlot()`** — Replace simple check with atomic:
-   ```js
-   // Atomic lock (Phase 2)
-   const locked = await Slot.findOneAndUpdate(
-     { _id: slotId, status: "AVAILABLE" },
-     { status: "LOCKED", lockedBy: userId, lockExpiresAt: new Date(Date.now() + 5*60*1000) },
-     { new: true }
-   );
-   if (!locked) throw new ApiError(409, "Slot not available");
-   ```
+## Still not implemented
 
-2. **Add a lock expiry cron job** — releases `LOCKED` slots where `lockExpiresAt < now`
-
-3. **Add payment integration** — between LOCKED and BOOKED states
-
-4. **No DB schema changes needed** — fields are already there
-
----
-
-## What's Intentionally NOT Implemented (Currently)
-
-- ❌ Slot locking / concurrency safety (Phase 2 core logic)
-- ❌ Payment gateway integration (using simulated checkout)
-- ❌ Webhooks / real-time updates (Socket.io)
-- ❌ Image uploads for turfs (currently using generated asset URLs)
-- ❌ Admin panel (multi-owner management)
-
----
+- ❌ Payment gateway — checkout is simulated; no money moves, and no commission
+  is calculated or recorded anywhere despite the commission business model
+- ❌ Transactional email/SMS on booking confirm/cancel
+- ❌ Password reset (the page says so rather than pretending to send a mail)
+- ❌ Ratings and reviews — no rating exists in the data model
+- ❌ Pagination on any list endpoint
 
 ## Running the Project
 
@@ -211,7 +318,16 @@ npm run dev       # → localhost:5173 (Vite)
 ```
 PORT=5000
 MONGO_URI=mongodb://127.0.0.1:27017/turf_booking
-JWT_SECRET=turf_super_secret_key_change_in_production
+JWT_SECRET=<long random string — the fallback in env.js must never be used in production>
 JWT_EXPIRES_IN=7d
 NODE_ENV=development
+ADMIN_EMAIL=          # used only by npm run seed:admin
+ADMIN_PASSWORD=
+CORS_ORIGINS=         # comma-separated; blank = any origin
+LOG_LEVEL=            # debug|info|warn|error|silent (default: info in prod)
+MAX_IMAGE_BYTES=      # default 2097152 (2 MB)
 ```
+
+`npm run seed:test` **deletes every user, turf, slot and booking** in whatever
+`MONGO_URI` points at. It refuses to run when `NODE_ENV=production` and requires
+`--yes-wipe-all-data`.

@@ -42,6 +42,15 @@ const slotSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // The price snapshotted at the moment this slot was locked. Booking
+    // confirmation charges this, not whatever `price` happens to be at
+    // confirm time — otherwise a price change made by the owner mid-hold
+    // (e.g. a bulk weekday/weekend repricing) would silently change what a
+    // customer who already saw and accepted a price ends up paying.
+    lockedPrice: {
+      type: Number,
+      default: null,
+    },
     // ──────────────────────────────────────────────────
 
     bookingId: {

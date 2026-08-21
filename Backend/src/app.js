@@ -2,7 +2,10 @@ import "express-async-errors";
 import express from "express";
 import cors from "cors";
 
+import env from "./common/config/env.js";
 import errorHandler from "./common/middlewares/errorHandler.js";
+import { requestContext, requestLogger } from "./common/middlewares/requestLogger.js";
+import logger from "./common/utils/logger.js";
 
 // Route imports
 import authRoutes from "./modules/auth/auth.routes.js";
@@ -10,7 +13,8 @@ import turfRoutes from "./modules/turf/turf.routes.js";
 import slotRoutes from "./modules/slot/slot.routes.js";
 import bookingRoutes from "./modules/booking/booking.routes.js";
 import adminRoutes from "./modules/admin/admin.routes.js";
-import cronRoutes from "./modules/cron/cron.routes.js";
+import imageRoutes from "./modules/image/image.routes.js";
+import logRoutes from "./modules/logs/logs.routes.js";
 
 /**
  * Pure Express app — no app.listen(), no background jobs.
@@ -20,9 +24,64 @@ import cronRoutes from "./modules/cron/cron.routes.js";
  */
 const app = express();
 
+// Don't advertise the framework in every response header.
+app.disable("x-powered-by");
+
 // ── Global Middleware ──
-app.use(cors());
-app.use(express.json());
+
+// First in the chain: everything after this point logs with a request id, and
+// the id is echoed to the client so a failure can be traced back to its lines.
+app.use(requestContext);
+app.use(requestLogger);
+
+// Origin allow-list, comma-separated in CORS_ORIGINS (e.g. the deployed
+// frontend's URL). Left unset the API stays open to any origin, which is the
+// behaviour every existing deployment already relies on — so this tightens
+// things only once an operator opts in, rather than breaking them on deploy.
+const allowedOrigins = env.CORS_ORIGINS
+  ? env.CORS_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean)
+  : null;
+
+if (!allowedOrigins && env.NODE_ENV === "production") {
+  logger.warn(
+    "CORS_ORIGINS is not set in production — the API is reachable from any browser origin. Set CORS_ORIGINS to your deployed frontend's URL to lock this down."
+  );
+}
+
+app.use(
+  cors(
+    allowedOrigins
+      ? {
+          origin: (origin, callback) => {
+            // No Origin header = same-origin, curl, or a server-side caller.
+            if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+            return callback(new Error("Not allowed by CORS"));
+          },
+          // The request id has to be readable by the browser for the frontend
+          // to attach it to a client-side error report.
+          exposedHeaders: ["x-request-id"],
+        }
+      : { exposedHeaders: ["x-request-id"] }
+  )
+);
+
+// A JSON body cap: express.json() defaults to 100kb, but making it explicit
+// keeps a bulk slot payload from being the thing that decides the limit.
+app.use(express.json({ limit: "200kb" }));
+
+// Baseline security headers. Deliberately hand-rolled rather than pulling in
+// helmet — this is a JSON API with no HTML surface of its own, so the useful
+// subset is small.
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Cross-Origin-Resource-Policy", "same-site");
+  if (env.NODE_ENV === "production") {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+  next();
+});
 
 app.get("/", (_req, res) => {
   res.send("Turf API is running");
@@ -39,7 +98,8 @@ app.use("/api/turfs", turfRoutes);
 app.use("/api/slots", slotRoutes);
 app.use("/api/bookings", bookingRoutes);
 app.use("/api/admin", adminRoutes);
-app.use("/api/cron", cronRoutes);
+app.use("/api/images", imageRoutes);
+app.use("/api/logs", logRoutes);
 
 // ── 404 Handler ──
 app.use((_req, res) => {

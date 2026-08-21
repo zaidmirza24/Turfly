@@ -1,5 +1,7 @@
+import { Suspense, lazy } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { Loader2 } from "lucide-react";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -14,21 +16,47 @@ import TurfDetailPage from "@/pages/TurfDetailPage";
 import BookingFlowPage from "@/pages/BookingFlowPage";
 import UserDashboard from "@/pages/UserDashboard";
 import { LoginPage, SignupPage, ForgotPasswordPage } from "@/pages/AuthPages";
-import OwnerLayout from "@/pages/owner/OwnerLayout";
-import OwnerDashboard from "@/pages/owner/OwnerDashboardPage";
-import ManageTurfsPage from "@/pages/owner/ManageTurfsPage";
-import SlotManagementPage from "@/pages/owner/SlotManagementPage";
-import OwnerBookingsPage from "@/pages/owner/OwnerBookingsPage";
-import AdminLayout from "@/pages/admin/AdminLayout";
-import AdminDashboardPage from "@/pages/admin/AdminDashboardPage";
-import AdminUsersPage from "@/pages/admin/AdminUsersPage";
-import AdminTurfsPage from "@/pages/admin/AdminTurfsPage";
 import NotFound from "@/pages/NotFound";
 
-const queryClient = new QueryClient();
+/**
+ * The owner and admin panels are lazy-loaded.
+ *
+ * They pull in the heaviest dependencies in the app (Recharts for the revenue
+ * charts, the whole slot-management tree) and are reachable by a small
+ * fraction of visitors — but as static imports every anonymous person browsing
+ * turfs downloaded and parsed them before the home page could render.
+ */
+const OwnerLayout = lazy(() => import("@/pages/owner/OwnerLayout"));
+const OwnerDashboard = lazy(() => import("@/pages/owner/OwnerDashboardPage"));
+const ManageTurfsPage = lazy(() => import("@/pages/owner/ManageTurfsPage"));
+const SlotManagementPage = lazy(() => import("@/pages/owner/SlotManagementPage"));
+const OwnerBookingsPage = lazy(() => import("@/pages/owner/OwnerBookingsPage"));
+const AdminLayout = lazy(() => import("@/pages/admin/AdminLayout"));
+const AdminDashboardPage = lazy(() => import("@/pages/admin/AdminDashboardPage"));
+const AdminUsersPage = lazy(() => import("@/pages/admin/AdminUsersPage"));
+const AdminTurfsPage = lazy(() => import("@/pages/admin/AdminTurfsPage"));
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // A 401/403/404 is an answer, not a blip — retrying it three times only
+      // delays the error the user needs to see. Retry once, for transient
+      // network/5xx failures.
+      retry: 1,
+      staleTime: 30_000,
+    },
+  },
+});
 
 const PlayerLayout = ({ children }: { children: React.ReactNode }) => (
   <><Navbar />{children}</>
+);
+
+const RouteFallback = () => (
+  <div className="flex justify-center py-24" role="status" aria-live="polite">
+    <Loader2 className="animate-spin text-primary" aria-hidden="true" />
+    <span className="sr-only">Loading…</span>
+  </div>
 );
 
 const App = () => (
@@ -40,28 +68,30 @@ const App = () => (
             <Toaster />
             <Sonner />
             <BrowserRouter>
-              <Routes>
-                <Route path="/" element={<PlayerLayout><HomePage /></PlayerLayout>} />
-                <Route path="/turfs" element={<PlayerLayout><TurfListingPage /></PlayerLayout>} />
-                <Route path="/turfs/:id" element={<PlayerLayout><TurfDetailPage /></PlayerLayout>} />
-                <Route path="/booking/:id" element={<PlayerLayout><BookingFlowPage /></PlayerLayout>} />
-                <Route path="/dashboard" element={<PlayerLayout><UserDashboard /></PlayerLayout>} />
-                <Route path="/login" element={<PlayerLayout><LoginPage /></PlayerLayout>} />
-                <Route path="/signup" element={<PlayerLayout><SignupPage /></PlayerLayout>} />
-                <Route path="/forgot-password" element={<PlayerLayout><ForgotPasswordPage /></PlayerLayout>} />
-                <Route path="/owner" element={<RequireRole roles={["OWNER"]}><OwnerLayout /></RequireRole>}>
-                  <Route index element={<OwnerDashboard />} />
-                  <Route path="turfs" element={<ManageTurfsPage />} />
-                  <Route path="slots" element={<SlotManagementPage />} />
-                  <Route path="bookings" element={<OwnerBookingsPage />} />
-                </Route>
-                <Route path="/admin" element={<RequireRole roles={["ADMIN"]}><AdminLayout /></RequireRole>}>
-                  <Route index element={<AdminDashboardPage />} />
-                  <Route path="users" element={<AdminUsersPage />} />
-                  <Route path="turfs" element={<AdminTurfsPage />} />
-                </Route>
-                <Route path="*" element={<NotFound />} />
-              </Routes>
+              <Suspense fallback={<RouteFallback />}>
+                <Routes>
+                  <Route path="/" element={<PlayerLayout><HomePage /></PlayerLayout>} />
+                  <Route path="/turfs" element={<PlayerLayout><TurfListingPage /></PlayerLayout>} />
+                  <Route path="/turfs/:id" element={<PlayerLayout><TurfDetailPage /></PlayerLayout>} />
+                  <Route path="/booking/:id" element={<RequireRole roles={["USER"]}><PlayerLayout><BookingFlowPage /></PlayerLayout></RequireRole>} />
+                  <Route path="/dashboard" element={<RequireRole><PlayerLayout><UserDashboard /></PlayerLayout></RequireRole>} />
+                  <Route path="/login" element={<PlayerLayout><LoginPage /></PlayerLayout>} />
+                  <Route path="/signup" element={<PlayerLayout><SignupPage /></PlayerLayout>} />
+                  <Route path="/forgot-password" element={<PlayerLayout><ForgotPasswordPage /></PlayerLayout>} />
+                  <Route path="/owner" element={<RequireRole roles={["OWNER"]}><OwnerLayout /></RequireRole>}>
+                    <Route index element={<OwnerDashboard />} />
+                    <Route path="turfs" element={<ManageTurfsPage />} />
+                    <Route path="slots" element={<SlotManagementPage />} />
+                    <Route path="bookings" element={<OwnerBookingsPage />} />
+                  </Route>
+                  <Route path="/admin" element={<RequireRole roles={["ADMIN"]}><AdminLayout /></RequireRole>}>
+                    <Route index element={<AdminDashboardPage />} />
+                    <Route path="users" element={<AdminUsersPage />} />
+                    <Route path="turfs" element={<AdminTurfsPage />} />
+                  </Route>
+                  <Route path="*" element={<PlayerLayout><NotFound /></PlayerLayout>} />
+                </Routes>
+              </Suspense>
             </BrowserRouter>
           </TooltipProvider>
         </BookingProvider>

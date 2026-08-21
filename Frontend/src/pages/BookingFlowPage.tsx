@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import api from '@/lib/api';
+import { apiGet } from '@/lib/api';
 import { useBooking } from '@/contexts/BookingContext';
-import { useAuth } from '@/contexts/AuthContext';
+import { formatSlotDate, formatSlotTime } from '@/lib/dateKey';
+import { turfCoverImage } from '@/lib/imageUrl';
 import { Button } from '@/components/ui/button';
 import { CheckCircle2, XCircle, ChevronLeft, CreditCard, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -16,20 +17,20 @@ export default function BookingFlowPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { selectedSlots, createBooking } = useBooking();
-  const { user } = useAuth();
 
   const [step, setStep] = useState<Step>('summary');
   const [loading, setLoading] = useState(false);
   const [confirmedBookings, setConfirmedBookings] = useState<Booking[]>([]);
+  const [failureReason, setFailureReason] = useState<string | null>(null);
 
   // Fetch Turf Detail
   const { data: turfResponse, isLoading: isLoadingTurf } = useQuery({
     queryKey: ['turf', id],
-    queryFn: () => api.get(`/turfs/${id}`),
+    queryFn: () => apiGet<Turf>(`/turfs/${id}`),
     enabled: !!id,
   });
 
-  const turf = (turfResponse as any)?.data as Turf;
+  const turf = turfResponse?.data;
 
   // IMPORTANT: Keep a local copy of the slots because the global context
   // will clear the selection once the booking succeeds.
@@ -58,10 +59,13 @@ export default function BookingFlowPage() {
   const total = sortedSlots.reduce((sum, s) => sum + s.price, 0);
 
   const handlePayment = async () => {
-    if (sortedSlots.length === 0) return;
+    // `loading` also guards the double-submit case: the button is disabled
+    // while in flight, but a second click can still land between the click
+    // and React's re-render, and each one would try to book the same slots.
+    if (sortedSlots.length === 0 || loading) return;
     setLoading(true);
     try {
-      const slotIds = sortedSlots.map(s => s._id || (s as any).id);
+      const slotIds = sortedSlots.map(s => s._id);
       const res = await createBooking(slotIds);
       // /bookings returns a single Booking object; /bookings/multi returns an array.
       const bookings: Booking[] = Array.isArray(res) ? res : [res];
@@ -74,9 +78,10 @@ export default function BookingFlowPage() {
 
       toast.success(sortedSlots.length > 1 ? 'Slots booked!' : 'Booking confirmed!');
       setStep('success');
-    } catch (error: any) {
-      console.error('Booking failed:', error);
-      toast.error(error.message || 'Booking failed');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Booking failed';
+      toast.error(message);
+      setFailureReason(message);
       setStep('failure');
     } finally {
       setLoading(false);
@@ -84,8 +89,12 @@ export default function BookingFlowPage() {
   };
 
   if (step === 'success') {
+    // Charged amount comes from the created bookings, not from the slot prices
+    // held in this tab: if an owner repriced a slot between page load and
+    // payment, the server's number is the one the customer actually paid.
+    const chargedTotal = confirmedBookings.reduce((sum, b) => sum + (b.amount ?? 0), 0);
     const groupId = confirmedBookings[0]?.groupId;
-    const reference = groupId || (confirmedBookings[0] as any)?._id || confirmedBookings[0]?.id;
+    const reference = groupId || confirmedBookings[0]?._id;
     return (
       <div className="container mx-auto px-4 py-16 max-w-lg text-center">
         <div className="bg-card border rounded-2xl p-8 shadow-sm">
@@ -97,16 +106,12 @@ export default function BookingFlowPage() {
           <div className="bg-muted/50 rounded-lg p-4 mt-6 text-sm space-y-2 text-left">
             <div className="flex justify-between"><span className="text-muted-foreground">Turf</span><span className="font-medium">{turf?.name}</span></div>
             {sortedSlots.map(slot => (
-              <div key={slot._id || (slot as any).id} className="flex justify-between">
-                <span className="text-muted-foreground">
-                  {new Date(slot.startTime).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'Asia/Kolkata' })}
-                </span>
-                <span className="font-medium">
-                  {new Date(slot.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })}
-                </span>
+              <div key={slot._id} className="flex justify-between">
+                <span className="text-muted-foreground">{formatSlotDate(slot.startTime)}</span>
+                <span className="font-medium">{formatSlotTime(slot.startTime)}</span>
               </div>
             ))}
-            <div className="flex justify-between font-bold border-t pt-2"><span>Total Paid</span><span className="text-primary">₹{total}</span></div>
+            <div className="flex justify-between font-bold border-t pt-2"><span>Total Paid</span><span className="text-primary">₹{chargedTotal}</span></div>
             <div className="flex justify-between text-[10px] text-muted-foreground mt-2"><span>Booking Reference</span><span>{reference}</span></div>
           </div>
           <div className="flex gap-3 mt-6">
@@ -124,18 +129,19 @@ export default function BookingFlowPage() {
         <div className="bg-card border rounded-2xl p-8 shadow-sm">
           <XCircle size={64} className="mx-auto text-destructive mb-4" />
           <h1 className="text-2xl font-bold">Booking Failed</h1>
-          <p className="text-muted-foreground mt-2">One or more slots might have been taken, or there was a system error. Nothing was charged. Please try again.</p>
+          <p className="text-muted-foreground mt-2">{failureReason || 'Something went wrong.'}</p>
+          <p className="text-xs text-muted-foreground mt-2">Nothing was charged.</p>
           <div className="flex gap-3 mt-6">
             <Button variant="outline" className="flex-1" onClick={() => navigate(`/turfs/${id}`)}>Go Back</Button>
-            <Button className="flex-1" onClick={() => { setStep('summary'); }}>Retry</Button>
+            <Button className="flex-1" onClick={() => { setFailureReason(null); setStep('summary'); }}>Retry</Button>
           </div>
         </div>
       </div>
     );
   }
 
-  const sports = turf?.sportsType || turf?.sport || [];
-  const image = turf?.images?.[0] || 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&q=80&w=800';
+  const sports = turf?.sportsType || [];
+  const image = turfCoverImage(turf?.images);
 
   return (
     <div className="container mx-auto px-4 py-6 max-w-2xl">
@@ -149,7 +155,7 @@ export default function BookingFlowPage() {
 
       <div className="bg-card border rounded-2xl p-6 shadow-sm">
         <div className="flex gap-4 mb-6">
-          <img src={image} alt={turf?.name} className="w-24 h-24 rounded-xl object-cover" />
+          <img src={image} alt="" className="w-24 h-24 rounded-xl object-cover bg-muted shrink-0" loading="lazy" />
           <div>
             <h2 className="font-semibold text-lg">{turf?.name}</h2>
             <p className="text-sm text-muted-foreground">{turf?.location}</p>
@@ -159,11 +165,9 @@ export default function BookingFlowPage() {
 
         <div className="space-y-3 text-sm border-t pt-4">
           {sortedSlots.map(slot => (
-            <div key={slot._id || (slot as any).id} className="flex justify-between">
+            <div key={slot._id} className="flex justify-between">
               <span className="text-muted-foreground">
-                {new Date(slot.startTime).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'Asia/Kolkata' })}
-                {' · '}
-                {new Date(slot.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })}
+                {formatSlotDate(slot.startTime)} · {formatSlotTime(slot.startTime)}
               </span>
               <span className="font-medium">₹{slot.price}</span>
             </div>

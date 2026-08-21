@@ -1,14 +1,29 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { User, UserRole } from '@/types';
-import api from '@/lib/api';
+import { apiPost, clearStoredSession } from '@/lib/api';
 
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<boolean>;
-  signup: (name: string, email: string, password: string, role: UserRole) => Promise<boolean>;
+  signup: (input: SignupInput) => Promise<boolean>;
   logout: () => void;
+}
+
+/** What /auth/login and /auth/register return in their `data` field. */
+interface AuthPayload {
+  user: User;
+  token: string;
+}
+
+export interface SignupInput {
+  name: string;
+  email: string;
+  password: string;
+  role: UserRole;
+  /** Optional at signup; owners need it to reach customers about a booking. */
+  phone?: string;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -22,14 +37,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const savedUser = localStorage.getItem('user');
     const token = localStorage.getItem('token');
     if (savedUser && token) {
-      setUser(JSON.parse(savedUser));
+      try {
+        setUser(JSON.parse(savedUser));
+      } catch {
+        // Malformed entry (hand-edited, or written by an older version):
+        // an uncaught throw here happens during the provider's first effect
+        // and takes down the entire app with a blank screen.
+        clearStoredSession();
+      }
     }
     setIsLoading(false);
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     try {
-      const res: any = await api.post('/auth/login', { email, password });
+      const res = await apiPost<AuthPayload>('/auth/login', { email, password });
       const { user, token } = res.data;
       
       setUser(user);
@@ -41,9 +63,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const signup = useCallback(async (name: string, email: string, password: string, role: UserRole) => {
+  const signup = useCallback(async (input: SignupInput) => {
     try {
-      const res: any = await api.post('/auth/register', { name, email, password, role });
+      const res = await apiPost<AuthPayload>('/auth/register', input);
       const { user, token } = res.data;
       
       setUser(user);
@@ -57,8 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(() => {
     setUser(null);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+    clearStoredSession();
   }, []);
 
   return (

@@ -1,5 +1,6 @@
 import * as slotService from "./slot.service.js";
 import ApiResponse from "../../common/utils/ApiResponse.js";
+import ApiError from "../../common/utils/ApiError.js";
 
 export const createSlots = async (req, res) => {
   const { turfId, slots } = req.body;
@@ -13,12 +14,21 @@ export const createSlots = async (req, res) => {
 
 export const getSlots = async (req, res) => {
   const { turfId, date, status, startDate, endDate } = req.query;
+  // Required: without it the query degenerates to `{ turfId: undefined }`,
+  // which Mongo reads as "every slot on the platform" — an unauthenticated
+  // request that returns the entire slot collection.
+  if (typeof turfId !== "string" || turfId.length === 0) {
+    throw new ApiError(400, "turfId is required");
+  }
   const slots = await slotService.getSlotsByTurf(turfId, { date, status, startDate, endDate });
   new ApiResponse(200, "Slots fetched successfully", slots).send(res);
 };
 
 export const deleteSlots = async (req, res) => {
   const { turfId, date } = req.query;
+  if (typeof turfId !== "string" || turfId.length === 0) {
+    throw new ApiError(400, "turfId is required");
+  }
   await slotService.deleteSlots(req.user._id, turfId, { date });
   new ApiResponse(200, "Slots cleared successfully").send(res);
 };

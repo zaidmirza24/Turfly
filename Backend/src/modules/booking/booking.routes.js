@@ -10,20 +10,32 @@ import {
   getTurfBookings,
 } from "./booking.controller.js";
 import { protect, authorize } from "../../common/middlewares/auth.js";
+import { rateLimit } from "../../common/middlewares/rateLimit.js";
 
 const router = Router();
 
+// Locking a slot is the endpoint that actually removes inventory from
+// availability (for up to 5 minutes each time), so — unlike a plain read —
+// it needs its own throttle: without one, a single account can script
+// repeated /lock calls across many slots/turfs with no cost, holding out
+// real customers. Generous enough for a real checkout retrying a race loss.
+const lockLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  message: "Too many booking attempts — please wait a moment and try again",
+});
+
 // POST /api/bookings/lock — Step 1: atomically lock a slot (5 min TTL)
-router.post("/lock", protect, authorize("USER"), lockSlot);
+router.post("/lock", protect, authorize("USER"), lockLimiter, lockSlot);
 
 // POST /api/bookings/confirm — Step 2: confirm lock → create booking
 router.post("/confirm", protect, authorize("USER"), confirmSlot);
 
 // POST /api/bookings — instant book (lock + confirm in one call)
-router.post("/", protect, authorize("USER"), bookSlot);
+router.post("/", protect, authorize("USER"), lockLimiter, bookSlot);
 
 // POST /api/bookings/multi — instant book multiple slots (all-or-nothing)
-router.post("/multi", protect, authorize("USER"), bookMultipleSlots);
+router.post("/multi", protect, authorize("USER"), lockLimiter, bookMultipleSlots);
 
 // GET /api/bookings — dynamic route based on role
 router.get("/", protect, (req, res) => {

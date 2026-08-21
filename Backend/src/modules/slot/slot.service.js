@@ -2,13 +2,62 @@ import Slot from "./slot.model.js";
 import Turf from "../turf/turf.model.js";
 import ApiError from "../../common/utils/ApiError.js";
 import { releaseExpiredLocks } from "../../common/jobs/releaseExpiredLocks.js";
-import { istDateTime, istDayBounds, nextDateKey } from "../../common/utils/istTime.js";
+import { istDateTime, istDayBounds, nextDateKey, istHour } from "../../common/utils/istTime.js";
+
+/**
+ * True when a slot starting at `start` falls inside `turf`'s configured
+ * operating window. Mirrors `provisionDefaultSlots`' own loop (`for h =
+ * openHour; h <= closeHour; h++`) exactly: `closeHour` is the *start* hour of
+ * the last bookable slot of the day (e.g. openHour 6 / closeHour 22 means the
+ * last slot starts at 22:00), not a closing-time boundary — so this checks
+ * only the start hour, the same thing default provisioning already relies on.
+ * Applied to the two paths that take an arbitrary start straight from the
+ * request (createSlots, setSlotsStatus), which otherwise had no such check.
+ */
+export const isWithinOperatingHours = (turf, start) => {
+  if (turf.is24x7 !== false) return true;
+  const openHour = turf.openHour ?? 0;
+  const closeHour = turf.closeHour ?? 23;
+  const startHour = istHour(start);
+  return startHour >= openHour && startHour <= closeHour;
+};
 
 /**
  * Create slots for a turf (owner only).
  * Accepts an array of slot objects for bulk creation.
  */
+// One request may generate at most this many slot documents. The owner UI's
+// bulk generator multiplies days x hours with no ceiling of its own, so a
+// "365 days" entry would otherwise post ~8,760 documents in a single request
+// (a deleteMany plus an insertMany of that size) — enough to stall the API for
+// every other caller. 62 days of 24h slots fits comfortably under the cap.
+const MAX_SLOTS_PER_REQUEST = 1500;
+
 export const createSlots = async (ownerId, turfId, slots) => {
+  if (!Array.isArray(slots) || slots.length === 0) {
+    throw new ApiError(400, "At least one slot is required");
+  }
+  if (slots.length > MAX_SLOTS_PER_REQUEST) {
+    throw new ApiError(
+      400,
+      `You can create at most ${MAX_SLOTS_PER_REQUEST} slots in one request — generate a shorter date range`
+    );
+  }
+
+  for (const slot of slots) {
+    const start = new Date(slot?.startTime);
+    const end = new Date(slot?.endTime);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      throw new ApiError(400, "Each slot needs a valid startTime and endTime");
+    }
+    if (end <= start) {
+      throw new ApiError(400, "A slot's endTime must be after its startTime");
+    }
+    if (typeof slot.price !== "number" || !Number.isFinite(slot.price) || slot.price < 0) {
+      throw new ApiError(400, "Each slot needs a non-negative numeric price");
+    }
+  }
+
   // Verify the turf belongs to this owner
   const turf = await Turf.findById(turfId);
   if (!turf) {
@@ -16,6 +65,15 @@ export const createSlots = async (ownerId, turfId, slots) => {
   }
   if (turf.ownerId.toString() !== ownerId.toString()) {
     throw new ApiError(403, "You do not own this turf");
+  }
+
+  for (const slot of slots) {
+    if (!isWithinOperatingHours(turf, new Date(slot.startTime))) {
+      throw new ApiError(
+        400,
+        `Slot at ${slot.startTime} falls outside this turf's operating hours (${turf.openHour}:00–${turf.closeHour}:00 IST)`
+      );
+    }
   }
 
   // To prevent duplicates, we clear existing unbooked slots for these time ranges
@@ -111,11 +169,11 @@ const provisionDefaultSlots = async (turf, startDateKey, endDateKey) => {
  * Optionally filter by date range or status.
  */
 export const getSlotsByTurf = async (turfId, { date, status, startDate, endDate } = {}) => {
-  // Correct any locks that expired since the last cron sweep before reading,
-  // so the slot grid never shows a stale "LOCKED" that's actually bookable.
-  // Booking correctness doesn't depend on this (lockSlot already re-checks
-  // expiry atomically) — this only keeps what's displayed accurate.
-  await releaseExpiredLocks();
+  // Self-healing lock expiry, scoped to this turf: reading a schedule is what
+  // corrects it, so no scheduled job is needed. Booking correctness doesn't
+  // depend on this at all — lockSlot re-checks expiry atomically — this only
+  // keeps the grid from showing a stale "LOCKED" that's actually bookable.
+  await releaseExpiredLocks({ turfId });
 
   // date/startDate/endDate are treated as opaque "YYYY-MM-DD" IST calendar-
   // day keys, never parsed with `new Date(str)` — a date-only string parses
@@ -204,10 +262,28 @@ export const setSlotsStatus = async (ownerId, turfId, { slots, status }) => {
     throw new ApiError(403, "You do not own this turf");
   }
 
+  if (slots.length > MAX_SLOTS_PER_REQUEST) {
+    throw new ApiError(400, `You can update at most ${MAX_SLOTS_PER_REQUEST} slots in one request`);
+  }
+
   const updated = [];
   for (const { startTime, endTime } of slots) {
     const start = new Date(startTime);
     const end = new Date(endTime);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+      throw new ApiError(400, "Each slot needs a valid startTime and a later endTime");
+    }
+
+    // Only checked for the status that actually makes an hour bookable —
+    // CLOSED/FULL outside operating hours is harmless (it's already
+    // unbookable), but AVAILABLE outside them would open up a slot outside
+    // the hours createSlots itself now enforces.
+    if (status === "AVAILABLE" && !isWithinOperatingHours(turf, start)) {
+      throw new ApiError(
+        400,
+        `${startTime} falls outside this turf's operating hours (${turf.openHour}:00–${turf.closeHour}:00 IST)`
+      );
+    }
 
     const existing = await Slot.findOne({ turfId, startTime: start });
 
@@ -240,7 +316,11 @@ export const updateSlots = async (ownerId, turfId, { date, price, weekdayPrice, 
     throw new ApiError(403, "You do not own this turf");
   }
 
-  const baseQuery = { turfId, status: { $ne: "BOOKED" } };
+  // LOCKED is excluded alongside BOOKED: a customer mid-checkout has already
+  // been shown (and, via Slot.lockedPrice, will actually be charged) the
+  // price at lock time, so repricing the slot under them here would only
+  // create a confusing mismatch between the grid and what they're paying.
+  const baseQuery = { turfId, status: { $nin: ["BOOKED", "LOCKED"] } };
 
   if (date) {
     const { start, end } = istDayBounds(date);

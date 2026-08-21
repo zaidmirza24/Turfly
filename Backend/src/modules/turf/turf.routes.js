@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createTurf, getAllTurfs, getTurfById, updateTurf } from "./turf.controller.js";
+import { createTurf, getAllTurfs, getMyTurfs, getTurfById, updateTurf } from "./turf.controller.js";
 import { protect, authorize } from "../../common/middlewares/auth.js";
 
 const router = Router();
@@ -7,14 +7,11 @@ const router = Router();
 // POST /api/turfs — owner only
 router.post("/", protect, authorize("OWNER"), createTurf);
 
-// GET /api/turfs — public
+// GET /api/turfs — public (approved + active only)
 router.get("/", getAllTurfs);
 
-// GET /api/turfs/my-turfs — owner only
-router.get("/my-turfs", protect, authorize("OWNER"), (req, res, next) => {
-  req.query.ownerId = req.user._id;
-  next();
-}, getAllTurfs);
+// GET /api/turfs/my-turfs — owner only, any approval status
+router.get("/my-turfs", protect, authorize("OWNER"), getMyTurfs);
 
 // GET /api/turfs/:id — public
 router.get("/:id", getTurfById);

@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import Slot from "../slot/slot.model.js";
 import Booking from "./booking.model.js";
 import Turf from "../turf/turf.model.js";
+import { isTurfBookable } from "../turf/turf.service.js";
 import ApiError from "../../common/utils/ApiError.js";
 
 /**
@@ -9,6 +10,13 @@ import ApiError from "../../common/utils/ApiError.js";
  * A locked slot auto-expires after this period if not confirmed.
  */
 const LOCK_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+// Ceiling on how many slots one user may hold LOCKED at once, across every
+// turf. Without this, one account can script repeated /lock calls to hold
+// out a large share of near-term inventory in rolling 5-minute windows —
+// each hold is individually legitimate, so nothing else here catches it.
+// Set well above the largest real checkout (MAX_SLOTS_PER_BOOKING = 10).
+const MAX_CONCURRENT_LOCKS_PER_USER = 15;
 
 /**
  * Step 1 — Atomically lock a slot.
@@ -23,11 +31,45 @@ export const lockSlot = async (userId, slotId) => {
   const now = new Date();
   const lockExpiresAt = new Date(now.getTime() + LOCK_TTL_MS);
 
+  // A slot only sells if its turf is actually live. Slot documents exist for
+  // turfs that are still awaiting admin review, were rejected, or that the
+  // owner has deactivated — and slot ids are guessable and enumerable, so this
+  // has to be enforced here rather than relying on the listing filter.
+  const slotTurf = await Slot.findById(slotId).select("turfId").lean();
+  if (!slotTurf) {
+    throw new ApiError(404, "Slot not found");
+  }
+  const turf = await Turf.findById(slotTurf.turfId).select("isActive approvalStatus");
+  if (!isTurfBookable(turf)) {
+    throw new ApiError(409, "This turf is not currently accepting bookings");
+  }
+
+  // Soft cap, checked before attempting the lock: a count-then-act race can
+  // let concurrent requests from the same user overshoot it by a slot or two,
+  // which is fine for an abuse ceiling — it only needs to bound the damage,
+  // not enforce it to the last slot the way slot-level locking does.
+  const activeLocks = await Slot.countDocuments({
+    lockedBy: userId,
+    status: "LOCKED",
+    lockExpiresAt: { $gt: now },
+  });
+  if (activeLocks >= MAX_CONCURRENT_LOCKS_PER_USER) {
+    throw new ApiError(
+      429,
+      `You have too many slots on hold at once (max ${MAX_CONCURRENT_LOCKS_PER_USER}) — confirm or let one expire before locking another`
+    );
+  }
+
   // Atomic: succeeds if the slot is AVAILABLE, or if it's still marked
-  // LOCKED but that lock has already expired. The $or branch is defense in
-  // depth — a slot must be immediately re-lockable at read time regardless
-  // of how often the cleanup cron actually runs (it may not run every
-  // minute on every hosting platform, e.g. Vercel's Hobby tier).
+  // LOCKED but that lock has already expired. This branch is what makes lock
+  // expiry correct without any scheduled job: an abandoned checkout stops
+  // blocking the slot the moment its 5 minutes are up, whether or not
+  // anything has swept the record.
+  // An aggregation-pipeline update (array form) so `lockedPrice` can be set
+  // from the slot's own current `price` field atomically, in the same
+  // operation that wins the lock — a plain object update can't reference the
+  // document's own pre-update field, and reading price in a separate query
+  // first would reopen the race this whole function exists to close.
   const lockedSlot = await Slot.findOneAndUpdate(
     {
       _id: slotId,
@@ -37,11 +79,16 @@ export const lockSlot = async (userId, slotId) => {
       startTime: { $gt: now },
       $or: [{ status: "AVAILABLE" }, { status: "LOCKED", lockExpiresAt: { $lt: now } }],
     },
-    {
-      status: "LOCKED",
-      lockedBy: userId,
-      lockExpiresAt,
-    },
+    [
+      {
+        $set: {
+          status: "LOCKED",
+          lockedBy: userId,
+          lockExpiresAt,
+          lockedPrice: "$price",
+        },
+      },
+    ],
     { new: true }
   );
 
@@ -68,8 +115,11 @@ export const lockSlot = async (userId, slotId) => {
  * (between lock and confirm).
  */
 export const confirmSlot = async (userId, slotId, groupId = null) => {
-  // Atomic: only succeeds if slot is LOCKED by this user
-  const slot = await Slot.findOneAndUpdate(
+  // Atomic: only succeeds if slot is LOCKED by this user. `new: false`
+  // (the default) returns the pre-update document, which is what still has
+  // `lockedPrice` — the price snapshotted when the hold was created — before
+  // this same update clears it back to null.
+  const slotBeforeConfirm = await Slot.findOneAndUpdate(
     {
       _id: slotId,
       status: "LOCKED",
@@ -79,21 +129,26 @@ export const confirmSlot = async (userId, slotId, groupId = null) => {
       status: "BOOKED",
       lockedBy: null,
       lockExpiresAt: null,
-    },
-    { new: true }
+      lockedPrice: null,
+    }
   );
 
-  if (!slot) {
+  if (!slotBeforeConfirm) {
     throw new ApiError(409, "Slot lock expired or was not locked by you");
   }
+
+  // Charge the price snapshotted at lock time, not whatever `price` is now —
+  // closes the window where an owner's price change during the 5-minute hold
+  // would change what the customer actually pays.
+  const chargedAmount = slotBeforeConfirm.lockedPrice ?? slotBeforeConfirm.price;
 
   // Create the booking record
   const booking = await Booking.create({
     userId,
-    turfId: slot.turfId,
-    slotId: slot._id,
+    turfId: slotBeforeConfirm.turfId,
+    slotId: slotBeforeConfirm._id,
     status: "CONFIRMED",
-    amount: slot.price,
+    amount: chargedAmount,
     groupId,
   });
 
@@ -142,7 +197,7 @@ const lockMultipleSlots = async (userId, slotIds) => {
       lockedSlots.map((s) =>
         Slot.findOneAndUpdate(
           { _id: s._id, status: "LOCKED", lockedBy: userId },
-          { status: "AVAILABLE", lockedBy: null, lockExpiresAt: null }
+          { status: "AVAILABLE", lockedBy: null, lockExpiresAt: null, lockedPrice: null }
         )
       )
     );
@@ -185,6 +240,19 @@ export const bookMultipleSlots = async (userId, slotIds) => {
     throw new ApiError(400, `You can book at most ${MAX_SLOTS_PER_BOOKING} slots at a time`);
   }
 
+  // One checkout = one venue. The frontend keeps slot selection in a global
+  // context that isn't reset when the customer switches turfs, so a mixed-turf
+  // slotIds array is reachable in practice — and it would charge for, and book,
+  // a venue other than the one shown on the confirmation screen.
+  const slotDocs = await Slot.find({ _id: { $in: uniqueIds } }).select("turfId").lean();
+  if (slotDocs.length !== uniqueIds.length) {
+    throw new ApiError(404, "One or more slots no longer exist");
+  }
+  const turfIds = new Set(slotDocs.map((s) => s.turfId.toString()));
+  if (turfIds.size > 1) {
+    throw new ApiError(400, "All slots in one booking must belong to the same turf");
+  }
+
   await lockMultipleSlots(userId, uniqueIds);
   const groupId = randomUUID();
   return confirmMultipleSlots(userId, uniqueIds, groupId);
@@ -200,6 +268,12 @@ export const getUserBookings = async (userId) => {
     .sort({ createdAt: -1 });
   return bookings;
 };
+
+// A booking can only be cancelled up to this long before its slot starts.
+// Keeps a customer from cancelling minutes before play — which both denies
+// the owner any chance to resell the slot and, once real payment exists,
+// would otherwise force a full refund for time the venue held open for them.
+const CANCELLATION_CUTOFF_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 /**
  * Cancel a booking.
@@ -217,8 +291,25 @@ export const cancelBooking = async (userId, bookingId) => {
     throw new ApiError(400, "Booking is already cancelled");
   }
 
+  // A slot that has already started can no longer be given up: releasing it
+  // back to AVAILABLE would advertise a time that is partly or wholly in the
+  // past as bookable, and it would imply a refund for court time the customer
+  // already held. The UI hides Cancel on past bookings; this is the rule that
+  // actually enforces it.
+  const slot = await Slot.findById(booking.slotId).select("startTime").lean();
+  if (slot && slot.startTime <= new Date()) {
+    throw new ApiError(400, "This slot has already started and can no longer be cancelled");
+  }
+  if (slot && slot.startTime.getTime() - Date.now() < CANCELLATION_CUTOFF_MS) {
+    throw new ApiError(
+      400,
+      "Bookings can only be cancelled up to 6 hours before the slot starts"
+    );
+  }
+
   // Update booking status
   booking.status = "CANCELLED";
+  booking.cancelledBy = "CUSTOMER";
   await booking.save();
 
   // Release the slot back to AVAILABLE (clear all lock/booking state)
@@ -227,6 +318,7 @@ export const cancelBooking = async (userId, bookingId) => {
     bookingId: null,
     lockedBy: null,
     lockExpiresAt: null,
+    lockedPrice: null,
   });
 
   return booking;
@@ -234,8 +326,22 @@ export const cancelBooking = async (userId, bookingId) => {
 
 /**
  * Get bookings for a specific turf (owner view).
+ *
+ * `ownerId` is required and verified against the turf: authenticating as
+ * *some* owner is not enough to read another owner's customer list. This
+ * response includes customer name/email/phone, so without the ownership
+ * check any owner could enumerate turf ids and harvest the whole platform's
+ * customer PII.
  */
-export const getBookingsByTurf = async (turfId) => {
+export const getBookingsByTurf = async (ownerId, turfId) => {
+  const turf = await Turf.findById(turfId).select("ownerId");
+  if (!turf) {
+    throw new ApiError(404, "Turf not found");
+  }
+  if (turf.ownerId.toString() !== ownerId.toString()) {
+    throw new ApiError(403, "You do not own this turf");
+  }
+
   const bookings = await Booking.find({ turfId, status: "CONFIRMED" })
     .populate("userId", "name email phone")
     .populate("slotId", "startTime endTime price")

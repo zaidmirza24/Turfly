@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { TurfCard } from '@/components/TurfCard';
-import api from '@/lib/api';
+import { apiGet } from '@/lib/api';
 import { Turf, Sport } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,11 +12,18 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/co
 import { Slider } from '@/components/ui/slider';
 
 const sports: Sport[] = ['football', 'cricket', 'badminton', 'tennis', 'basketball', 'volleyball'];
+
+// Upper bound of the price filter. Turfs priced above this would be filtered
+// out entirely, so the slider's max doubles as "no upper limit" at the top.
+const MAX_PRICE = 5000;
 const sortOptions = [
-  { value: 'rating', label: 'Rating' },
+  { value: 'newest', label: 'Newest first' },
   { value: 'price-asc', label: 'Price: Low to High' },
   { value: 'price-desc', label: 'Price: High to Low' },
-];
+] as const;
+
+type SortValue = (typeof sortOptions)[number]['value'];
+const DEFAULT_SORT: SortValue = 'newest';
 
 export default function TurfListingPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -24,15 +31,15 @@ export default function TurfListingPage() {
   const [selectedSports, setSelectedSports] = useState<Sport[]>(
     searchParams.get('sport') ? [searchParams.get('sport') as Sport] : []
   );
-  const [priceRange, setPriceRange] = useState([0, 5000]);
-  const [sortBy, setSortBy] = useState('rating');
+  const [priceRange, setPriceRange] = useState([0, MAX_PRICE]);
+  const [sortBy, setSortBy] = useState<SortValue>(DEFAULT_SORT);
 
   const { data: turfsResponse, isLoading, error } = useQuery({
     queryKey: ['turfs'],
-    queryFn: () => api.get('/turfs'),
+    queryFn: () => apiGet<Turf[]>('/turfs'),
   });
 
-  const turfs = (turfsResponse as any)?.data || [];
+  const turfs = turfsResponse?.data ?? [];
 
   const toggleSport = (s: Sport) => {
     setSelectedSports(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
@@ -49,21 +56,24 @@ export default function TurfListingPage() {
       );
     }
     if (selectedSports.length > 0) {
-      result = result.filter(t => {
-        const tSports = t.sportsType || t.sport || [];
-        return tSports.some((s: string) => selectedSports.includes(s.toLowerCase() as Sport));
-      });
+      result = result.filter(t =>
+        (t.sportsType ?? []).some((s: string) => selectedSports.includes(s.toLowerCase() as Sport))
+      );
     }
     
     result = result.filter(t => {
       const price = t.pricePerHour || 0;
+      // At the top of the range the filter means "and above", so a turf priced
+      // over MAX_PRICE isn't silently hidden with no way to reach it.
+      if (priceRange[1] >= MAX_PRICE) return price >= priceRange[0];
       return price >= priceRange[0] && price <= priceRange[1];
     });
 
     switch (sortBy) {
       case 'price-asc': result.sort((a, b) => (a.pricePerHour || 0) - (b.pricePerHour || 0)); break;
       case 'price-desc': result.sort((a, b) => (b.pricePerHour || 0) - (a.pricePerHour || 0)); break;
-      default: result.sort((a, b) => (b.rating || 0) - (a.rating || 0));
+      // 'newest' is the order the API already returns (sorted by createdAt
+      // descending), so no client-side sort is needed.
     }
 
     return result;
@@ -72,11 +82,12 @@ export default function TurfListingPage() {
   const clearFilters = () => {
     setSearch('');
     setSelectedSports([]);
-    setPriceRange([0, 5000]);
-    setSortBy('rating');
+    setPriceRange([0, MAX_PRICE]);
+    setSortBy(DEFAULT_SORT);
+    setSearchParams({}, { replace: true });
   };
 
-  const hasFilters = search || selectedSports.length > 0 || priceRange[0] > 0 || priceRange[1] < 5000;
+  const hasFilters = !!search || selectedSports.length > 0 || priceRange[0] > 0 || priceRange[1] < MAX_PRICE;
 
   const FilterContent = () => (
     <div className="space-y-6">
@@ -96,8 +107,10 @@ export default function TurfListingPage() {
         </div>
       </div>
       <div>
-        <h3 className="font-medium mb-3">Price Range: ₹{priceRange[0]} - ₹{priceRange[1]}</h3>
-        <Slider min={0} max={5000} step={100} value={priceRange} onValueChange={setPriceRange} />
+        <h3 className="font-medium mb-3">
+          Price Range: ₹{priceRange[0]} – ₹{priceRange[1]}{priceRange[1] >= MAX_PRICE ? '+' : ''}
+        </h3>
+        <Slider min={0} max={MAX_PRICE} step={100} value={priceRange} onValueChange={setPriceRange} aria-label="Price range per hour" />
       </div>
       <div>
         <h3 className="font-medium mb-3">Sort By</h3>
@@ -139,7 +152,7 @@ export default function TurfListingPage() {
       <div className="flex items-center gap-3 mb-6">
         <div className="relative flex-1 max-w-md">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Search turfs..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+          <Input placeholder="Search turfs..." aria-label="Search turfs by name or location" value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
         </div>
         <Sheet>
           <SheetTrigger asChild>
@@ -152,7 +165,12 @@ export default function TurfListingPage() {
             <div className="mt-6"><FilterContent /></div>
           </SheetContent>
         </Sheet>
-        <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="hidden sm:block h-10 px-3 rounded-lg border bg-background text-sm">
+        <select
+          value={sortBy}
+          onChange={e => setSortBy(e.target.value as SortValue)}
+          aria-label="Sort turfs"
+          className="hidden sm:block h-10 px-3 rounded-lg border bg-background text-sm"
+        >
           {sortOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       </div>
@@ -161,7 +179,10 @@ export default function TurfListingPage() {
         <div className="flex flex-wrap gap-2 mb-4">
           {selectedSports.map(s => (
             <Badge key={s} variant="secondary" className="gap-1 capitalize">
-              {s} <X size={12} className="cursor-pointer" onClick={() => toggleSport(s)} />
+              {s}
+              <button type="button" onClick={() => toggleSport(s)} aria-label={`Remove ${s} filter`} className="ml-0.5">
+                <X size={12} />
+              </button>
             </Badge>
           ))}
         </div>
@@ -178,16 +199,27 @@ export default function TurfListingPage() {
 
         {/* Results */}
         <div className="flex-1">
-          <p className="text-sm text-muted-foreground mb-4">{filteredTurfs.length} turfs found</p>
+          <p className="text-sm text-muted-foreground mb-4" role="status" aria-live="polite">
+            {filteredTurfs.length} {filteredTurfs.length === 1 ? 'turf' : 'turfs'} found
+          </p>
           {filteredTurfs.length === 0 ? (
             <div className="text-center py-16 text-muted-foreground">
-              <p className="text-lg font-medium">No turfs found</p>
-              <p className="text-sm mt-1">Try adjusting your filters</p>
-              <Button variant="outline" className="mt-4" onClick={clearFilters}>Clear Filters</Button>
+              {turfs.length === 0 ? (
+                <>
+                  <p className="text-lg font-medium">No turfs listed yet</p>
+                  <p className="text-sm mt-1">New venues appear here once an admin approves them.</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-lg font-medium">No turfs match your filters</p>
+                  <p className="text-sm mt-1">Try widening the price range or clearing a sport.</p>
+                  <Button variant="outline" className="mt-4" onClick={clearFilters}>Clear Filters</Button>
+                </>
+              )}
             </div>
           ) : (
             <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-5">
-              {filteredTurfs.map(turf => <TurfCard key={turf._id || turf.id} turf={turf} />)}
+              {filteredTurfs.map(turf => <TurfCard key={turf._id} turf={turf} />)}
             </div>
           )}
         </div>

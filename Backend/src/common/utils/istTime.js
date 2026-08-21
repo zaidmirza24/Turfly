@@ -27,6 +27,12 @@ export const istDayBounds = (dateStr) => {
   return { start, end };
 };
 
+/** The IST hour-of-day (0-23) that a given instant falls in. */
+export const istHour = (date) => {
+  const istMs = date.getTime() + IST_OFFSET_MS;
+  return Math.floor(istMs / (60 * 60 * 1000)) % 24;
+};
+
 /** "YYYY-MM-DD" for the next IST calendar day after `dateStr`. */
 export const nextDateKey = (dateStr) => {
   const [y, m, d] = dateStr.split("-").map(Number);

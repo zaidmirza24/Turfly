@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import api from '@/lib/api';
+import { apiGet } from '@/lib/api';
 import { Search, MapPin, Zap, ShieldCheck, ChevronRight, Loader2, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,8 +20,8 @@ const steps = [
 
 const faqs = [
   { q: 'How do I book a turf?', a: 'Search for a turf, pick an open time slot, and confirm — your booking is instant, no waiting for approval.' },
-  { q: "What happens if two people try to book the same slot?", a: "The moment you select a slot it's locked just for you, so it's never double-booked." },
-  { q: 'Can I cancel a booking?', a: 'Yes — cancel anytime before your slot starts, directly from your dashboard.' },
+  { q: 'What happens if two people try to book the same slot?', a: "The slot is locked the moment you confirm payment, and only one booking can win it — so a slot is never double-booked. If someone beats you to it, you're told straight away and nothing is charged." },
+  { q: 'Can I cancel a booking?', a: 'Yes — cancel any time before your slot starts, from My Bookings. Once the slot has started it can no longer be cancelled.' },
   { q: 'How are turfs verified?', a: 'Every turf is reviewed by our team before it appears in search results, so listings you see are real and active.' },
   { q: 'Is there a fee to list my turf?', a: 'No upfront listing fees — create your partner account and list your first turf for free.' },
 ];
@@ -32,10 +32,10 @@ export default function HomePage() {
 
   const { data: turfsResponse, isLoading } = useQuery({
     queryKey: ['featured-turfs'],
-    queryFn: () => api.get('/turfs?limit=3'),
+    queryFn: () => apiGet<Turf[]>('/turfs?limit=3'),
   });
 
-  const featuredTurfs = (turfsResponse as any)?.data as Turf[] || [];
+  const featuredTurfs = turfsResponse?.data ?? [];
 
   const goToSearch = () => navigate(search ? `/turfs?q=${encodeURIComponent(search)}` : '/turfs');
 

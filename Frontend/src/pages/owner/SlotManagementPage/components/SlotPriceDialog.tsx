@@ -1,5 +1,5 @@
-import { UseMutationResult } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { CreateSlotsMutation } from '../types';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -19,7 +19,7 @@ type Props = {
   editingSlot: EditingSlot | null;
   onClose: () => void;
   selectedTurfId: string;
-  createSlotsMutation: UseMutationResult<any, any, { turfId: string; slots: { startTime: string; endTime: string; price: number }[] }, any>;
+  createSlotsMutation: CreateSlotsMutation;
 };
 
 export function SlotPriceDialog({ editingSlot, onClose, selectedTurfId, createSlotsMutation }: Props) {

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import api from '@/lib/api';
+import { apiGet, apiPatch } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -11,34 +11,49 @@ export default function AdminTurfsPage() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin-turfs'],
-    queryFn: () => api.get('/admin/turfs'),
+    queryFn: () => apiGet<Turf[]>('/admin/turfs'),
   });
 
-  const turfs = ((data as any)?.data as Turf[]) || [];
+  const turfs = data?.data ?? [];
 
   const approveMutation = useMutation({
-    mutationFn: (id: string) => api.patch(`/admin/turfs/${id}/approve`),
+    mutationFn: (id: string) => apiPatch<Turf>(`/admin/turfs/${id}/approve`),
     onSuccess: () => {
       toast.success('Turf approved');
       queryClient.invalidateQueries({ queryKey: ['admin-turfs'] });
     },
-    onError: (error: any) => toast.error(error.message || 'Failed to approve turf'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to approve turf'),
   });
 
   const rejectMutation = useMutation({
-    mutationFn: (id: string) => api.patch(`/admin/turfs/${id}/reject`),
+    mutationFn: (id: string) => apiPatch<Turf>(`/admin/turfs/${id}/reject`),
     onSuccess: () => {
-      toast.success('Turf rejected');
+      toast.success('Turf is no longer listed publicly');
       queryClient.invalidateQueries({ queryKey: ['admin-turfs'] });
     },
-    onError: (error: any) => toast.error(error.message || 'Failed to reject turf'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to reject turf'),
   });
+
+  const isMutating = approveMutation.isPending || rejectMutation.isPending;
+  const pendingCount = turfs.filter(t => (t.approvalStatus ?? 'PENDING') === 'PENDING').length;
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">Turfs Management</h1>
+      <div className="flex flex-wrap items-baseline gap-3 mb-6">
+        <h1 className="text-2xl font-bold">Turfs Management</h1>
+        {pendingCount > 0 && (
+          <span className="text-sm text-muted-foreground">
+            {pendingCount} awaiting review
+          </span>
+        )}
+      </div>
       {isLoading ? (
         <TableSkeleton rows={6} />
+      ) : turfs.length === 0 ? (
+        <div className="border-2 border-dashed rounded-xl py-16 text-center text-muted-foreground">
+          <p className="font-medium">No turfs submitted yet</p>
+          <p className="text-sm mt-1">Listings appear here as soon as an owner creates one.</p>
+        </div>
       ) : (
         <div className="border rounded-xl overflow-hidden">
           <div className="overflow-x-auto">
@@ -69,12 +84,31 @@ export default function AdminTurfsPage() {
                       </Badge>
                     </td>
                     <td className="p-3">
-                      {t.approvalStatus === 'PENDING' && (
-                        <div className="flex gap-1">
-                          <Button size="sm" disabled={approveMutation.isPending} onClick={() => approveMutation.mutate(t._id)}>Approve</Button>
-                          <Button size="sm" variant="destructive" disabled={rejectMutation.isPending} onClick={() => rejectMutation.mutate(t._id)}>Reject</Button>
-                        </div>
-                      )}
+                      {/*
+                        Actions used to render only while a turf was PENDING, so
+                        approving or rejecting was irreversible from the UI: a
+                        turf approved by mistake could not be taken down, and a
+                        rejected one could never be reconsidered. Both
+                        transitions are available in the API — show whichever
+                        one isn't the current state.
+                      */}
+                      <div className="flex gap-1">
+                        {t.approvalStatus !== 'APPROVED' && (
+                          <Button size="sm" disabled={isMutating} onClick={() => approveMutation.mutate(t._id)}>
+                            Approve
+                          </Button>
+                        )}
+                        {t.approvalStatus !== 'REJECTED' && (
+                          <Button
+                            size="sm"
+                            variant={t.approvalStatus === 'APPROVED' ? 'outline' : 'destructive'}
+                            disabled={isMutating}
+                            onClick={() => rejectMutation.mutate(t._id)}
+                          >
+                            {t.approvalStatus === 'APPROVED' ? 'Unlist' : 'Reject'}
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
