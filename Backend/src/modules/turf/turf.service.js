@@ -4,6 +4,15 @@ import ApiError from "../../common/utils/ApiError.js";
 import logger from "../../common/utils/logger.js";
 import { attachImagesToTurf } from "../image/image.service.js";
 import { geocodeLocation } from "./geocode.js";
+import { updateSlots as updateSlotPrices } from "../slot/slot.service.js";
+
+// Fields whose change should propagate to already-generated, not-yet-booked
+// Slot documents. Without this, editing a turf's rate only affects slots
+// provisioned *after* the edit — every slot already on the calendar (which is
+// what both the owner's grid and the customer's booking page actually read
+// price from) keeps showing the old number until an owner separately opens
+// Slot Management and hits "Sync Schedule".
+const PRICING_FIELDS = ["pricePerHour", "defaultWeekdayPrice", "defaultWeekendPrice"];
 
 // Fields an owner may edit on their own turf via PATCH /api/turfs/:id.
 // ownerId and approvalStatus are deliberately excluded — approvalStatus is
@@ -184,6 +193,17 @@ export const updateTurf = async (turfId, ownerId, data) => {
   }
 
   const updatedTurf = await Turf.findByIdAndUpdate(turfId, { $set: safeData }, { new: true });
+
+  if (PRICING_FIELDS.some((f) => f in safeData)) {
+    if (updatedTurf.defaultWeekdayPrice != null && updatedTurf.defaultWeekendPrice != null) {
+      await updateSlotPrices(ownerId, turfId, {
+        weekdayPrice: updatedTurf.defaultWeekdayPrice,
+        weekendPrice: updatedTurf.defaultWeekendPrice,
+      });
+    } else if (safeData.pricePerHour !== undefined) {
+      await updateSlotPrices(ownerId, turfId, { price: updatedTurf.pricePerHour });
+    }
+  }
 
   logger.info("Turf updated", { turfId: String(turfId), fields: Object.keys(safeData) });
   return updatedTurf;

@@ -4,6 +4,7 @@ import { formatSlotDate, formatSlotTime } from '@/lib/dateKey';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Printer } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 /**
  * A receipt built entirely from data this booking already carries — there is
@@ -37,6 +38,12 @@ export function BookingReceiptDialog({ booking, onClose }: { booking: Booking | 
             <Button variant="outline" className="w-full mt-2 gap-2" onClick={() => window.print()}>
               <Printer size={14} /> Print
             </Button>
+            <Link
+              to={`/help?booking=${booking.groupId || booking._id}`}
+              className="text-xs text-muted-foreground hover:text-primary underline block text-center"
+            >
+              Need help with this booking?
+            </Link>
           </div>
         )}
       </DialogContent>

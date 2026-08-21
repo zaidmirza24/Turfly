@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
-import { LogOut, LayoutDashboard, Compass, User as UserIcon } from 'lucide-react';
+import { LogOut, LayoutDashboard, Compass, User as UserIcon, Settings, Heart, LifeBuoy } from 'lucide-react';
+import { resolveImageUrl } from '@/lib/imageUrl';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -8,7 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
@@ -69,6 +70,7 @@ export function UserMenu({ align = 'end', className }: Props) {
           aria-label={`Account menu for ${user.name}`}
         >
           <Avatar className="h-9 w-9">
+            {user.avatar && <AvatarImage src={resolveImageUrl(user.avatar)} alt="" />}
             <AvatarFallback className="bg-primary/10 text-primary font-bold">
               {user.name?.charAt(0).toUpperCase() || <UserIcon size={16} aria-hidden="true" />}
             </AvatarFallback>
@@ -101,6 +103,23 @@ export function UserMenu({ align = 'end', className }: Props) {
         <DropdownMenuItem onClick={() => navigate('/turfs')} className="rounded-xl cursor-pointer gap-2">
           <Compass size={14} aria-hidden="true" />
           Browse turfs
+        </DropdownMenuItem>
+
+        {user.role === 'USER' && (
+          <DropdownMenuItem onClick={() => navigate('/favorites')} className="rounded-xl cursor-pointer gap-2">
+            <Heart size={14} aria-hidden="true" />
+            Favorites
+          </DropdownMenuItem>
+        )}
+
+        <DropdownMenuItem onClick={() => navigate('/account')} className="rounded-xl cursor-pointer gap-2">
+          <Settings size={14} aria-hidden="true" />
+          Account settings
+        </DropdownMenuItem>
+
+        <DropdownMenuItem onClick={() => navigate('/help')} className="rounded-xl cursor-pointer gap-2">
+          <LifeBuoy size={14} aria-hidden="true" />
+          Help &amp; support
         </DropdownMenuItem>
 
         <DropdownMenuSeparator />

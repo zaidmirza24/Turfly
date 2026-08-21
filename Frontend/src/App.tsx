@@ -17,6 +17,11 @@ import BookingFlowPage from "@/pages/BookingFlowPage";
 import UserDashboard from "@/pages/UserDashboard";
 import { LoginPage, SignupPage, ForgotPasswordPage } from "@/pages/AuthPages";
 import NotFound from "@/pages/NotFound";
+import AccountSettingsPage from "@/pages/AccountSettingsPage";
+import FavoritesPage from "@/pages/FavoritesPage";
+import HelpPage from "@/pages/HelpPage";
+import { PrivacyPolicyPage, TermsPage } from "@/pages/LegalPages";
+import { MobileBottomNav } from "@/components/MobileBottomNav";
 
 /**
  * The owner and admin panels are lazy-loaded.
@@ -49,7 +54,11 @@ const queryClient = new QueryClient({
 });
 
 const PlayerLayout = ({ children }: { children: React.ReactNode }) => (
-  <><Navbar />{children}</>
+  <>
+    <Navbar />
+    <div className="pb-16 md:pb-0">{children}</div>
+    <MobileBottomNav />
+  </>
 );
 
 const RouteFallback = () => (
@@ -78,6 +87,11 @@ const App = () => (
                   <Route path="/login" element={<PlayerLayout><LoginPage /></PlayerLayout>} />
                   <Route path="/signup" element={<PlayerLayout><SignupPage /></PlayerLayout>} />
                   <Route path="/forgot-password" element={<PlayerLayout><ForgotPasswordPage /></PlayerLayout>} />
+                  <Route path="/account" element={<RequireRole><PlayerLayout><AccountSettingsPage /></PlayerLayout></RequireRole>} />
+                  <Route path="/favorites" element={<RequireRole roles={["USER"]}><PlayerLayout><FavoritesPage /></PlayerLayout></RequireRole>} />
+                  <Route path="/help" element={<PlayerLayout><HelpPage /></PlayerLayout>} />
+                  <Route path="/privacy" element={<PlayerLayout><PrivacyPolicyPage /></PlayerLayout>} />
+                  <Route path="/terms" element={<PlayerLayout><TermsPage /></PlayerLayout>} />
                   <Route path="/owner" element={<RequireRole roles={["OWNER"]}><OwnerLayout /></RequireRole>}>
                     <Route index element={<OwnerDashboard />} />
                     <Route path="turfs" element={<ManageTurfsPage />} />

@@ -29,6 +29,8 @@ type TurfFormState = {
   name: string;
   location: string;
   pricePerHour: string;
+  hasWeekendPricing: boolean;
+  weekendPrice: string;
   sportsType: string[];
   amenities: string[];
   description: string;
@@ -41,24 +43,33 @@ type TurfFormState = {
 };
 
 const emptyForm = (): TurfFormState => ({
-  name: '', location: '', pricePerHour: '', sportsType: [], amenities: [], description: '', images: [],
+  name: '', location: '', pricePerHour: '', hasWeekendPricing: false, weekendPrice: '', sportsType: [], amenities: [], description: '', images: [],
   venueType: 'OUTDOOR', capacity: '', contactPhone: '', rules: '', faqs: [],
 });
 
-const turfToForm = (turf: Turf): TurfFormState => ({
-  name: turf.name,
-  location: turf.location,
-  pricePerHour: String(turf.pricePerHour ?? ''),
-  sportsType: turf.sportsType ?? [],
-  amenities: turf.amenities ?? [],
-  description: turf.description ?? '',
-  images: turf.images ?? [],
-  venueType: turf.venueType ?? 'OUTDOOR',
-  capacity: turf.capacity ? String(turf.capacity) : '',
-  contactPhone: turf.contactPhone ?? '',
-  rules: turf.rules ?? '',
-  faqs: turf.faqs ?? [],
-});
+const turfToForm = (turf: Turf): TurfFormState => {
+  // A weekend price only counts as a deliberate override when it actually
+  // differs from the weekday rate — otherwise every turf saved before this
+  // field existed (defaultWeekday/WeekendPrice both defaulted to the same
+  // value) would reopen with the toggle already on.
+  const hasWeekendPricing = turf.defaultWeekendPrice != null && turf.defaultWeekendPrice !== turf.defaultWeekdayPrice;
+  return {
+    name: turf.name,
+    location: turf.location,
+    pricePerHour: String(turf.defaultWeekdayPrice ?? turf.pricePerHour ?? ''),
+    hasWeekendPricing,
+    weekendPrice: hasWeekendPricing ? String(turf.defaultWeekendPrice) : '',
+    sportsType: turf.sportsType ?? [],
+    amenities: turf.amenities ?? [],
+    description: turf.description ?? '',
+    images: turf.images ?? [],
+    venueType: turf.venueType ?? 'OUTDOOR',
+    capacity: turf.capacity ? String(turf.capacity) : '',
+    contactPhone: turf.contactPhone ?? '',
+    rules: turf.rules ?? '',
+    faqs: turf.faqs ?? [],
+  };
+};
 
 function TurfForm({
   formData,
@@ -107,6 +118,28 @@ function TurfForm({
       <div>
         <Label htmlFor="price">Price per Hour (₹) *</Label>
         <Input id="price" type="number" value={formData.pricePerHour} onChange={e => setFormData(p => ({ ...p, pricePerHour: e.target.value }))} placeholder="1500" />
+      </div>
+      <div>
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <Checkbox
+            checked={formData.hasWeekendPricing}
+            onCheckedChange={checked => setFormData(p => ({ ...p, hasWeekendPricing: checked === true }))}
+          />
+          Charge a different price on weekends?
+        </label>
+        {formData.hasWeekendPricing && (
+          <div className="mt-2">
+            <Label htmlFor="weekendPrice">Weekend Price per Hour (₹) *</Label>
+            <Input
+              id="weekendPrice"
+              type="number"
+              value={formData.weekendPrice}
+              onChange={e => setFormData(p => ({ ...p, weekendPrice: e.target.value }))}
+              placeholder="2000"
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">Applied to Saturdays and Sundays instead of the standard rate above.</p>
+          </div>
+        )}
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -212,12 +245,19 @@ export default function ManageTurfsPage() {
 
   const ownerTurfs = turfsResponse?.data ?? [];
 
-  const toPayload = (data: TurfFormState) => ({
-    ...data,
-    pricePerHour: Number(data.pricePerHour),
-    capacity: data.capacity ? Number(data.capacity) : undefined,
-    faqs: data.faqs.filter(f => f.question.trim() && f.answer.trim()),
-  });
+  const toPayload = (data: TurfFormState) => {
+    const weekdayPrice = Number(data.pricePerHour);
+    const weekendPrice = data.hasWeekendPricing && data.weekendPrice ? Number(data.weekendPrice) : weekdayPrice;
+    const { hasWeekendPricing: _hasWeekendPricing, weekendPrice: _weekendPrice, ...rest } = data;
+    return {
+      ...rest,
+      pricePerHour: weekdayPrice,
+      defaultWeekdayPrice: weekdayPrice,
+      defaultWeekendPrice: weekendPrice,
+      capacity: data.capacity ? Number(data.capacity) : undefined,
+      faqs: data.faqs.filter(f => f.question.trim() && f.answer.trim()),
+    };
+  };
 
   const createMutation = useMutation({
     mutationFn: (data: TurfFormState) => apiPost<Turf>('/turfs', toPayload(data)),
@@ -232,9 +272,18 @@ export default function ManageTurfsPage() {
 
   const updateMutation = useMutation({
     mutationFn: ({ turfId, data }: { turfId: string; data: TurfFormState }) => apiPatch<Turf>(`/turfs/${turfId}`, toPayload(data)),
-    onSuccess: () => {
+    onSuccess: (_res, { turfId }) => {
       toast.success('Turf updated');
       queryClient.invalidateQueries({ queryKey: ['my-turfs'] });
+      // A price edit here also repriced this turf's existing slots
+      // server-side, so any slot list already cached in this tab (the owner's
+      // own slot grid, or this turf's public detail page) needs to be thrown
+      // away too instead of showing the pre-edit price until it naturally
+      // goes stale.
+      queryClient.invalidateQueries({ queryKey: ['slots-range', turfId] });
+      queryClient.invalidateQueries({ queryKey: ['slots', turfId] });
+      queryClient.invalidateQueries({ queryKey: ['slots-month', turfId] });
+      queryClient.invalidateQueries({ queryKey: ['turf', turfId] });
       setEditingTurf(null);
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to update turf'),
@@ -251,9 +300,13 @@ export default function ManageTurfsPage() {
     onError: (error: Error) => toast.error(error.message || 'Failed to update photos'),
   });
 
+  const isFormValid = (data: TurfFormState) =>
+    !!data.name && !!data.location && !!data.pricePerHour && data.sportsType.length > 0 &&
+    (!data.hasWeekendPricing || !!data.weekendPrice);
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.location || !formData.pricePerHour || formData.sportsType.length === 0) {
+    if (!isFormValid(formData)) {
       toast.error('Please fill in all required fields');
       return;
     }
@@ -263,7 +316,7 @@ export default function ManageTurfsPage() {
   const handleUpdate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingTurf) return;
-    if (!editFormData.name || !editFormData.location || !editFormData.pricePerHour || editFormData.sportsType.length === 0) {
+    if (!isFormValid(editFormData)) {
       toast.error('Please fill in all required fields');
       return;
     }

@@ -384,6 +384,71 @@ Deliberately **not** built, and why:
 - Saved payment methods / real UPI-card-netbanking integration — same gate as
   the original payment-gateway decision (skipped for this pass).
 
+## Reviews, accounts, favorites & mobile/trust UX (2026-08-21)
+
+New `user` module (`Backend/src/modules/user/`) — there was no `/api/users`
+surface at all before this: `GET/PATCH /me`, `POST /me/change-password`,
+`DELETE /me` (soft delete — see below), and favorites (`GET/POST/DELETE
+/me/favorites/:turfId`). `protect` now also rejects `isDeleted` accounts the
+same way it already rejected banned ones.
+
+- **Account deletion is a soft delete**, not a row removal: bookings,
+  reviews, and owner turf history elsewhere in the system hold this `_id` by
+  reference, and there's no product need to cascade-delete any of that. The
+  account is anonymized in place (name → "Deleted User", email → a unique
+  placeholder, phone/avatar/favorites cleared) and refused for OWNER/ADMIN
+  roles or while an upcoming CONFIRMED booking exists — a customer just
+  cancels first, which is always allowed up to 6 hours out.
+- **Avatars and review photos** reuse the existing turf-image upload
+  pipeline (magic-byte validation, MongoDB storage) through two new,
+  deliberately simpler helpers in `image.service.js` — `attachAvatarImage`/
+  `attachReviewImages` skip turf.images's cross-document "still used
+  elsewhere" check, because an avatar or a review's photos are only ever
+  referenced from that one document.
+- **Reviews** gained facility sub-ratings (turf quality / cleanliness /
+  staff behavior, all optional), photo attachments (up to 4), self-editing
+  (`PATCH /reviews/id/:reviewId`, re-aggregates the turf's rating), reporting
+  (`POST .../report`, one flag per user, idempotent), and one public owner
+  response per review (`POST .../response`, owner-of-that-turf only). A
+  "Verified Booking" tag is shown on every review in the UI — this was
+  already implicitly true (review creation requires a CONFIRMED booking) and
+  is now actually surfaced.
+- **Favorites** live server-side on `User.favorites`, not localStorage —
+  unlike "recently viewed", a saved venue is expected to follow the customer
+  across devices. Heart toggle on `TurfCard` and the detail page's gallery; a
+  `/favorites` page lists them.
+- **Mobile**: a bottom tab bar (`MobileBottomNav`) for Home/Search/
+  Favorites/Bookings/Account, hidden on the turf-detail and booking-flow
+  pages since both already have their own sticky bottom CTA bar — stacking
+  two fixed bottom bars would eat a real chunk of a phone screen. The turf
+  gallery is swipeable via touch handlers (no new dependency).
+- **Trust & support**: a "Verified Venue" badge on the detail page (every
+  live listing is admin-approved, so this was always true and just wasn't
+  shown), real `/privacy` and `/terms` pages describing what the system
+  actually does today (including "checkout is simulated, no card data is
+  ever collected"), and a `/help` page with FAQ plus `mailto:` links that
+  auto-prefix the booking reference when reached from a receipt or the
+  booking-failure screen.
+- **Error copy**: the booking-failure screen now reads "Something went
+  wrong — we couldn't complete your booking... Your payment has not been
+  charged", matching the tone the rest of the app already uses instead of a
+  generic failure message.
+
+Deliberately **not** built, and why:
+- Saved payment methods, notification preferences — nothing real backs
+  either: there's no payment gateway to save a method against, and no
+  email/SMS system to have a preference about. Adding the toggle would
+  imply a capability that doesn't exist.
+- Compare saved venues — real feature, but a distinct side-by-side UI with
+  little payoff at this catalog size; skipped to keep this pass scoped.
+- Live chat / ticketing support — no support-agent backend exists; `mailto:`
+  with the booking reference pre-filled is the honest equivalent given that.
+- Admin moderation UI for reported reviews — reports are now captured
+  (`Review.reportedBy`) but there's no admin screen to act on them yet; the
+  data exists for that screen to be added later without a schema change.
+- Saved locations — no concept of a delivery/service address applies to a
+  turf-booking flow beyond the "near me" geolocation search already built.
+
 ## Still not implemented
 
 - ❌ Payment gateway — checkout is simulated; no money moves, and no commission

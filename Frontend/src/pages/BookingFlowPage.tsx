@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiGet } from '@/lib/api';
 import { useBooking } from '@/contexts/BookingContext';
@@ -197,6 +197,9 @@ export default function BookingFlowPage() {
             <Button variant="outline" className="flex-1" onClick={() => navigate('/dashboard')}>Manage in My Bookings</Button>
             <Button className="flex-1" onClick={() => navigate('/turfs')}>Book Another</Button>
           </div>
+          <Link to={`/help?booking=${reference}`} className="text-xs text-muted-foreground hover:text-primary underline mt-4 inline-block">
+            Need help with this booking?
+          </Link>
         </div>
       </div>
     );
@@ -207,13 +210,18 @@ export default function BookingFlowPage() {
       <div className="container mx-auto px-4 py-16 max-w-lg text-center">
         <div className="bg-card border rounded-2xl p-8 shadow-sm">
           <XCircle size={64} className="mx-auto text-destructive mb-4" />
-          <h1 className="text-2xl font-bold">Booking Failed</h1>
-          <p className="text-muted-foreground mt-2">{failureReason || 'Something went wrong.'}</p>
-          <p className="text-xs text-muted-foreground mt-2">Nothing was charged.</p>
+          <h1 className="text-2xl font-bold">Something went wrong</h1>
+          <p className="text-muted-foreground mt-2">
+            We couldn't complete your booking — {failureReason || 'please try again.'}
+          </p>
+          <p className="text-xs font-medium text-success mt-2">Your payment has not been charged.</p>
           <div className="flex gap-3 mt-6">
             <Button variant="outline" className="flex-1" onClick={() => navigate(`/turfs/${id}`)}>Go Back</Button>
             <Button className="flex-1" onClick={() => { setFailureReason(null); setStep('summary'); }}>Retry</Button>
           </div>
+          <Link to="/help" className="text-xs text-muted-foreground hover:text-primary underline mt-4 inline-block">
+            Still stuck? Contact support
+          </Link>
         </div>
       </div>
     );
@@ -290,7 +298,9 @@ export default function BookingFlowPage() {
 
             <label className="flex items-start gap-2.5 text-xs text-muted-foreground cursor-pointer">
               <Checkbox checked={agreedToPolicy} onCheckedChange={(v) => setAgreedToPolicy(!!v)} className="mt-0.5" />
-              <span>I agree to the booking terms and the cancellation policy above.</span>
+              <span>
+                I agree to the <Link to="/terms" target="_blank" className="underline hover:text-primary">Terms &amp; Conditions</Link> and the cancellation policy above.
+              </span>
             </label>
 
             <Button className="w-full" size="lg" onClick={handlePayment} disabled={loading || !agreedToPolicy}>

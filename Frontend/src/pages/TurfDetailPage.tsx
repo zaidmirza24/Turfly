@@ -318,7 +318,10 @@ export default function TurfDetailPage() {
             </p>
           </section>
 
-          <ReviewsSection turfId={turf._id} />
+          <ReviewsSection
+            turfId={turf._id}
+            isOwnerOfTurf={user?.role === 'OWNER' && (typeof turf.ownerId === 'object' ? turf.ownerId._id : turf.ownerId) === user._id}
+          />
 
           <section id="booking" className="scroll-mt-24 space-y-6">
             <div className="flex items-center justify-between">

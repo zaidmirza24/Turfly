@@ -318,8 +318,9 @@ export default function HomePage() {
           <nav className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-muted-foreground">
             <Link to="/turfs" className="hover:text-foreground">Explore turfs</Link>
             <Link to="/signup?role=OWNER" className="hover:text-foreground">List your turf</Link>
-            <Link to="/login" className="hover:text-foreground">Log in</Link>
-            <Link to="/signup" className="hover:text-foreground">Sign up</Link>
+            <Link to="/help" className="hover:text-foreground">Help &amp; Support</Link>
+            <Link to="/privacy" className="hover:text-foreground">Privacy</Link>
+            <Link to="/terms" className="hover:text-foreground">Terms</Link>
           </nav>
           <p className="text-xs text-muted-foreground">© {new Date().getFullYear()} Turfly</p>
         </div>
