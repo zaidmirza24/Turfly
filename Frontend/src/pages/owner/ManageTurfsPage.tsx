@@ -362,11 +362,11 @@ export default function ManageTurfsPage() {
                 <img src={image} alt="" className="w-24 h-24 rounded-lg object-cover hidden sm:block bg-muted" loading="lazy" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-2">
-                    <div>
+                    <div className="min-w-0">
                       <h3 className="font-semibold truncate">{turf.name}</h3>
-                      <p className="text-sm text-muted-foreground">{turf.location}</p>
+                      <p className="text-sm text-muted-foreground truncate">{turf.location}</p>
                     </div>
-                    <div className="flex flex-col items-end gap-1">
+                    <div className="flex flex-col items-end gap-1 shrink-0">
                       <Badge variant={turf.isActive ? 'default' : 'secondary'}>{turf.isActive ? 'Active' : 'Inactive'}</Badge>
                       <Badge
                         variant={turf.approvalStatus === 'APPROVED' ? 'default' : turf.approvalStatus === 'PENDING' ? 'secondary' : 'destructive'}

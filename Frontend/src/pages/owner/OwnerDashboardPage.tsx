@@ -358,16 +358,16 @@ export default function OwnerDashboard() {
                 key={t._id} 
                 className="glass p-5 rounded-[2rem] border-primary/10 flex items-center gap-4 group cursor-pointer hover:border-primary/30 transition-all shadow-xl shadow-black/5"
               >
-                <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-lg shadow-black/10">
+                <div className="w-16 h-16 shrink-0 rounded-2xl overflow-hidden shadow-lg shadow-black/10">
                   <img src={turfCoverImage(t.images)} alt="" className="w-full h-full object-cover bg-muted transition-transform group-hover:scale-110" loading="lazy" />
                 </div>
-                <div className="flex-1">
-                  <div className="font-black tracking-tight group-hover:text-primary transition-colors">{t.name}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-black tracking-tight group-hover:text-primary transition-colors truncate">{t.name}</div>
                   <div className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground uppercase tracking-widest mt-1">
-                    <MapPin size={10} className="text-primary" /> {t.location}
+                    <MapPin size={10} className="text-primary shrink-0" /> <span className="truncate">{t.location}</span>
                   </div>
                 </div>
-                <div className="text-right">
+                <div className="text-right shrink-0">
                   <div className="text-[10px] font-black text-primary tracking-widest uppercase">Price</div>
                   <div className="text-lg font-black tracking-tighter">₹{t.pricePerHour}</div>
                 </div>

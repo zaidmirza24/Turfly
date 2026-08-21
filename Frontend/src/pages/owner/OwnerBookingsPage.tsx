@@ -110,11 +110,11 @@ export default function OwnerBookingsPage() {
                   </div>
                   <BookingStatusBadge status={b.status} />
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 min-w-0">
                   <MapPin size={14} className="text-primary/60 shrink-0" />
-                  <div>
-                    <div className="font-bold">{turf?.name || 'Standard Turf'}</div>
-                    <div className="text-[10px] font-medium text-muted-foreground">{turf?.location}</div>
+                  <div className="min-w-0">
+                    <div className="font-bold truncate">{turf?.name || 'Standard Turf'}</div>
+                    <div className="text-[10px] font-medium text-muted-foreground truncate">{turf?.location}</div>
                   </div>
                 </div>
                 <div className="flex items-center justify-between gap-3">
@@ -193,12 +193,12 @@ export default function OwnerBookingsPage() {
                             </div>
                           </div>
                         </td>
-                        <td className="p-6">
-                          <div className="flex items-center gap-2">
-                            <MapPin size={14} className="text-primary/60" />
-                            <div className="font-bold">{turf?.name || 'Standard Turf'}</div>
+                        <td className="p-6 max-w-[16rem]">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <MapPin size={14} className="text-primary/60 shrink-0" />
+                            <div className="font-bold truncate">{turf?.name || 'Standard Turf'}</div>
                           </div>
-                          <div className="text-[10px] font-medium text-muted-foreground ml-6">{turf?.location}</div>
+                          <div className="text-[10px] font-medium text-muted-foreground ml-6 truncate">{turf?.location}</div>
                         </td>
                         <td className="p-6">
                           <div className="flex items-center gap-2 mb-1">
