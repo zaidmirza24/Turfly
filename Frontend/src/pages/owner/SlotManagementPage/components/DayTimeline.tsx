@@ -1,5 +1,6 @@
 import { AlertTriangle, Loader2, Pencil, RefreshCw, UserCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
 import { TimeSlot } from '@/types';
 import { STATUS_META } from '../constants';
@@ -67,6 +68,15 @@ export function DayTimeline({
                   isSelected ? 'bg-primary/10' : 'hover:bg-muted/40',
                   isDisabled && 'cursor-not-allowed')}
               >
+                <Checkbox
+                  checked={isSelected}
+                  disabled={isDisabled}
+                  onClick={(e) => e.stopPropagation()}
+                  onCheckedChange={() => onRowClick(h)}
+                  aria-label={`Select ${timeLabel}`}
+                  className="shrink-0"
+                />
+
                 <div className="w-14 sm:w-24 shrink-0 font-black text-[11px] sm:text-sm tracking-tighter text-muted-foreground">
                   {timeLabel}
                 </div>
