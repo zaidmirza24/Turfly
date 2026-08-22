@@ -7,6 +7,7 @@ import { formatSlotDate, formatSlotTime } from '@/lib/dateKey';
 import { turfCoverImage } from '@/lib/imageUrl';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { cn } from '@/lib/utils';
 import {
   CheckCircle2, XCircle, ChevronLeft, CreditCard, Loader2, ShieldAlert,
   Navigation, Phone, CalendarPlus, Share2, Copy,
@@ -145,7 +146,7 @@ export default function BookingFlowPage() {
 
     return (
       <div className="container mx-auto px-4 py-16 max-w-lg text-center">
-        <div className="bg-card border rounded-2xl p-8 shadow-sm">
+        <div className="bg-card border rounded-2xl p-5 sm:p-8 shadow-sm">
           <CheckCircle2 size={64} className="mx-auto text-primary mb-4" />
           <h1 className="text-2xl font-bold">Booking Confirmed! 🎉</h1>
           <p className="text-muted-foreground mt-2">
@@ -166,34 +167,34 @@ export default function BookingFlowPage() {
           </div>
 
           <div className="grid grid-cols-2 gap-2 mt-4">
-            <Button variant="outline" size="sm" className="gap-1.5" asChild>
+            <Button variant="outline" size="sm" className="gap-1.5 h-auto py-2 whitespace-normal text-center" asChild>
               <a href={directionsUrl(turf?.location ?? '', turf?.geo)} target="_blank" rel="noopener noreferrer">
-                <Navigation size={14} /> Directions
+                <Navigation size={14} className="shrink-0" /> Directions
               </a>
             </Button>
             {turf?.contactPhone && (
-              <Button variant="outline" size="sm" className="gap-1.5" asChild>
-                <a href={`tel:${turf.contactPhone}`}><Phone size={14} /> Contact venue</a>
+              <Button variant="outline" size="sm" className="gap-1.5 h-auto py-2 whitespace-normal text-center" asChild>
+                <a href={`tel:${turf.contactPhone}`}><Phone size={14} className="shrink-0" /> Contact venue</a>
               </Button>
             )}
             {calendarEvent && (
-              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => downloadIcsFile(calendarEvent)}>
-                <CalendarPlus size={14} /> Add to calendar
+              <Button variant="outline" size="sm" className="gap-1.5 h-auto py-2 whitespace-normal text-center" onClick={() => downloadIcsFile(calendarEvent)}>
+                <CalendarPlus size={14} className="shrink-0" /> Add to calendar
               </Button>
             )}
             {calendarEvent && (
-              <Button variant="outline" size="sm" className="gap-1.5" asChild>
+              <Button variant="outline" size="sm" className="gap-1.5 h-auto py-2 whitespace-normal text-center" asChild>
                 <a href={googleCalendarUrl(calendarEvent)} target="_blank" rel="noopener noreferrer">
-                  <CalendarPlus size={14} /> Google Calendar
+                  <CalendarPlus size={14} className="shrink-0" /> Google Calendar
                 </a>
               </Button>
             )}
-            <Button variant="outline" size="sm" className={turf?.contactPhone ? 'gap-1.5 col-span-2' : 'gap-1.5'} onClick={handleShare}>
-              {navigator.share ? <Share2 size={14} /> : <Copy size={14} />} Share confirmation
+            <Button variant="outline" size="sm" className={cn('gap-1.5 h-auto py-2 whitespace-normal text-center', turf?.contactPhone && 'col-span-2')} onClick={handleShare}>
+              {navigator.share ? <Share2 size={14} className="shrink-0" /> : <Copy size={14} className="shrink-0" />} Share confirmation
             </Button>
           </div>
 
-          <div className="flex gap-3 mt-6">
+          <div className="flex flex-col sm:flex-row gap-3 mt-6">
             <Button variant="outline" className="flex-1" onClick={() => navigate('/dashboard')}>Manage in My Bookings</Button>
             <Button className="flex-1" onClick={() => navigate('/turfs')}>Book Another</Button>
           </div>
