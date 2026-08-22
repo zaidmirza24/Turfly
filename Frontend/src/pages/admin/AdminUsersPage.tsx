@@ -1,26 +1,34 @@
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPatch } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Search } from 'lucide-react';
-import { useState } from 'react';
+import { Search, Users, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
-import { User } from '@/types';
-import { TableSkeleton } from '@/components/Skeletons';
+import { Paginated, User } from '@/types';
+import { SyncingIndicator } from '@/components/SyncingIndicator';
 import { QueryErrorState } from '@/components/QueryErrorState';
+
+const LIMIT = 20;
 
 export default function AdminUsersPage() {
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
   const queryClient = useQueryClient();
 
+  const filters = { search, page };
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['admin-users'],
-    queryFn: () => apiGet<User[]>('/admin/users'),
+    queryKey: ['admin-users', filters],
+    queryFn: () => {
+      const params = new URLSearchParams({ page: String(page), limit: String(LIMIT) });
+      if (search.trim()) params.set('search', search.trim());
+      return apiGet<Paginated<User>>(`/admin/users?${params.toString()}`);
+    },
   });
 
-  const users = data?.data ?? [];
-  const filtered = users.filter(u => u.name.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase()));
+  const users = data?.data?.items ?? [];
+  const total = data?.data?.total ?? 0;
+  const pages = data?.data?.pages ?? 1;
 
   const banMutation = useMutation({
     mutationFn: ({ id, isBanned }: { id: string; isBanned: boolean }) => apiPatch<User>(`/admin/users/${id}/ban`, { isBanned }),
@@ -31,30 +39,53 @@ export default function AdminUsersPage() {
     onError: (error: Error) => toast.error(error.message || 'Failed to update user'),
   });
 
+  if (isLoading) {
+    return <SyncingIndicator label="Syncing Users" />;
+  }
+
   return (
-    <div>
-      <h1 className="text-2xl font-bold mb-6">Users</h1>
-      <div className="relative max-w-sm mb-4">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-        <Input placeholder="Search users..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+    <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
+      <div>
+        <div className="flex items-center gap-2 mb-2">
+          <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
+            <Activity size={16} />
+          </div>
+          <span className="text-[10px] font-black uppercase tracking-[0.3em] text-primary">Admin Command Center</span>
+        </div>
+        <h1 className="text-4xl font-black tracking-tighter">Users</h1>
+        <p className="text-muted-foreground font-medium mt-1">Everyone registered on the platform.</p>
       </div>
-      {isLoading ? (
-        <TableSkeleton rows={6} />
-      ) : isError ? (
+
+      <div className="relative w-full lg:w-72 group">
+        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-primary transition-colors" size={18} />
+        <input
+          type="text"
+          placeholder="Search name or email..."
+          value={search}
+          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+          aria-label="Search users"
+          className="w-full h-12 pl-12 pr-4 rounded-2xl bg-primary/5 border-2 border-transparent focus:border-primary/20 focus:bg-background outline-none font-bold transition-all"
+        />
+      </div>
+
+      {isError ? (
         <QueryErrorState message="Couldn't load users." onRetry={() => refetch()} />
-      ) : filtered.length === 0 ? (
-        <div className="border-2 border-dashed rounded-xl py-16 text-center text-muted-foreground">
-          <p className="font-medium">{search ? 'No users match that search' : 'No users yet'}</p>
+      ) : users.length === 0 ? (
+        <div className="glass rounded-[3rem] p-16 text-center border-primary/10">
+          <div className="flex flex-col items-center gap-4 opacity-20">
+            <Users size={48} />
+            <p className="text-lg font-black tracking-tighter text-foreground">{search ? 'No users match that search' : 'No users yet'}</p>
+          </div>
         </div>
       ) : (
         <>
           <div className="md:hidden space-y-3">
-            {filtered.map(u => (
-              <div key={u._id} className="border rounded-xl p-4 space-y-3">
+            {users.map(u => (
+              <div key={u._id} className="glass rounded-[2rem] border-primary/10 p-5 shadow-xl shadow-black/5 space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="font-medium truncate">{u.name}</div>
-                    <div className="text-sm text-muted-foreground truncate">{u.email}</div>
+                    <div className="font-black tracking-tight truncate">{u.name}</div>
+                    <div className="text-[10px] font-bold text-muted-foreground truncate">{u.email}</div>
                   </div>
                   <Badge variant={u.role === 'ADMIN' ? 'default' : 'secondary'} className="capitalize shrink-0">{u.role.toLowerCase()}</Badge>
                 </div>
@@ -74,26 +105,27 @@ export default function AdminUsersPage() {
               </div>
             ))}
           </div>
-          <div className="hidden md:block border rounded-xl overflow-hidden">
-            <div className="overflow-x-auto">
+
+          <div className="hidden md:block glass rounded-[3rem] overflow-hidden shadow-2xl shadow-black/5 border-primary/10">
+            <div className="overflow-x-auto custom-scrollbar">
               <table className="w-full text-sm">
-                <thead className="bg-muted/50">
-                  <tr>
-                    <th className="text-left p-3 font-medium">Name</th>
-                    <th className="text-left p-3 font-medium">Email</th>
-                    <th className="text-left p-3 font-medium">Role</th>
-                    <th className="text-left p-3 font-medium">Status</th>
-                    <th className="text-left p-3 font-medium">Actions</th>
+                <thead>
+                  <tr className="bg-primary/5 border-b border-primary/10">
+                    <th className="text-left p-6 font-black tracking-tighter text-muted-foreground uppercase text-[10px]">Name</th>
+                    <th className="text-left p-6 font-black tracking-tighter text-muted-foreground uppercase text-[10px]">Email</th>
+                    <th className="text-left p-6 font-black tracking-tighter text-muted-foreground uppercase text-[10px]">Role</th>
+                    <th className="text-left p-6 font-black tracking-tighter text-muted-foreground uppercase text-[10px]">Status</th>
+                    <th className="text-left p-6 font-black tracking-tighter text-muted-foreground uppercase text-[10px]">Actions</th>
                   </tr>
                 </thead>
-                <tbody>
-                  {filtered.map(u => (
-                    <tr key={u._id} className="border-t">
-                      <td className="p-3 font-medium">{u.name}</td>
-                      <td className="p-3 text-muted-foreground">{u.email}</td>
-                      <td className="p-3"><Badge variant={u.role === 'ADMIN' ? 'default' : 'secondary'} className="capitalize">{u.role.toLowerCase()}</Badge></td>
-                      <td className="p-3"><Badge variant={u.isBanned ? 'destructive' : 'outline'}>{u.isBanned ? 'Banned' : 'Active'}</Badge></td>
-                      <td className="p-3">
+                <tbody className="divide-y divide-primary/5">
+                  {users.map(u => (
+                    <tr key={u._id} className="hover:bg-primary/[0.02] transition-colors">
+                      <td className="p-6 font-black tracking-tight">{u.name}</td>
+                      <td className="p-6 text-muted-foreground">{u.email}</td>
+                      <td className="p-6"><Badge variant={u.role === 'ADMIN' ? 'default' : 'secondary'} className="capitalize">{u.role.toLowerCase()}</Badge></td>
+                      <td className="p-6"><Badge variant={u.isBanned ? 'destructive' : 'outline'}>{u.isBanned ? 'Banned' : 'Active'}</Badge></td>
+                      <td className="p-6">
                         {u.role !== 'ADMIN' && (
                           <Button
                             size="sm"
@@ -111,6 +143,20 @@ export default function AdminUsersPage() {
               </table>
             </div>
           </div>
+
+          {pages > 1 && (
+            <div className="flex items-center justify-between gap-4">
+              <p className="text-sm text-muted-foreground">Page {page} of {pages} · {total} total</p>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="icon" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+                  <ChevronLeft size={16} />
+                </Button>
+                <Button variant="outline" size="icon" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>
+                  <ChevronRight size={16} />
+                </Button>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

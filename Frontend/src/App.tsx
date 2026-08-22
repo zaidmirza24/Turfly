@@ -42,6 +42,9 @@ const AdminLayout = lazy(() => import("@/pages/admin/AdminLayout"));
 const AdminDashboardPage = lazy(() => import("@/pages/admin/AdminDashboardPage"));
 const AdminUsersPage = lazy(() => import("@/pages/admin/AdminUsersPage"));
 const AdminTurfsPage = lazy(() => import("@/pages/admin/AdminTurfsPage"));
+const AdminBookingsPage = lazy(() => import("@/pages/admin/AdminBookingsPage"));
+const AdminCustomersPage = lazy(() => import("@/pages/admin/AdminCustomersPage"));
+const AdminActivityPage = lazy(() => import("@/pages/admin/AdminActivityPage"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -112,6 +115,9 @@ const App = () => (
                     <Route index element={<AdminDashboardPage />} />
                     <Route path="users" element={<AdminUsersPage />} />
                     <Route path="turfs" element={<AdminTurfsPage />} />
+                    <Route path="bookings" element={<AdminBookingsPage />} />
+                    <Route path="customers" element={<AdminCustomersPage />} />
+                    <Route path="activity" element={<AdminActivityPage />} />
                   </Route>
                   <Route path="*" element={<PlayerLayout><NotFound /></PlayerLayout>} />
                 </Routes>

@@ -139,3 +139,37 @@ export interface CustomerDetail {
   };
   bookings: Booking[];
 }
+
+/** Platform-wide admin stats, including the 14-day series behind the Overview chart. */
+export interface AdminStats {
+  totalUsers: number;
+  totalTurfs: number;
+  totalBookings: number;
+  totalRevenue: number;
+  dailySeries: { date: string; bookings: number; revenue: number }[];
+}
+
+/** A single turf's slot-status breakdown, for the admin approval-queue detail drawer. */
+export interface TurfDetail {
+  turf: Turf & { ownerId: { _id: string; name: string; email: string; phone?: string } };
+  slotSummary: Partial<Record<SlotStatus, number>>;
+}
+
+export type AdminAction =
+  | 'TURF_APPROVED'
+  | 'TURF_REJECTED'
+  | 'USER_BANNED'
+  | 'USER_UNBANNED'
+  | 'BOOKING_CANCELLED'
+  | 'BOOKING_REFUNDED';
+
+/** One row of the admin action audit trail. */
+export interface AuditLogEntry {
+  _id: string;
+  adminId: string | Pick<User, '_id' | 'name' | 'email'>;
+  action: AdminAction;
+  targetType: 'TURF' | 'USER' | 'BOOKING';
+  targetId: string;
+  meta?: Record<string, unknown>;
+  createdAt: string;
+}

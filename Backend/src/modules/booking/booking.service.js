@@ -5,6 +5,7 @@ import Booking from "./booking.model.js";
 import Turf from "../turf/turf.model.js";
 import User from "../user/user.model.js";
 import { isTurfBookable } from "../turf/turf.service.js";
+import { logAdminAction } from "../admin/admin.service.js";
 import ApiError from "../../common/utils/ApiError.js";
 
 // Verifies the caller owns the turf a booking belongs to. Every owner-only
@@ -409,6 +410,10 @@ export const cancelBookingAsOwner = async (actor, bookingId, reason) => {
     lockedPrice: null,
   });
 
+  if (actor.role === "ADMIN") {
+    await logAdminAction(actor._id, "BOOKING_CANCELLED", "BOOKING", booking._id, { reason: reason || undefined });
+  }
+
   return booking;
 };
 
@@ -433,6 +438,11 @@ export const markBookingRefunded = async (actor, bookingId) => {
 
   booking.refundStatus = "MARKED_REFUNDED";
   await booking.save();
+
+  if (actor.role === "ADMIN") {
+    await logAdminAction(actor._id, "BOOKING_REFUNDED", "BOOKING", booking._id);
+  }
+
   return booking;
 };
 
