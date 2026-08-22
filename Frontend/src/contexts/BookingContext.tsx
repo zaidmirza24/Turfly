@@ -8,6 +8,8 @@ interface BookingContextType {
   /** The turf the current selection belongs to, or null when nothing is selected. */
   selectedTurfId: string | null;
   toggleSlot: (slot: TimeSlot) => void;
+  /** Replaces the whole selection outright — for the duration/start-time picker, which already resolves a valid contiguous run itself. */
+  selectSlots: (slots: TimeSlot[]) => void;
   /** Drops the selection unless it already belongs to `turfId`. */
   keepSelectionFor: (turfId: string) => void;
   clearSelection: () => void;
@@ -60,6 +62,8 @@ export function BookingProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const selectSlots = useCallback((slots: TimeSlot[]) => setSelectedSlots(slots), []);
+
   const keepSelectionFor = useCallback((turfId: string) => {
     setSelectedSlots(prev => (prev.length && prev[0].turfId !== turfId ? [] : prev));
   }, []);
@@ -86,8 +90,8 @@ export function BookingProvider({ children }: { children: React.ReactNode }) {
   // BookingProvider also wraps the entire app above the router — see the
   // matching note in AuthContext.tsx for why this needs to be memoized.
   const value = useMemo(
-    () => ({ selectedSlots, selectedTurfId, toggleSlot, keepSelectionFor, clearSelection, createBooking, cancelBooking }),
-    [selectedSlots, selectedTurfId, toggleSlot, keepSelectionFor, clearSelection, createBooking, cancelBooking]
+    () => ({ selectedSlots, selectedTurfId, toggleSlot, selectSlots, keepSelectionFor, clearSelection, createBooking, cancelBooking }),
+    [selectedSlots, selectedTurfId, toggleSlot, selectSlots, keepSelectionFor, clearSelection, createBooking, cancelBooking]
   );
 
   return (

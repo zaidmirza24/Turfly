@@ -2,27 +2,27 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '@/lib/api';
-import { SlotSelector } from '@/components/SlotSelector';
+import { BookingSlotPicker } from '@/components/booking/BookingSlotPicker';
+import { BookingSummary } from '@/components/booking/BookingSummary';
+import { useSlotAvailability } from '@/hooks/useSlotAvailability';
 import { useBooking } from '@/contexts/BookingContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { MapPin, Wifi, Car, Droplets, Shield, ChevronLeft, Calendar, Loader2, Zap, Sparkles, Phone, Users, Building2, Heart, BadgeCheck } from 'lucide-react';
+import { MapPin, Wifi, Car, Droplets, Shield, ChevronLeft, Calendar, Loader2, Zap, Phone, Users, Building2, Heart, BadgeCheck } from 'lucide-react';
 import { useFavorites } from '@/hooks/useFavorites';
 import { cn } from '@/lib/utils';
 import { TimeSlot, Turf } from '@/types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Calendar as MonthCalendar } from '@/components/ui/calendar';
-import { toDateKey, getISTDay, formatSlotDate, formatSlotTime } from '@/lib/dateKey';
+import { toDateKey } from '@/lib/dateKey';
 import { resolveImageUrl, TURF_PLACEHOLDER_IMAGE } from '@/lib/imageUrl';
 import { useAuth } from '@/contexts/AuthContext';
-import { toast } from 'sonner';
 import { recordTurfView } from '@/lib/recentlyViewed';
 import { getCachedPosition, distanceKm, formatDistance } from '@/lib/geo';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { ReviewsSection } from '@/components/ReviewsSection';
 import { startingPricePerHour } from '@/lib/turfPricing';
-
-const MAX_SLOTS_PER_BOOKING = 10;
+import { formatDuration } from '@/lib/duration';
 
 const amenityIcons: Record<string, React.ReactNode> = {
   'Parking': <Car size={16} />,
@@ -34,7 +34,8 @@ const amenityIcons: Record<string, React.ReactNode> = {
 export default function TurfDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { toggleSlot, selectedSlots, clearSelection, keepSelectionFor } = useBooking();
+  const { selectedSlots, selectSlots, clearSelection, keepSelectionFor } = useBooking();
+  const [pickerResetKey, setPickerResetKey] = useState(0);
   const { user, isAuthenticated } = useAuth();
   // Only customers can hold a booking (POST /api/bookings is USER-only), so
   // an owner or admin browsing the site gets an explanation up front instead
@@ -74,13 +75,7 @@ export default function TurfDetailPage() {
     ? formatDistance(distanceKm(userLocation, { lat: turf.geo.coordinates[1], lng: turf.geo.coordinates[0] }))
     : null;
 
-  const { data: slotsResponse, isLoading: isLoadingSlots } = useQuery({
-    queryKey: ['slots', id, dateStr],
-    queryFn: () => apiGet<TimeSlot[]>(`/slots?turfId=${id}&date=${dateStr}`),
-    enabled: !!id && !!dateStr,
-  });
-
-  const slots = slotsResponse?.data ?? [];
+  const { slotsForDay } = useSlotAvailability(id, dateStr);
 
   // Powers the calendar's availability dots — one range fetch per visible
   // month rather than one request per day, so paging the calendar doesn't
@@ -107,16 +102,21 @@ export default function TurfDetailPage() {
     if (id) keepSelectionFor(id);
   }, [id, keepSelectionFor]);
 
-  const selectedSlotIds = selectedSlots.map(s => s._id);
+  // A selection is date-specific (it's a fixed set of half-hour slots on one
+  // day) — picking a different date without dropping it would let the sidebar
+  // keep totaling up, and the checkout keep offering to book, a time range on
+  // a day the customer isn't even looking at anymore.
+  useEffect(() => {
+    clearSelection();
+    setPickerResetKey(k => k + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateStr]);
+
   const totalPrice = selectedSlots.reduce((sum, s) => sum + s.price, 0);
 
-  const handleSlotToggle = (slot: TimeSlot) => {
-    const alreadySelected = selectedSlotIds.includes(slot._id);
-    if (!alreadySelected && selectedSlots.length >= MAX_SLOTS_PER_BOOKING) {
-      toast.error(`You can select up to ${MAX_SLOTS_PER_BOOKING} slots at a time`);
-      return;
-    }
-    toggleSlot(slot);
+  const handleChangeSelection = () => {
+    clearSelection();
+    setPickerResetKey(k => k + 1);
   };
 
   const handleProceed = () => {
@@ -387,7 +387,9 @@ export default function TurfDetailPage() {
                     <div className="w-2.5 h-2.5 rounded-full bg-primary animate-pulse" />
                     <span className="text-sm font-black tracking-tight">{selectedDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>
                   </div>
-                  <Badge variant="outline" className="font-black border-primary/30 text-primary">{slots.filter(s => s.status === 'AVAILABLE' && new Date(s.startTime).getTime() > Date.now()).length} Slots</Badge>
+                  <Badge variant="outline" className="font-black border-primary/30 text-primary">
+                    {slotsForDay.filter(s => s.status === 'AVAILABLE' && new Date(s.startTime).getTime() > Date.now()).length} Slots
+                  </Badge>
                 </div>
 
                 <AnimatePresence mode="wait">
@@ -396,12 +398,15 @@ export default function TurfDetailPage() {
                     initial={{ opacity: 0, x: 10 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -10 }}
-                    className="max-h-[500px] overflow-y-auto pr-2 custom-scrollbar"
+                    className="max-h-[600px] overflow-y-auto pr-2 custom-scrollbar"
                   >
-                    {isLoadingSlots ? (
-                      <div className="py-20 flex justify-center"><Loader2 className="animate-spin text-primary" size={32} /></div>
-                    ) : (
-                      <SlotSelector slots={slots} selectedSlotIds={selectedSlotIds} onToggle={handleSlotToggle} />
+                    {id && (
+                      <BookingSlotPicker
+                        key={pickerResetKey}
+                        turfId={id}
+                        dateStr={dateStr}
+                        onSelectionChange={(slots) => selectSlots(slots ?? [])}
+                      />
                     )}
                   </motion.div>
                 </AnimatePresence>
@@ -426,7 +431,7 @@ export default function TurfDetailPage() {
               ) : (
                 <div className="text-center mb-8 pt-2">
                   <div className="text-[10px] font-black uppercase tracking-[0.2em] text-primary mb-1">
-                    {selectedSlots.length} Slot{selectedSlots.length > 1 ? 's' : ''} Selected
+                    {formatDuration(selectedSlots.length * 30)} Selected
                   </div>
                   <div className="flex items-center justify-center gap-1">
                     <span className="text-4xl font-black text-primary tracking-tighter">₹{totalPrice}</span>
@@ -436,51 +441,23 @@ export default function TurfDetailPage() {
 
               {selectedSlots.length > 0 ? (
                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-                  <div className="bg-primary/5 border border-primary/20 rounded-[2rem] p-4 space-y-2 max-h-64 overflow-y-auto custom-scrollbar">
-                    {selectedSlots
-                      .slice()
-                      .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
-                      .map(slot => {
-                        const istDay = getISTDay(slot.startTime);
-                        const isWeekend = istDay === 0 || istDay === 6;
-                        return (
-                          <div key={slot._id} className="flex justify-between items-center gap-2 p-3 rounded-xl bg-card/60">
-                            <div className="min-w-0">
-                              <div className="font-black text-sm tracking-tight flex items-center gap-1.5 flex-wrap">
-                                <span className="truncate">{formatSlotDate(slot.startTime)} · {formatSlotTime(slot.startTime)}</span>
-                                {isWeekend && <Sparkles size={11} className="text-success shrink-0" aria-label="Weekend rate" />}
-                              </div>
-                              <div className="text-[10px] text-muted-foreground font-bold">₹{slot.price}</div>
-                            </div>
-                            <button
-                              onClick={() => toggleSlot(slot)}
-                              aria-label={`Remove ${formatSlotDate(slot.startTime)} ${formatSlotTime(slot.startTime)} from selection`}
-                              className="shrink-0 text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:text-destructive transition-colors px-2"
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        );
-                      })}
-                  </div>
+                  <BookingSummary
+                    slots={[...selectedSlots].sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())}
+                    onChange={handleChangeSelection}
+                  />
 
                   {!canBook && (
                     <p className="text-xs font-bold text-warning bg-warning/10 border border-warning/20 rounded-2xl p-3">
                       You're signed in as {user?.role === 'OWNER' ? 'a turf owner' : 'an admin'}. Bookings can only be made from a player account.
                     </p>
                   )}
-                  <div className="flex gap-3">
-                    <Button variant="ghost" className="rounded-2xl font-bold shrink-0" onClick={clearSelection}>
-                      Clear
-                    </Button>
-                    <Button
-                      disabled={!canBook}
-                      className="flex-1 min-w-0 h-16 rounded-2xl text-base sm:text-xl font-black gradient-primary shadow-xl shadow-primary/30 hover:scale-[1.02] transition-transform whitespace-normal px-3"
-                      onClick={handleProceed}
-                    >
-                      {isAuthenticated ? 'Confirm & Pay' : 'Log in to book'}
-                    </Button>
-                  </div>
+                  <Button
+                    disabled={!canBook}
+                    className="w-full h-16 rounded-2xl text-base sm:text-xl font-black gradient-primary shadow-xl shadow-primary/30 hover:scale-[1.02] transition-transform whitespace-normal px-3"
+                    onClick={handleProceed}
+                  >
+                    {isAuthenticated ? 'Confirm & Pay' : 'Log in to book'}
+                  </Button>
                 </motion.div>
               ) : (
                 <div className="text-center py-8 space-y-6">
@@ -531,7 +508,7 @@ export default function TurfDetailPage() {
           <>
             <div className="shrink-0">
               <div className="text-[10px] font-black uppercase tracking-[0.2em] text-primary">
-                {selectedSlots.length} Slot{selectedSlots.length > 1 ? 's' : ''}
+                {formatDuration(selectedSlots.length * 30)}
               </div>
               <div className="text-xl font-black text-primary tracking-tighter">₹{totalPrice}</div>
             </div>
