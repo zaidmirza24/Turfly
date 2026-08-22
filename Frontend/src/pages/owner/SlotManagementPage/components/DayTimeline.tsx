@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { TimeSlot } from '@/types';
 import { STATUS_META } from '../constants';
+import { isPastBookableWindow } from '../utils';
 
 type Props = {
   hours: number[];
@@ -53,9 +54,16 @@ export function DayTimeline({
           {hours.map(h => {
             const slot = getSlotForHour(activeDay, h);
             const status = slot?.status || 'NONE';
-            const meta = STATUS_META[status] || STATUS_META.NONE;
-            const isSelected = selectedHours.includes(h);
             const isLocked = status === 'BOOKED' || status === 'LOCKED';
+            // BOOKED stays BOOKED even once its hour has passed — that's a
+            // real completed booking, worth still showing as what it was.
+            // Everything else (AVAILABLE, NONE, CLOSED, FULL) that's elapsed
+            // or too soon to ever be locked is relabeled PAST so the grid
+            // never claims inventory is open when no customer could book it.
+            const isPast = !isLocked && isPastBookableWindow(activeDay, h);
+            const meta = isPast ? STATUS_META.PAST : (STATUS_META[status] || STATUS_META.NONE);
+            const isSelected = selectedHours.includes(h);
+            const isDisabled = isLocked || isPast;
             const timeLabel = `${h.toString().padStart(2, '0')}:00 – ${((h + 1) % 24).toString().padStart(2, '0')}:00`;
 
             return (
@@ -67,7 +75,7 @@ export function DayTimeline({
                 onTouchStart={() => onRowMouseDown(h)}
                 className={cn('flex items-center gap-2 sm:gap-4 px-3 sm:px-6 py-4 transition-colors cursor-pointer',
                   isSelected ? 'bg-primary/10' : 'hover:bg-muted/40',
-                  isLocked && 'cursor-not-allowed')}
+                  isDisabled && 'cursor-not-allowed')}
               >
                 <div className="w-14 sm:w-24 shrink-0 font-black text-[11px] sm:text-sm tracking-tighter text-muted-foreground">
                   {timeLabel}
@@ -86,7 +94,7 @@ export function DayTimeline({
 
                 <div className="w-16 sm:w-24 shrink-0 text-right font-black text-sm sm:text-lg tracking-tighter flex items-center justify-end gap-1 sm:gap-2">
                   {slot ? <>₹{slot.price}</> : <span className="text-muted-foreground/30 text-sm">—</span>}
-                  {!isLocked && (
+                  {!isDisabled && (
                     <button
                       onClick={(e) => { e.stopPropagation(); onEditPrice(activeDay, h); }}
                       className="p-1.5 rounded-full hover:bg-primary/10 text-primary/60 hover:text-primary transition-colors"

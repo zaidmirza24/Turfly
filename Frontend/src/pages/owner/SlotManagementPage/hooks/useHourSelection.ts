@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { TimeSlot } from '@/types';
+import { isPastBookableWindow } from '../utils';
 
 type Params = {
   activeDay: Date;
@@ -24,8 +25,14 @@ export function useHourSelection({ activeDay, getSlotForHour, isMutating, resetK
     return slot?.status === 'BOOKED' || slot?.status === 'LOCKED';
   };
 
+  // A past (or too-soon-to-book) hour can't be re-marked AVAILABLE/CLOSED/
+  // FULL in any way that matters — nothing about it is ever bookable again —
+  // so bulk drag-select skips it the same way it already skips BOOKED/LOCKED.
+  const isHourUnselectable = (date: Date, hour: number) =>
+    isHourLocked(date, hour) || isPastBookableWindow(date, hour);
+
   const handleRowMouseDown = (hour: number) => {
-    if (isMutating || isHourLocked(activeDay, hour)) return;
+    if (isMutating || isHourUnselectable(activeDay, hour)) return;
     isDragging.current = true;
     dragAnchor.current = hour;
     setSelectedHours([hour]);
@@ -33,12 +40,12 @@ export function useHourSelection({ activeDay, getSlotForHour, isMutating, resetK
 
   const handleRowMouseEnter = (hour: number) => {
     if (!isDragging.current || dragAnchor.current === null) return;
-    if (isHourLocked(activeDay, hour)) return;
+    if (isHourUnselectable(activeDay, hour)) return;
     const start = Math.min(dragAnchor.current, hour);
     const end = Math.max(dragAnchor.current, hour);
     const range = [];
     for (let h = start; h <= end; h++) {
-      if (!isHourLocked(activeDay, h)) range.push(h);
+      if (!isHourUnselectable(activeDay, h)) range.push(h);
     }
     setSelectedHours(range);
   };

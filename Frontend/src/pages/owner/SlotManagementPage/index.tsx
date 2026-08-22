@@ -9,7 +9,7 @@ import { useWeekView } from './hooks/useWeekView';
 import { useSlotsQuery } from './hooks/useSlotsQuery';
 import { useSlotMutations } from './hooks/useSlotMutations';
 import { useHourSelection } from './hooks/useHourSelection';
-import { sameLocalHour } from './utils';
+import { sameLocalHour, isPastBookableWindow } from './utils';
 
 import { TurfSettingsDialog } from './components/TurfSettingsDialog';
 import { BulkGeneratorDialog } from './components/BulkGeneratorDialog';
@@ -84,7 +84,7 @@ export default function SlotManagementPage() {
   };
 
   const openPriceEditor = (date: Date, hour: number) => {
-    if (isMutatingSlots) return;
+    if (isMutatingSlots || isPastBookableWindow(date, hour)) return;
     const istDay = getISTDay(date.toISOString());
     const isWeekend = istDay === 0 || istDay === 6;
     const existing = getSlotForHour(date, hour);

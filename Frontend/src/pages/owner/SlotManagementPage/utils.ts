@@ -3,6 +3,24 @@ export const sameLocalHour = (isoTime: string, date: Date, hour: number) => {
   return t.getFullYear() === date.getFullYear() && t.getMonth() === date.getMonth() && t.getDate() === date.getDate() && t.getHours() === hour;
 };
 
+// Mirrors booking.service.js's MIN_ADVANCE_NOTICE_MS (also duplicated in
+// SlotSelector.tsx for the customer-facing grid): a slot inside this window —
+// including one that's already started — can never actually be locked or
+// booked. Without treating it as such here too, the owner's grid kept
+// showing a plain "Available" badge on hours no customer could ever book,
+// which read as available inventory that quietly wasn't.
+export const MIN_ADVANCE_NOTICE_MS = 30 * 60 * 1000;
+
+export const hourStart = (date: Date, hour: number) => {
+  const d = new Date(date);
+  d.setHours(hour, 0, 0, 0);
+  return d;
+};
+
+/** True once an hour is too close (or already past) to ever be bookable. */
+export const isPastBookableWindow = (date: Date, hour: number, now: number = Date.now()) =>
+  hourStart(date, hour).getTime() <= now + MIN_ADVANCE_NOTICE_MS;
+
 export type BulkConfig = {
   startDate: string;
   days: number;
