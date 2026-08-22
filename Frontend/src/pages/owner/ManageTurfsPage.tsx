@@ -158,7 +158,7 @@ function TurfForm({
             <Badge
               key={v.value}
               variant={formData.venueType === v.value ? 'default' : 'outline'}
-              className="cursor-pointer"
+              className="cursor-pointer px-3.5 py-2 text-sm"
               onClick={() => setFormData(p => ({ ...p, venueType: v.value }))}
             >
               {v.label}
@@ -170,7 +170,7 @@ function TurfForm({
         <Label className="mb-2 block">Sports *</Label>
         <div className="flex flex-wrap gap-2">
           {allSports.map(s => (
-            <Badge key={s} variant={formData.sportsType.includes(s) ? 'default' : 'outline'} className="cursor-pointer capitalize" onClick={() => toggleSport(s)}>
+            <Badge key={s} variant={formData.sportsType.includes(s) ? 'default' : 'outline'} className="cursor-pointer capitalize px-3.5 py-2 text-sm" onClick={() => toggleSport(s)}>
               {s}
             </Badge>
           ))}
@@ -180,7 +180,7 @@ function TurfForm({
         <Label className="mb-2 block">Amenities</Label>
         <div className="grid grid-cols-2 gap-2">
           {allAmenities.map(a => (
-            <label key={a} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/50 p-1 rounded transition-colors">
+            <label key={a} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/50 p-2.5 rounded transition-colors">
               <Checkbox checked={formData.amenities.includes(a)} onCheckedChange={() => toggleAmenity(a)} />
               {a}
             </label>
@@ -219,10 +219,19 @@ function TurfForm({
         <ImageUploader value={formData.images} onChange={images => setFormData(prev => ({ ...prev, images }))} disabled={isSaving} />
         <p className="text-[11px] text-muted-foreground mt-2">The first photo is used as the cover image on search results.</p>
       </div>
-      <Button type="submit" className="w-full" disabled={isSaving}>
-        {isSaving ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : null}
-        {submitLabel}
-      </Button>
+      {/*
+        Sticky rather than a flex-column restructure of DialogContent (which
+        is shared by every dialog in the app): a long form — chips, the
+        amenity grid, repeatable FAQs, the photo uploader — otherwise leaves
+        Save reachable only by scrolling past all of it, worse with the
+        mobile keyboard eating vertical space.
+      */}
+      <div className="sticky bottom-0 -mx-6 -mb-6 px-6 py-4 border-t bg-background">
+        <Button type="submit" className="w-full" disabled={isSaving}>
+          {isSaving ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : null}
+          {submitLabel}
+        </Button>
+      </div>
     </form>
   );
 }

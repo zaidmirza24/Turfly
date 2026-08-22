@@ -2,10 +2,11 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '@/lib/api';
-import { Search, MapPin, Zap, ShieldCheck, ChevronRight, Loader2, Check, History, Star } from 'lucide-react';
+import { Search, MapPin, Zap, ShieldCheck, ChevronRight, Loader2, Check, History, Star, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { TurfCard } from '@/components/TurfCard';
+import { CardSkeleton } from '@/components/Skeletons';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Turf } from '@/types';
 import { motion } from 'framer-motion';
@@ -39,7 +40,7 @@ export default function HomePage() {
     setRecentIds(getRecentlyViewedIds());
   }, []);
 
-  const { data: turfsResponse, isLoading } = useQuery({
+  const { data: turfsResponse, isLoading, isError: isFeaturedError, refetch: refetchFeatured } = useQuery({
     queryKey: ['featured-turfs'],
     queryFn: () => apiGet<Turf[]>('/turfs?limit=3'),
   });
@@ -219,7 +220,16 @@ export default function HomePage() {
           </div>
 
           {isLoading ? (
-            <div className="flex justify-center py-16"><Loader2 className="animate-spin text-primary" size={28} /></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {Array.from({ length: 3 }).map((_, i) => <CardSkeleton key={i} />)}
+            </div>
+          ) : isFeaturedError ? (
+            <div className="text-center py-16 border-2 border-dashed rounded-2xl border-destructive/20 bg-destructive/5">
+              <AlertTriangle size={28} className="text-destructive/60 mx-auto mb-3" />
+              <p className="font-medium text-destructive">Couldn't load turfs</p>
+              <p className="text-sm text-muted-foreground mt-1 mb-4">Check your connection and try again.</p>
+              <Button variant="outline" size="sm" onClick={() => refetchFeatured()}>Retry</Button>
+            </div>
           ) : featuredTurfs.length === 0 ? (
             <div className="text-center py-16 border-2 border-dashed rounded-2xl text-muted-foreground">
               <p className="font-medium">No turfs live yet</p>

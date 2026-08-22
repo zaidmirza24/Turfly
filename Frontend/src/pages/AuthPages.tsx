@@ -143,7 +143,7 @@ export function LoginPage() {
           <div className="relative">
             <Input id="password" type={showPass ? 'text' : 'password'} autoComplete="current-password" placeholder="••••••••" className="h-11 rounded-lg pr-11"
               value={password} onChange={e => setPassword(e.target.value)} />
-            <button type="button" aria-label={showPass ? 'Hide password' : 'Show password'} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowPass(!showPass)}>
+            <button type="button" aria-label={showPass ? 'Hide password' : 'Show password'} className="absolute right-0 top-0 h-11 w-11 flex items-center justify-center text-muted-foreground hover:text-foreground" onClick={() => setShowPass(!showPass)}>
               {showPass ? <EyeOff size={17} /> : <Eye size={17} />}
             </button>
           </div>
@@ -346,7 +346,7 @@ export function SignupPage() {
                   <Label htmlFor="password" className="text-xs font-semibold">Password</Label>
                   <div className="relative">
                     <Input id="password" type={showPass ? 'text' : 'password'} autoComplete="new-password" placeholder="At least 6 characters" className="h-11 rounded-lg pr-11" value={password} onChange={e => setPassword(e.target.value)} />
-                    <button type="button" aria-label={showPass ? 'Hide password' : 'Show password'} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowPass(!showPass)}>
+                    <button type="button" aria-label={showPass ? 'Hide password' : 'Show password'} className="absolute right-0 top-0 h-11 w-11 flex items-center justify-center text-muted-foreground hover:text-foreground" onClick={() => setShowPass(!showPass)}>
                       {showPass ? <EyeOff size={17} /> : <Eye size={17} />}
                     </button>
                   </div>

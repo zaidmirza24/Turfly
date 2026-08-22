@@ -64,6 +64,15 @@ export function useHourSelection({ activeDay, getSlotForHour, isMutating, resetK
 
   const handleTimelineTouchMove = (e: React.TouchEvent) => {
     if (!isDragging.current) return;
+    // Without this, a vertical finger-drag is indistinguishable from the
+    // native page-scroll gesture — the browser scrolls the timeline under
+    // the finger at the same time this tries to read which row it's over,
+    // so elementFromPoint keeps targeting the wrong hour mid-drag. The
+    // `touch-action: none` on the timeline container (DayTimeline.tsx) stops
+    // the browser from starting that scroll in the first place; this
+    // preventDefault is the belt-and-braces backup for browsers that still
+    // fire the gesture before honoring touch-action.
+    e.preventDefault();
     const touch = e.touches[0];
     if (!touch) return;
     const el = document.elementFromPoint(touch.clientX, touch.clientY) as HTMLElement | null;

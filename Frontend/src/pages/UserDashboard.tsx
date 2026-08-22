@@ -8,7 +8,7 @@ import { BookingReceiptDialog } from '@/components/BookingReceiptDialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { CalendarDays, User, Activity, ChevronRight, XCircle } from 'lucide-react';
+import { CalendarDays, User, Activity, ChevronRight, XCircle, AlertTriangle, RefreshCw } from 'lucide-react';
 import { Booking } from '@/types';
 import { bookingStartTime } from '@/lib/booking';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -25,7 +25,7 @@ export default function UserDashboard() {
   const [isCancelling, setIsCancelling] = useState(false);
   const [receiptBooking, setReceiptBooking] = useState<Booking | null>(null);
 
-  const { data: bookingsResponse, isLoading } = useQuery({
+  const { data: bookingsResponse, isLoading, isError, refetch } = useQuery({
     queryKey: ['my-bookings'],
     queryFn: () => apiGet<Booking[]>('/bookings'),
     enabled: !!user,
@@ -69,6 +69,21 @@ export default function UserDashboard() {
 
   if (isLoading) {
     return <SyncingIndicator label="Retrieving Tickets" />;
+  }
+
+  if (isError) {
+    return (
+      <div className="container mx-auto px-4 py-20 max-w-4xl text-center">
+        <div className="border-2 border-dashed rounded-2xl border-destructive/20 bg-destructive/5 py-16">
+          <AlertTriangle size={32} className="text-destructive/60 mx-auto mb-3" />
+          <p className="font-medium text-destructive">Couldn't load your bookings</p>
+          <p className="text-sm text-muted-foreground mt-1 mb-4">Check your connection and try again.</p>
+          <Button variant="outline" size="sm" className="gap-2" onClick={() => refetch()}>
+            <RefreshCw size={14} /> Retry
+          </Button>
+        </div>
+      </div>
+    );
   }
 
   return (

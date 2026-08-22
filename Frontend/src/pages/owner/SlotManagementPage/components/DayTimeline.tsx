@@ -48,7 +48,7 @@ export function DayTimeline({
         <div className="flex justify-center py-16"><Loader2 className="animate-spin text-primary" /></div>
       ) : (
         <div
-          className={cn('divide-y divide-border transition-opacity', isMutating && 'opacity-70 pointer-events-none')}
+          className={cn('divide-y divide-border transition-opacity touch-none', isMutating && 'opacity-70 pointer-events-none')}
           onTouchMove={onTouchMove}
         >
           {hours.map(h => {

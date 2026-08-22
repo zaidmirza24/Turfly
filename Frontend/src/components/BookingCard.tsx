@@ -60,9 +60,9 @@ export function BookingCard({ booking, onCancel, onViewReceipt, showCancel }: Bo
         </p>
       )}
 
-      <div className="flex items-center justify-between mt-3 pt-3 border-t">
+      <div className="flex items-center justify-between gap-x-3 gap-y-2 flex-wrap mt-3 pt-3 border-t">
         <span className="font-bold text-lg">₹{booking.amount}</span>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           {onViewReceipt && (
             <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => onViewReceipt(booking)}>
               <Receipt size={14} /> Receipt

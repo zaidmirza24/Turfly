@@ -29,12 +29,16 @@ export function TurfSettingsDialog({ open, onOpenChange, currentTurf, updateTurf
   const [is24x7, setIs24x7] = useState(true);
   const [openHour, setOpenHour] = useState(6);
   const [closeHour, setCloseHour] = useState(22);
+  const [weekdayPrice, setWeekdayPrice] = useState(1000);
+  const [weekendPrice, setWeekendPrice] = useState(1500);
 
   useEffect(() => {
     if (currentTurf) {
       setIs24x7(currentTurf.is24x7 ?? true);
       setOpenHour(currentTurf.openHour ?? 6);
       setCloseHour(currentTurf.closeHour ?? 22);
+      setWeekdayPrice(currentTurf.defaultWeekdayPrice || 1000);
+      setWeekendPrice(currentTurf.defaultWeekendPrice || 1500);
     }
   }, [currentTurf]);
 
@@ -95,8 +99,8 @@ export function TurfSettingsDialog({ open, onOpenChange, currentTurf, updateTurf
                 <div className="absolute left-4 top-1/2 -translate-y-1/2 text-primary font-bold">₹</div>
                 <Input
                   type="number"
-                  defaultValue={currentTurf?.defaultWeekdayPrice || 1000}
-                  id="defWeekday"
+                  value={weekdayPrice}
+                  onChange={(e) => setWeekdayPrice(Number(e.target.value))}
                   className="h-14 pl-10 rounded-2xl bg-muted border-2 border-transparent focus-visible:ring-primary focus-visible:border-primary transition-all text-lg font-bold"
                 />
               </div>
@@ -108,8 +112,8 @@ export function TurfSettingsDialog({ open, onOpenChange, currentTurf, updateTurf
                 <div className="absolute left-4 top-1/2 -translate-y-1/2 text-primary font-bold">₹</div>
                 <Input
                   type="number"
-                  defaultValue={currentTurf?.defaultWeekendPrice || 1500}
-                  id="defWeekend"
+                  value={weekendPrice}
+                  onChange={(e) => setWeekendPrice(Number(e.target.value))}
                   className="h-14 pl-10 rounded-2xl bg-primary/5 border-2 border-primary/20 focus-visible:ring-primary transition-all text-lg font-bold"
                 />
               </div>
@@ -139,20 +143,20 @@ export function TurfSettingsDialog({ open, onOpenChange, currentTurf, updateTurf
             </div>
           </div>
 
-          <DialogFooter className="mt-10 gap-3">
+          {/* Sticky within DialogContent's own scroll region so Save/Cancel
+              stay reachable without scrolling past every field on a short phone. */}
+          <DialogFooter className="sticky bottom-0 -mx-8 -mb-8 mt-10 px-8 py-6 gap-3 bg-gradient-to-t from-background via-background to-transparent">
             <Button variant="ghost" onClick={() => onOpenChange(false)} className="rounded-xl font-bold h-12 flex-1">Cancel</Button>
             <Button
               disabled={updateTurfMutation.isPending}
               onClick={() => {
-                const weekday = (document.getElementById('defWeekday') as HTMLInputElement).value;
-                const weekend = (document.getElementById('defWeekend') as HTMLInputElement).value;
                 if (!is24x7 && Number(openHour) > Number(closeHour)) {
                   toast.error('Opening hour must be before closing hour');
                   return;
                 }
                 updateTurfMutation.mutate({
-                  defaultWeekdayPrice: Number(weekday),
-                  defaultWeekendPrice: Number(weekend),
+                  defaultWeekdayPrice: Number(weekdayPrice),
+                  defaultWeekendPrice: Number(weekendPrice),
                   is24x7,
                   openHour: is24x7 ? 0 : Number(openHour),
                   closeHour: is24x7 ? 23 : Number(closeHour),

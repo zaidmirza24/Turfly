@@ -13,7 +13,7 @@ export function BulkStatusToolbar({ selectedHours, isPending, onApply, onClear }
   if (selectedHours.length === 0) return null;
 
   return (
-    <div className="fixed bottom-28 md:bottom-6 left-1/2 -translate-x-1/2 z-30 glass border-primary/20 rounded-3xl sm:rounded-full shadow-2xl px-3 py-2 flex flex-wrap items-center justify-center gap-2 max-w-[calc(100vw-2rem)] animate-in fade-in slide-in-from-bottom-4">
+    <div className="fixed bottom-[calc(7rem+env(safe-area-inset-bottom))] md:bottom-6 left-1/2 -translate-x-1/2 z-30 glass border-primary/20 rounded-3xl sm:rounded-full shadow-2xl px-3 py-2 flex flex-wrap items-center justify-center gap-2 max-w-[calc(100vw-2rem)] animate-in fade-in slide-in-from-bottom-4">
       <span className="text-xs font-black px-3 text-muted-foreground">
         {isPending ? <Loader2 size={14} className="animate-spin inline" /> : `${selectedHours.length} hour${selectedHours.length > 1 ? 's' : ''}`}
       </span>

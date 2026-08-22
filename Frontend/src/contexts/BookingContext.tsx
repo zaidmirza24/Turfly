@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
 import { TimeSlot, Booking } from '@/types';
 import { apiPost, apiDelete } from '@/lib/api';
 
@@ -58,10 +58,15 @@ export function BookingProvider({ children }: { children: React.ReactNode }) {
     return res.data;
   }, []);
 
+  // BookingProvider also wraps the entire app above the router — see the
+  // matching note in AuthContext.tsx for why this needs to be memoized.
+  const value = useMemo(
+    () => ({ selectedSlots, selectedTurfId, toggleSlot, keepSelectionFor, clearSelection, createBooking, cancelBooking }),
+    [selectedSlots, selectedTurfId, toggleSlot, keepSelectionFor, clearSelection, createBooking, cancelBooking]
+  );
+
   return (
-    <BookingContext.Provider
-      value={{ selectedSlots, selectedTurfId, toggleSlot, keepSelectionFor, clearSelection, createBooking, cancelBooking }}
-    >
+    <BookingContext.Provider value={value}>
       {children}
     </BookingContext.Provider>
   );

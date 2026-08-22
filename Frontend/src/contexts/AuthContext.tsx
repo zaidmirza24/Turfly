@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
 import { User, UserRole } from '@/types';
 import { apiPost, clearStoredSession } from '@/lib/api';
 
@@ -82,8 +82,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     clearStoredSession();
   }, []);
 
+  // AuthProvider wraps the entire app above the router, so an unmemoized
+  // value object here would force every useAuth() consumer app-wide to
+  // re-render on every provider render, not just when the auth state itself
+  // changes.
+  const value = useMemo(
+    () => ({ user, isAuthenticated: !!user, isLoading, login, signup, logout }),
+    [user, isLoading, login, signup, logout]
+  );
+
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, isLoading, login, signup, logout }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

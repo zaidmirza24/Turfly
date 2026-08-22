@@ -253,14 +253,16 @@ export default function BookingFlowPage() {
 
         <div className="space-y-3 text-sm border-t pt-4">
           <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Base price</div>
-          {sortedSlots.map(slot => (
-            <div key={slot._id} className="flex justify-between gap-3">
-              <span className="text-muted-foreground truncate min-w-0">
-                {formatSlotDate(slot.startTime)} · {formatSlotTime(slot.startTime)}
-              </span>
-              <span className="font-medium shrink-0">₹{slot.price}</span>
-            </div>
-          ))}
+          <div className="max-h-64 overflow-y-auto space-y-3 pr-1">
+            {sortedSlots.map(slot => (
+              <div key={slot._id} className="flex justify-between gap-3">
+                <span className="text-muted-foreground truncate min-w-0">
+                  {formatSlotDate(slot.startTime)} · {formatSlotTime(slot.startTime)}
+                </span>
+                <span className="font-medium shrink-0">₹{slot.price}</span>
+              </div>
+            ))}
+          </div>
           <div className="flex justify-between gap-3"><span className="text-muted-foreground">Duration</span><span className="font-medium">{durationHours} hour{durationHours > 1 ? 's' : ''}</span></div>
           <div className="flex justify-between gap-3 text-muted-foreground"><span>Taxes &amp; platform fee</span><span className="shrink-0">₹0 — none charged</span></div>
           <div className="flex justify-between gap-3 text-lg font-bold border-t pt-3">

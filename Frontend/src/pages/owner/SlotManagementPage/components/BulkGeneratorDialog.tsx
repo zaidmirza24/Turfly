@@ -154,7 +154,9 @@ export function BulkGeneratorDialog({ open, onOpenChange, selectedTurfId, curren
             </div>
           </div>
 
-          <DialogFooter className="mt-10 gap-3">
+          {/* Sticky within DialogContent's own scroll region so Build/Discard
+              stay reachable without scrolling past every input on a short phone. */}
+          <DialogFooter className="sticky bottom-0 -mx-8 -mb-8 mt-10 px-8 py-6 gap-3 bg-gradient-to-t from-background via-background to-transparent">
             <Button variant="ghost" onClick={() => onOpenChange(false)} className="rounded-xl font-bold h-12 flex-1">Discard</Button>
             <Button
               onClick={handleBulkGenerate}

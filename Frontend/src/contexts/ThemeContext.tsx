@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 
 interface ThemeContextType {
   isDark: boolean;
@@ -21,8 +21,14 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('theme', isDark ? 'dark' : 'light');
   }, [isDark]);
 
+  const toggle = useCallback(() => setIsDark(p => !p), []);
+
+  // ThemeProvider also wraps the entire app above the router — see the
+  // matching note in AuthContext.tsx for why this needs to be memoized.
+  const value = useMemo(() => ({ isDark, toggle }), [isDark, toggle]);
+
   return (
-    <ThemeContext.Provider value={{ isDark, toggle: () => setIsDark(p => !p) }}>
+    <ThemeContext.Provider value={value}>
       {children}
     </ThemeContext.Provider>
   );

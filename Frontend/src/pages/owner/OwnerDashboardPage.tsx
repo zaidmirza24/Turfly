@@ -42,7 +42,7 @@ export default function OwnerDashboard() {
   // hardcoded trend. The previous "+12% / +8.4% / +2 / Stable since last week"
   // values were literals in this array — they never moved, and they were shown
   // to owners as if they were measured performance.
-  const stats = [
+  const stats = useMemo(() => [
     {
       label: 'Total Bookings',
       value: bookings.length,
@@ -71,7 +71,7 @@ export default function OwnerDashboard() {
       icon: MapPin,
       color: 'from-purple-500/15 to-purple-600/15 text-purple-600',
     },
-  ];
+  ], [bookings.length, confirmed.length, revenue, upcoming.length, turfs]);
 
   // Prepare chart data
   // Buckets are IST calendar days. The previous version keyed both sides off

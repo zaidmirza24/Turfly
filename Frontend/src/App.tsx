@@ -22,6 +22,7 @@ import FavoritesPage from "@/pages/FavoritesPage";
 import HelpPage from "@/pages/HelpPage";
 import { PrivacyPolicyPage, TermsPage } from "@/pages/LegalPages";
 import { MobileBottomNav } from "@/components/MobileBottomNav";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 /**
  * The owner and admin panels are lazy-loaded.
@@ -92,13 +93,20 @@ const App = () => (
                   <Route path="/help" element={<PlayerLayout><HelpPage /></PlayerLayout>} />
                   <Route path="/privacy" element={<PlayerLayout><PrivacyPolicyPage /></PlayerLayout>} />
                   <Route path="/terms" element={<PlayerLayout><TermsPage /></PlayerLayout>} />
-                  <Route path="/owner" element={<RequireRole roles={["OWNER"]}><OwnerLayout /></RequireRole>}>
+                  {/*
+                    Scoped boundaries: a render crash inside the owner or
+                    admin panel (e.g. the Recharts revenue chart) used to take
+                    down the entire app to the same generic screen. Contained
+                    here, it only loses that panel — the rest of the site
+                    (and the other role's panel) keeps working.
+                  */}
+                  <Route path="/owner" element={<RequireRole roles={["OWNER"]}><ErrorBoundary boundary="owner"><OwnerLayout /></ErrorBoundary></RequireRole>}>
                     <Route index element={<OwnerDashboard />} />
                     <Route path="turfs" element={<ManageTurfsPage />} />
                     <Route path="slots" element={<SlotManagementPage />} />
                     <Route path="bookings" element={<OwnerBookingsPage />} />
                   </Route>
-                  <Route path="/admin" element={<RequireRole roles={["ADMIN"]}><AdminLayout /></RequireRole>}>
+                  <Route path="/admin" element={<RequireRole roles={["ADMIN"]}><ErrorBoundary boundary="admin"><AdminLayout /></ErrorBoundary></RequireRole>}>
                     <Route index element={<AdminDashboardPage />} />
                     <Route path="users" element={<AdminUsersPage />} />
                     <Route path="turfs" element={<AdminTurfsPage />} />

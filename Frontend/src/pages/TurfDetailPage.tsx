@@ -332,7 +332,15 @@ export default function TurfDetailPage() {
             </div>
 
             <div className="grid md:grid-cols-2 gap-8 items-start">
-              <div className="glass rounded-[2.5rem] p-6 shadow-2xl space-y-4">
+              {/*
+                Slots (order-1) render before the calendar (order-2) below
+                `md` — the calendar is a full month grid, and a customer on a
+                phone previously had to scroll past all of it just to see
+                today's slot availability and price. Above `md` the grid's
+                two columns put them back side by side in the original
+                calendar-then-slots reading order.
+              */}
+              <div className="glass rounded-[2.5rem] p-6 shadow-2xl space-y-4 order-2 md:order-1">
                 <div className="flex gap-2">
                   <Button
                     variant={toDateKey(selectedDate) === toDateKey(today) ? 'default' : 'outline'}
@@ -373,7 +381,7 @@ export default function TurfDetailPage() {
                 </p>
               </div>
 
-              <div className="space-y-4">
+              <div className="space-y-4 order-1 md:order-2">
                 <div className="flex items-center justify-between bg-primary/10 p-4 rounded-2xl border border-primary/20 backdrop-blur-sm">
                   <div className="flex items-center gap-2">
                     <div className="w-2.5 h-2.5 rounded-full bg-primary animate-pulse" />
@@ -505,7 +513,10 @@ export default function TurfDetailPage() {
         scroll past About/Amenities/the calendar every time before they can
         act on price/selection. Mirrors it without duplicating booking logic.
       */}
-      <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 glass border-t border-primary/10 shadow-2xl px-4 py-3 flex items-center justify-between gap-3">
+      <div
+        className="lg:hidden fixed bottom-0 inset-x-0 z-40 glass border-t border-primary/10 shadow-2xl px-4 pt-3 flex items-center justify-between gap-3"
+        style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
+      >
         {selectedSlots.length === 0 ? (
           <>
             <div className="shrink-0">

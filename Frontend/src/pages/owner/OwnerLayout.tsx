@@ -81,7 +81,10 @@ export default function OwnerLayout() {
       </aside>
 
       {/* Mobile nav */}
-      <div className="md:hidden fixed bottom-6 left-6 right-6 z-50 bg-card/95 backdrop-blur-2xl border rounded-[2.5rem] flex p-2 shadow-2xl">
+      <div
+        className="md:hidden fixed left-6 right-6 z-50 bg-card/95 backdrop-blur-2xl border rounded-[2.5rem] flex p-2 shadow-2xl"
+        style={{ bottom: 'calc(1.5rem + env(safe-area-inset-bottom))' }}
+      >
         {links.map(l => {
           const isActive = pathname === l.to;
           return (

@@ -20,7 +20,7 @@ export default function AdminLayout() {
         </Link>
         <div className="flex items-center justify-between gap-2 mb-4 px-2">
           <h2 className="font-bold text-lg">Admin Panel</h2>
-          <UserMenu align="start" className="h-9 w-9" />
+          <UserMenu align="start" />
         </div>
         <nav className="space-y-1" aria-label="Admin sections">
           {links.map(l => (
@@ -42,6 +42,7 @@ export default function AdminLayout() {
       <nav
         aria-label="Admin sections"
         className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-card/95 backdrop-blur-xl border-t flex"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         {links.map(l => {
           const isActive = pathname === l.to;

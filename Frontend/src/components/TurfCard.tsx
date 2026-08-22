@@ -47,7 +47,7 @@ export function TurfCard({ turf }: TurfCardProps) {
               onClick={(e) => { e.preventDefault(); toggleFavorite(turf._id); }}
               aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
               aria-pressed={isFavorite}
-              className="absolute top-4 right-4 w-9 h-9 rounded-full glass flex items-center justify-center hover:scale-110 transition-transform"
+              className="absolute top-3 right-3 w-11 h-11 rounded-full glass flex items-center justify-center hover:scale-110 transition-transform"
             >
               <Heart size={16} className={cn(isFavorite ? 'fill-destructive text-destructive' : 'text-foreground')} />
             </button>

@@ -6,6 +6,25 @@ import { useState } from 'react';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { UserMenu } from '@/components/UserMenu';
 
+/**
+ * Login/Sign Up, shared by the desktop bar and the mobile drawer rather than
+ * written out twice — only the container layout and the login button's
+ * variant differ per surface (ghost inline next to nav links on desktop,
+ * outlined and stacked in the drawer on mobile).
+ */
+function AuthButtons({ containerClassName, loginVariant, onNavigate }: {
+  containerClassName: string;
+  loginVariant: 'ghost' | 'outline';
+  onNavigate: (to: string) => void;
+}) {
+  return (
+    <div className={containerClassName}>
+      <Button variant={loginVariant} className="rounded-xl" onClick={() => onNavigate('/login')}>Login</Button>
+      <Button className="rounded-xl px-6 gradient-primary text-white shadow-lg shadow-primary/20" onClick={() => onNavigate('/signup')}>Sign Up</Button>
+    </div>
+  );
+}
+
 export function Navbar() {
   const { user } = useAuth();
   const { pathname } = useLocation();
@@ -46,17 +65,14 @@ export function Navbar() {
           {user ? (
             <UserMenu />
           ) : (
-            <div className="hidden sm:flex items-center gap-2">
-              <Button variant="ghost" className="rounded-xl" onClick={() => navigate('/login')}>Login</Button>
-              <Button className="rounded-xl px-6 gradient-primary text-white shadow-lg shadow-primary/20" onClick={() => navigate('/signup')}>Sign Up</Button>
-            </div>
+            <AuthButtons containerClassName="hidden sm:flex items-center gap-2" loginVariant="ghost" onNavigate={navigate} />
           )}
           <ThemeToggle />
 
           <Button
             variant="ghost"
             size="icon"
-            className="md:hidden h-9 w-9"
+            className="md:hidden h-11 w-11"
             aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
             aria-expanded={mobileOpen}
             onClick={() => setMobileOpen(!mobileOpen)}
@@ -85,10 +101,11 @@ export function Navbar() {
             )}
           </div>
           {!user && (
-            <div className="flex flex-col gap-2 pt-2 border-t">
-              <Button variant="outline" className="rounded-xl" onClick={() => { navigate('/login'); setMobileOpen(false); }}>Login</Button>
-              <Button className="rounded-xl gradient-primary" onClick={() => { navigate('/signup'); setMobileOpen(false); }}>Sign Up</Button>
-            </div>
+            <AuthButtons
+              containerClassName="flex flex-col gap-2 pt-2 border-t"
+              loginVariant="outline"
+              onNavigate={(to) => { navigate(to); setMobileOpen(false); }}
+            />
           )}
         </div>
       )}

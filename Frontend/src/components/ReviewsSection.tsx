@@ -9,10 +9,11 @@ import { ImageUploader } from '@/components/ImageUploader';
 import { resolveImageUrl } from '@/lib/imageUrl';
 import { Star, Loader2, MessageSquare, BadgeCheck, Flag, Pencil, Store } from 'lucide-react';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 
 function StarRating({ value, onChange, readOnly, size = 18 }: { value: number; onChange?: (v: number) => void; readOnly?: boolean; size?: number }) {
   return (
-    <div className="flex gap-0.5">
+    <div className={cn('flex items-center', readOnly ? 'gap-0.5' : 'gap-0.5 -mx-1.5')}>
       {[1, 2, 3, 4, 5].map(n => (
         <button
           key={n}
@@ -20,7 +21,11 @@ function StarRating({ value, onChange, readOnly, size = 18 }: { value: number; o
           disabled={readOnly}
           onClick={() => onChange?.(n)}
           aria-label={`${n} star${n > 1 ? 's' : ''}`}
-          className={readOnly ? 'cursor-default' : 'cursor-pointer'}
+          // Read-only stars are just a display, so a tight hit area doesn't
+          // matter — but the interactive ones (rating input) get real
+          // padding: at size=18 they were previously ~18px with 2px gaps,
+          // an easy mis-tap target on a phone.
+          className={readOnly ? 'cursor-default' : 'cursor-pointer p-2.5 touch-manipulation'}
         >
           <Star size={size} className={n <= value ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground/30'} />
         </button>
@@ -251,17 +256,17 @@ export function ReviewsSection({ turfId, isOwnerOfTurf }: { turfId: string; isOw
                   </div>
                 )}
 
-                <div className="flex items-center gap-3 mt-2">
-                  <p className="text-xs text-muted-foreground/70">{new Date(r.createdAt).toLocaleDateString()}</p>
+                <div className="flex items-center gap-1 mt-2">
+                  <p className="text-xs text-muted-foreground/70 mr-2">{new Date(r.createdAt).toLocaleDateString()}</p>
                   {isMine ? (
-                    <Button variant="ghost" size="sm" className="h-6 gap-1 text-xs px-1.5" onClick={() => setEditingId(r._id)}>
+                    <Button variant="ghost" size="sm" className="h-10 gap-1 text-xs px-2.5" onClick={() => setEditingId(r._id)}>
                       <Pencil size={11} /> Edit
                     </Button>
                   ) : isAuthenticated && (
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-6 gap-1 text-xs px-1.5 text-muted-foreground"
+                      className="h-10 gap-1 text-xs px-2.5 text-muted-foreground"
                       disabled={hasReported || reportMutation.isPending}
                       onClick={() => reportMutation.mutate(r._id)}
                     >

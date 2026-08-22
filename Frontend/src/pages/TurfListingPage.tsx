@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { TurfCard } from '@/components/TurfCard';
+import { CardSkeleton } from '@/components/Skeletons';
 import { apiGet } from '@/lib/api';
 import { Turf, Sport, VenueType } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -35,6 +36,146 @@ const sortOptions = [
 
 type SortValue = (typeof sortOptions)[number]['value'];
 const DEFAULT_SORT: SortValue = 'newest';
+
+type FilterContentProps = {
+  selectedSports: Sport[];
+  toggleSport: (s: Sport) => void;
+  venueType: VenueType | '';
+  setVenueType: (v: VenueType | '' | ((prev: VenueType | '') => VenueType | '')) => void;
+  priceRange: number[];
+  setPriceRange: (v: number[]) => void;
+  minRating: number;
+  setMinRating: (v: number) => void;
+  selectedAmenities: string[];
+  toggleAmenity: (a: string) => void;
+  availableNow: boolean;
+  setAvailableNow: (v: boolean) => void;
+  near: Coords | null;
+  setNear: (v: Coords | null) => void;
+  useMyLocation: () => void;
+  locating: boolean;
+  sortBy: SortValue;
+  setSortBy: (v: SortValue) => void;
+  hasFilters: boolean;
+  clearFilters: () => void;
+};
+
+// Hoisted to module scope (rather than defined inside TurfListingPage) so it
+// keeps a stable component identity across renders — nested inside the page
+// component, a re-render on every keystroke/filter toggle would give React a
+// "new" component type each time and force a full unmount+remount of the
+// filter UI, which is exactly the subtree the mobile Sheet below relies on
+// staying mounted while the user is interacting with it.
+function FilterContent({
+  selectedSports, toggleSport, venueType, setVenueType, priceRange, setPriceRange,
+  minRating, setMinRating, selectedAmenities, toggleAmenity, availableNow, setAvailableNow,
+  near, setNear, useMyLocation, locating, sortBy, setSortBy, hasFilters, clearFilters,
+}: FilterContentProps) {
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="font-medium mb-3">Sport Type</h3>
+        <div className="flex flex-wrap gap-2">
+          {sports.map(s => (
+            <Badge
+              key={s}
+              variant={selectedSports.includes(s) ? 'default' : 'outline'}
+              className="cursor-pointer capitalize"
+              onClick={() => toggleSport(s)}
+            >
+              {s}
+            </Badge>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="font-medium mb-3">Venue Type</h3>
+        <div className="flex flex-wrap gap-2">
+          {venueTypes.map(v => (
+            <Badge
+              key={v.value}
+              variant={venueType === v.value ? 'default' : 'outline'}
+              className="cursor-pointer"
+              onClick={() => setVenueType(prev => prev === v.value ? '' : v.value)}
+            >
+              {v.label}
+            </Badge>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="font-medium mb-3">
+          Price Range: ₹{priceRange[0]} – ₹{priceRange[1]}{priceRange[1] >= MAX_PRICE ? '+' : ''}
+        </h3>
+        <Slider min={0} max={MAX_PRICE} step={100} value={priceRange} onValueChange={setPriceRange} aria-label="Price range per hour" />
+      </div>
+
+      <div>
+        <h3 className="font-medium mb-3">Minimum Rating</h3>
+        <div className="flex gap-2">
+          {[0, 3, 4, 4.5].map(r => (
+            <Badge
+              key={r}
+              variant={minRating === r ? 'default' : 'outline'}
+              className="cursor-pointer"
+              onClick={() => setMinRating(r)}
+            >
+              {r === 0 ? 'Any' : `${r}+ ★`}
+            </Badge>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="font-medium mb-3">Amenities</h3>
+        <div className="grid grid-cols-2 gap-2">
+          {amenityOptions.map(a => (
+            <label key={a} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/50 p-2.5 rounded transition-colors">
+              <Checkbox checked={selectedAmenities.includes(a)} onCheckedChange={() => toggleAmenity(a)} />
+              {a}
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <Checkbox checked={availableNow} onCheckedChange={(v) => setAvailableNow(!!v)} />
+          <Zap size={14} className="text-primary" /> Available now
+        </label>
+      </div>
+
+      <div>
+        <h3 className="font-medium mb-3">Distance</h3>
+        <Button variant={near ? 'secondary' : 'outline'} size="sm" className="w-full gap-2" onClick={near ? () => setNear(null) : useMyLocation} disabled={locating}>
+          {locating ? <Loader2 size={14} className="animate-spin" /> : <MapPin size={14} />}
+          {near ? 'Sorting by distance — clear' : 'Use my location'}
+        </Button>
+      </div>
+
+      {!near && (
+        <div>
+          <h3 className="font-medium mb-3">Sort By</h3>
+          <div className="space-y-2">
+            {sortOptions.map(o => (
+              <Button key={o.value} variant={sortBy === o.value ? 'secondary' : 'ghost'} size="sm" className="w-full justify-start" onClick={() => setSortBy(o.value)}>
+                {o.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {hasFilters && (
+        <Button variant="outline" className="w-full" onClick={clearFilters}>
+          <X size={14} className="mr-2" /> Clear All Filters
+        </Button>
+      )}
+    </div>
+  );
+}
 
 export default function TurfListingPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -149,110 +290,11 @@ export default function TurfListingPage() {
   const hasFilters = !!search || selectedSports.length > 0 || !!venueType || selectedAmenities.length > 0 ||
     priceRange[0] > 0 || priceRange[1] < MAX_PRICE || minRating > 0 || availableNow || !!near;
 
-  const FilterContent = () => (
-    <div className="space-y-6">
-      <div>
-        <h3 className="font-medium mb-3">Sport Type</h3>
-        <div className="flex flex-wrap gap-2">
-          {sports.map(s => (
-            <Badge
-              key={s}
-              variant={selectedSports.includes(s) ? 'default' : 'outline'}
-              className="cursor-pointer capitalize"
-              onClick={() => toggleSport(s)}
-            >
-              {s}
-            </Badge>
-          ))}
-        </div>
-      </div>
-
-      <div>
-        <h3 className="font-medium mb-3">Venue Type</h3>
-        <div className="flex flex-wrap gap-2">
-          {venueTypes.map(v => (
-            <Badge
-              key={v.value}
-              variant={venueType === v.value ? 'default' : 'outline'}
-              className="cursor-pointer"
-              onClick={() => setVenueType(prev => prev === v.value ? '' : v.value)}
-            >
-              {v.label}
-            </Badge>
-          ))}
-        </div>
-      </div>
-
-      <div>
-        <h3 className="font-medium mb-3">
-          Price Range: ₹{priceRange[0]} – ₹{priceRange[1]}{priceRange[1] >= MAX_PRICE ? '+' : ''}
-        </h3>
-        <Slider min={0} max={MAX_PRICE} step={100} value={priceRange} onValueChange={setPriceRange} aria-label="Price range per hour" />
-      </div>
-
-      <div>
-        <h3 className="font-medium mb-3">Minimum Rating</h3>
-        <div className="flex gap-2">
-          {[0, 3, 4, 4.5].map(r => (
-            <Badge
-              key={r}
-              variant={minRating === r ? 'default' : 'outline'}
-              className="cursor-pointer"
-              onClick={() => setMinRating(r)}
-            >
-              {r === 0 ? 'Any' : `${r}+ ★`}
-            </Badge>
-          ))}
-        </div>
-      </div>
-
-      <div>
-        <h3 className="font-medium mb-3">Amenities</h3>
-        <div className="grid grid-cols-2 gap-2">
-          {amenityOptions.map(a => (
-            <label key={a} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/50 p-1 rounded transition-colors">
-              <Checkbox checked={selectedAmenities.includes(a)} onCheckedChange={() => toggleAmenity(a)} />
-              {a}
-            </label>
-          ))}
-        </div>
-      </div>
-
-      <div>
-        <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <Checkbox checked={availableNow} onCheckedChange={(v) => setAvailableNow(!!v)} />
-          <Zap size={14} className="text-primary" /> Available now
-        </label>
-      </div>
-
-      <div>
-        <h3 className="font-medium mb-3">Distance</h3>
-        <Button variant={near ? 'secondary' : 'outline'} size="sm" className="w-full gap-2" onClick={near ? () => setNear(null) : useMyLocation} disabled={locating}>
-          {locating ? <Loader2 size={14} className="animate-spin" /> : <MapPin size={14} />}
-          {near ? 'Sorting by distance — clear' : 'Use my location'}
-        </Button>
-      </div>
-
-      {!near && (
-        <div>
-          <h3 className="font-medium mb-3">Sort By</h3>
-          <div className="space-y-2">
-            {sortOptions.map(o => (
-              <Button key={o.value} variant={sortBy === o.value ? 'secondary' : 'ghost'} size="sm" className="w-full justify-start" onClick={() => setSortBy(o.value)}>
-                {o.label}
-              </Button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {hasFilters && (
-        <Button variant="outline" className="w-full" onClick={clearFilters}>
-          <X size={14} className="mr-2" /> Clear All Filters
-        </Button>
-      )}
-    </div>
-  );
+  const filterProps: FilterContentProps = {
+    selectedSports, toggleSport, venueType, setVenueType, priceRange, setPriceRange,
+    minRating, setMinRating, selectedAmenities, toggleAmenity, availableNow, setAvailableNow,
+    near, setNear, useMyLocation, locating, sortBy, setSortBy, hasFilters, clearFilters,
+  };
 
   if (error) {
     return (
@@ -300,7 +342,7 @@ export default function TurfListingPage() {
           </SheetTrigger>
           <SheetContent>
             <SheetHeader><SheetTitle>Filters</SheetTitle></SheetHeader>
-            <div className="mt-6 overflow-y-auto max-h-[calc(100vh-6rem)] pr-1"><FilterContent /></div>
+            <div className="mt-6 overflow-y-auto max-h-[calc(100vh-6rem)] pr-1"><FilterContent {...filterProps} /></div>
           </SheetContent>
         </Sheet>
         {!near && (
@@ -361,14 +403,16 @@ export default function TurfListingPage() {
         <div className="hidden lg:block w-64 shrink-0">
           <div className="sticky top-24 border rounded-xl p-5 max-h-[calc(100vh-7rem)] overflow-y-auto">
             <h2 className="font-semibold mb-4">Filters</h2>
-            <FilterContent />
+            <FilterContent {...filterProps} />
           </div>
         </div>
 
         {/* Results */}
         <div className="flex-1">
           {isLoading ? (
-            <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
+            <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-5">
+              {Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)}
+            </div>
           ) : (
             <>
               <p className="text-sm text-muted-foreground mb-4" role="status" aria-live="polite">
