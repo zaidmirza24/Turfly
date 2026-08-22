@@ -14,9 +14,7 @@ type Props = {
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
-  onRowMouseDown: (hour: number) => void;
-  onRowMouseEnter: (hour: number) => void;
-  onTouchMove: (e: React.TouchEvent) => void;
+  onRowClick: (hour: number) => void;
   onEditPrice: (date: Date, hour: number) => void;
 };
 
@@ -29,9 +27,7 @@ export function DayTimeline({
   isLoading,
   isError,
   onRetry,
-  onRowMouseDown,
-  onRowMouseEnter,
-  onTouchMove,
+  onRowClick,
   onEditPrice,
 }: Props) {
   return (
@@ -47,10 +43,7 @@ export function DayTimeline({
       ) : isLoading ? (
         <div className="flex justify-center py-16"><Loader2 className="animate-spin text-primary" /></div>
       ) : (
-        <div
-          className={cn('divide-y divide-border transition-opacity touch-none', isMutating && 'opacity-70 pointer-events-none')}
-          onTouchMove={onTouchMove}
-        >
+        <div className={cn('divide-y divide-border transition-opacity', isMutating && 'opacity-70 pointer-events-none')}>
           {hours.map(h => {
             const slot = getSlotForHour(activeDay, h);
             const status = slot?.status || 'NONE';
@@ -69,10 +62,7 @@ export function DayTimeline({
             return (
               <div
                 key={h}
-                data-hour={h}
-                onMouseDown={() => onRowMouseDown(h)}
-                onMouseEnter={() => onRowMouseEnter(h)}
-                onTouchStart={() => onRowMouseDown(h)}
+                onClick={() => onRowClick(h)}
                 className={cn('flex items-center gap-2 sm:gap-4 px-3 sm:px-6 py-4 transition-colors cursor-pointer',
                   isSelected ? 'bg-primary/10' : 'hover:bg-muted/40',
                   isDisabled && 'cursor-not-allowed')}

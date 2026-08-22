@@ -1,7 +1,7 @@
 // Every row in the owner's grid is a half-hour slot, so "hour" here is really
 // a time-of-day mark that can land on a half-hour (11, 11.5, 12, ...) — kept
 // as a single float rather than a separate {hour, minute} pair so the rest of
-// this module (ranges, drag-select, sorting) can keep doing plain arithmetic.
+// this module (ranges, selection, sorting) can keep doing plain arithmetic.
 const wholeHour = (hour: number) => Math.floor(hour);
 const minutesPart = (hour: number) => Math.round((hour % 1) * 60);
 

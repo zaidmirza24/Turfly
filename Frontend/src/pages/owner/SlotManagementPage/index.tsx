@@ -64,7 +64,7 @@ export default function SlotManagementPage() {
   };
 
   const {
-    selectedHours, clearSelection, handleRowMouseDown, handleRowMouseEnter, handleTimelineTouchMove,
+    selectedHours, clearSelection, handleRowClick,
   } = useHourSelection({
     activeDay,
     getSlotForHour,
@@ -168,7 +168,7 @@ export default function SlotManagementPage() {
           <div className="flex items-center justify-between px-2">
             <div>
               <div className="text-2xl font-black tracking-tighter">{activeDay.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</div>
-              <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mt-0.5">Drag across hours to bulk-set status</div>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mt-0.5">Click hours to select, then bulk-set status</div>
             </div>
             <Button
               variant="ghost"
@@ -194,9 +194,7 @@ export default function SlotManagementPage() {
             isLoading={isLoadingSlots}
             isError={isSlotsError}
             onRetry={() => refetchSlots()}
-            onRowMouseDown={handleRowMouseDown}
-            onRowMouseEnter={handleRowMouseEnter}
-            onTouchMove={handleTimelineTouchMove}
+            onRowClick={handleRowClick}
             onEditPrice={openPriceEditor}
           />
 
@@ -204,7 +202,7 @@ export default function SlotManagementPage() {
             <div className="p-2 rounded-full bg-primary/10 text-primary">
               <Info size={18} />
             </div>
-            <p><strong>Tip:</strong> Click and drag across hours to select a range, then mark it <strong>Closed</strong> (turf not operating) or <strong>Full</strong> (booked outside the app). Use the pencil icon to set a custom price for a single hour.</p>
+            <p><strong>Tip:</strong> Click hours to select them, then mark the selection <strong>Closed</strong> (turf not operating) or <strong>Full</strong> (booked outside the app). Use the pencil icon to set a custom price for a single hour.</p>
           </div>
         </div>
       )}
