@@ -54,10 +54,29 @@ const bookingSchema = new mongoose.Schema(
     // outside the app (cash handback, UPI transfer, etc). No payment gateway
     // exists, so nothing here ever moves real money — this is a status label,
     // not a refund transaction. Only settable once status is CANCELLED.
+    // MARKED_REFUNDED is the pre-existing owner bookkeeping note for CASH/
+    // PENDING bookings (no real money ever moved). The rest track a real
+    // Razorpay refund lifecycle for ONLINE bookings (payment.service.js):
+    // REFUND_PENDING is set the moment a refund is accepted by Razorpay,
+    // REFUNDED only once the `refund.processed` webhook confirms it landed.
     refundStatus: {
       type: String,
-      enum: ["NONE", "MARKED_REFUNDED"],
+      enum: ["NONE", "MARKED_REFUNDED", "REFUND_PENDING", "REFUNDED", "REFUND_FAILED"],
       default: "NONE",
+    },
+    refundAmount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    // Set once a real online payment confirms this booking (payment.service.js
+    // finalizePaymentSuccess). null for CASH/manual owner bookings, which have
+    // no payment gateway record.
+    paymentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Payment",
+      default: null,
+      index: true,
     },
     // Free-text note — a cancellation reason, or context an owner attaches to
     // a manually-created booking.

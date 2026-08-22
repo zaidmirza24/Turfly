@@ -17,6 +17,9 @@ import imageRoutes from "./modules/image/image.routes.js";
 import logRoutes from "./modules/logs/logs.routes.js";
 import reviewRoutes from "./modules/review/review.routes.js";
 import userRoutes from "./modules/user/user.routes.js";
+import paymentRoutes from "./modules/payment/payment.routes.js";
+import paymentWebhookRoutes from "./modules/payment/payment.webhook.routes.js";
+import notificationRoutes from "./modules/notification/notification.routes.js";
 
 /**
  * Pure Express app — no app.listen(), no background jobs.
@@ -67,6 +70,11 @@ app.use(
   )
 );
 
+// Mounted BEFORE express.json(): the Razorpay webhook needs the untouched
+// raw request body to verify X-Razorpay-Signature (Phase 8). Every other
+// route below is fine with parsed JSON.
+app.use("/api/payments/webhook", paymentWebhookRoutes);
+
 // A JSON body cap: express.json() defaults to 100kb, but making it explicit
 // keeps a bulk slot payload from being the thing that decides the limit.
 app.use(express.json({ limit: "200kb" }));
@@ -104,6 +112,8 @@ app.use("/api/images", imageRoutes);
 app.use("/api/logs", logRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/payments", paymentRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 // ── 404 Handler ──
 app.use((_req, res) => {

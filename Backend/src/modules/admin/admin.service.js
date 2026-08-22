@@ -2,6 +2,7 @@ import User from "../user/user.model.js";
 import Turf from "../turf/turf.model.js";
 import Booking from "../booking/booking.model.js";
 import Slot from "../slot/slot.model.js";
+import Payment from "../payment/payment.model.js";
 import AuditLog from "./auditLog.model.js";
 import ApiError from "../../common/utils/ApiError.js";
 import logger from "../../common/utils/logger.js";
@@ -179,10 +180,23 @@ export const setUserBanned = async (adminId, userId, isBanned) => {
  * All bookings platform-wide (admin view) — same query/pagination shape as
  * the owner's getOwnerBookings, but with no owner/turf-ownership scoping.
  */
-export const getAllBookingsForAdmin = async ({ page = 1, limit = 20, from, to, turfId, status } = {}) => {
+/**
+ * Phase 14 — admin payment filters. `paymentStatus` maps onto Payment.status
+ * (CREATED/ORDER_CREATED/AUTHORIZED/PAID/FAILED/EXPIRED/PAID_BOOKING_FAILED);
+ * "REFUNDED"/"PARTIALLY_REFUNDED" read off Booking.refundStatus instead,
+ * since a payment can be PAID while only one booking in its group has been
+ * refunded. Booking has no Payment.status of its own to query directly, so a
+ * paymentStatus filter is resolved as a Payment lookup first.
+ */
+export const getAllBookingsForAdmin = async ({ page = 1, limit = 20, from, to, turfId, status, paymentStatus, refundStatus } = {}) => {
   const query = {};
   if (turfId) query.turfId = turfId;
   if (status) query.status = status;
+  if (refundStatus) query.refundStatus = refundStatus;
+  if (paymentStatus) {
+    const paymentIds = await Payment.find({ status: paymentStatus }).select("_id");
+    query.paymentId = { $in: paymentIds.map((p) => p._id) };
+  }
   if (from || to) {
     query.createdAt = {};
     if (from) query.createdAt.$gte = new Date(from);
@@ -195,6 +209,7 @@ export const getAllBookingsForAdmin = async ({ page = 1, limit = 20, from, to, t
       .populate("userId", "name email phone")
       .populate("turfId", "name location sportsType")
       .populate("slotId", "startTime endTime price")
+      .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit),

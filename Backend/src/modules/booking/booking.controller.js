@@ -1,9 +1,27 @@
 import * as bookingService from "./booking.service.js";
+import * as paymentService from "../payment/payment.service.js";
+import * as emailService from "../notification/email.service.js";
 import ApiResponse from "../../common/utils/ApiResponse.js";
+import logger from "../../common/utils/logger.js";
+
+const log = logger.child({ module: "booking.controller" });
 
 export const lockSlot = async (req, res) => {
   const slot = await bookingService.lockSlot(req.user._id, req.body.slotId);
   new ApiResponse(200, "Slot locked successfully", slot).send(res);
+};
+
+/**
+ * POST /api/bookings/lock-multi — locks 1-10 contiguous slots on one turf
+ * without confirming them. This is step 1 of the pay-then-confirm flow: the
+ * frontend locks the slots here, then calls POST /api/payments/create-order
+ * against the same slotIds. (bookMultipleSlots / POST /bookings/multi stays
+ * as the lock+confirm-in-one-call path, still used by the owner's manual/
+ * cash booking flow.)
+ */
+export const lockMultipleSlots = async (req, res) => {
+  const result = await bookingService.lockSlotsForCheckout(req.user._id, req.body.slotIds);
+  new ApiResponse(200, "Slots locked successfully", result).send(res);
 };
 
 export const confirmSlot = async (req, res) => {
@@ -26,12 +44,38 @@ export const getMyBookings = async (req, res) => {
   new ApiResponse(200, "Bookings fetched successfully", bookings).send(res);
 };
 
+// Cancellation-triggered refund + notification is orchestrated here rather
+// than inside booking.service.js to avoid a circular import (payment.service
+// already depends on booking.service for its own slot-claiming logic).
+// Refund/email failures are caught and logged, never surfaced as a failure
+// of the cancellation itself — the booking is already cancelled by the time
+// either of these runs (Phase 20: notification/refund-attempt failures must
+// not roll back a state change that already succeeded).
+const afterCancellation = async (booking) => {
+  let refundInfo = { refunded: false };
+  try {
+    refundInfo = await paymentService.initiateRefundForBooking(booking, {
+      initiatedBy: booking.cancelledBy === "CUSTOMER" ? "CUSTOMER_CANCELLATION" : booking.cancelledBy === "ADMIN" ? "ADMIN_CANCELLATION" : "OWNER_CANCELLATION",
+    });
+  } catch (err) {
+    log.error("Refund orchestration threw unexpectedly", { err, bookingId: booking._id });
+  }
+  await emailService.sendBookingCancelled(booking, refundInfo).catch((err) =>
+    log.error("Failed to send booking-cancelled email", { err, bookingId: booking._id })
+  );
+  await emailService.sendOwnerBookingCancelled(booking).catch((err) =>
+    log.error("Failed to send owner-cancellation email", { err, bookingId: booking._id })
+  );
+  return refundInfo;
+};
+
 export const cancelBooking = async (req, res) => {
   const booking = await bookingService.cancelBooking(
     req.user._id,
     req.params.id
   );
-  new ApiResponse(200, "Booking cancelled successfully", booking).send(res);
+  const refundInfo = await afterCancellation(booking);
+  new ApiResponse(200, "Booking cancelled successfully", { booking, refund: refundInfo }).send(res);
 };
 
 export const cancelBookingAsOwner = async (req, res) => {
@@ -40,7 +84,8 @@ export const cancelBookingAsOwner = async (req, res) => {
     req.params.id,
     req.body.reason
   );
-  new ApiResponse(200, "Booking cancelled successfully", booking).send(res);
+  const refundInfo = await afterCancellation(booking);
+  new ApiResponse(200, "Booking cancelled successfully", { booking, refund: refundInfo }).send(res);
 };
 
 export const markBookingRefunded = async (req, res) => {
@@ -79,7 +124,7 @@ export const getTurfBookings = async (req, res) => {
 };
 
 export const getOwnerBookings = async (req, res) => {
-  const { page, limit, from, to, turfId, status } = req.query;
+  const { page, limit, from, to, turfId, status, paymentStatus, refundStatus } = req.query;
   const bookings = await bookingService.getOwnerBookings(req.user._id, {
     page: page ? Number(page) : undefined,
     limit: limit ? Number(limit) : undefined,
@@ -87,6 +132,8 @@ export const getOwnerBookings = async (req, res) => {
     to,
     turfId,
     status,
+    paymentStatus,
+    refundStatus,
   });
   new ApiResponse(200, "Owner bookings fetched successfully", bookings).send(
     res

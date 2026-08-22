@@ -4,6 +4,7 @@ import Slot from "../slot/slot.model.js";
 import Booking from "./booking.model.js";
 import Turf from "../turf/turf.model.js";
 import User from "../user/user.model.js";
+import Payment from "../payment/payment.model.js";
 import { isTurfBookable } from "../turf/turf.service.js";
 import { logAdminAction } from "../admin/admin.service.js";
 import ApiError from "../../common/utils/ApiError.js";
@@ -232,7 +233,7 @@ const MAX_SLOTS_PER_BOOKING = 10;
  * multi-slot request never leaves some slots silently locked out from under
  * other customers.
  */
-const lockMultipleSlots = async (userId, slotIds) => {
+export const lockMultipleSlots = async (userId, slotIds) => {
   const lockedSlots = [];
   try {
     for (const slotId of slotIds) {
@@ -278,7 +279,13 @@ const confirmMultipleSlots = async (userId, slotIds, groupId) => {
  * Book multiple slots in one checkout (all-or-nothing). Each slot still
  * becomes its own Booking document — they just share a groupId.
  */
-export const bookMultipleSlots = async (userId, slotIds) => {
+/**
+ * Shared selection validation for any multi-slot checkout path (instant
+ * simulated booking, and — once payment exists — the pay-then-confirm flow
+ * in the payment module). Does not lock anything; only checks that the
+ * requested slots are a legal one-venue, back-to-back selection.
+ */
+export const validateSlotSelection = async (slotIds) => {
   if (!Array.isArray(slotIds) || slotIds.length === 0) {
     throw new ApiError(400, "At least one slot must be selected");
   }
@@ -291,7 +298,7 @@ export const bookMultipleSlots = async (userId, slotIds) => {
   // context that isn't reset when the customer switches turfs, so a mixed-turf
   // slotIds array is reachable in practice — and it would charge for, and book,
   // a venue other than the one shown on the confirmation screen.
-  const slotDocs = await Slot.find({ _id: { $in: uniqueIds } }).select("turfId startTime endTime").lean();
+  const slotDocs = await Slot.find({ _id: { $in: uniqueIds } }).select("turfId startTime endTime price").lean();
   if (slotDocs.length !== uniqueIds.length) {
     throw new ApiError(404, "One or more slots no longer exist");
   }
@@ -310,9 +317,54 @@ export const bookMultipleSlots = async (userId, slotIds) => {
     }
   }
 
+  return { uniqueIds, turfId: sortedByStart[0].turfId, slotDocs: sortedByStart };
+};
+
+export const bookMultipleSlots = async (userId, slotIds) => {
+  const { uniqueIds } = await validateSlotSelection(slotIds);
   await lockMultipleSlots(userId, uniqueIds);
   const groupId = randomUUID();
   return confirmMultipleSlots(userId, uniqueIds, groupId);
+};
+
+/**
+ * Lock several slots for checkout without confirming them — the first half
+ * of the pay-then-confirm flow. Used by the payment module: it locks the
+ * slots, then a Razorpay order is created against them, and only a verified
+ * payment calls confirmSlot/confirmMultipleSlots to actually create the
+ * Booking documents.
+ */
+export const lockSlotsForCheckout = async (userId, slotIds) => {
+  const { uniqueIds, turfId } = await validateSlotSelection(slotIds);
+  const lockedSlots = await lockMultipleSlots(userId, uniqueIds);
+  return { slotIds: uniqueIds, turfId, lockedSlots };
+};
+
+/**
+ * System-triggered rollback of a booking that should never have existed —
+ * used only when a payment was captured but the slot could not be atomically
+ * claimed (lock expired / stolen by another checkout in the race window
+ * between payment success and our own confirmation transaction). Unlike
+ * cancelBooking, this bypasses the cutoff/started checks: those exist to stop
+ * a *customer* backing out of a slot they're holding, not to block the system
+ * from undoing a booking that should never have been created in the first
+ * place.
+ */
+export const forceCancelForSystem = async (bookingId, reason) => {
+  const booking = await Booking.findById(bookingId);
+  if (!booking || booking.status === "CANCELLED") return booking;
+  booking.status = "CANCELLED";
+  booking.cancelledBy = "SYSTEM";
+  booking.notes = reason;
+  await booking.save();
+  await Slot.findByIdAndUpdate(booking.slotId, {
+    status: "AVAILABLE",
+    bookingId: null,
+    lockedBy: null,
+    lockExpiresAt: null,
+    lockedPrice: null,
+  });
+  return booking;
 };
 
 /**
@@ -322,6 +374,7 @@ export const getUserBookings = async (userId) => {
   const bookings = await Booking.find({ userId })
     .populate("turfId", "name location sportsType")
     .populate("slotId", "startTime endTime price")
+    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt")
     .sort({ createdAt: -1 });
   return bookings;
 };
@@ -432,6 +485,15 @@ export const markBookingRefunded = async (actor, bookingId) => {
   if (booking.status !== "CANCELLED") {
     throw new ApiError(400, "Only a cancelled booking can be marked as refunded");
   }
+  if (booking.paymentId) {
+    // A real Razorpay refund is auto-initiated on cancellation for any
+    // ONLINE booking (see payment.service.js initiateRefundForBooking,
+    // invoked from booking.controller.js's afterCancellation) — this manual
+    // bookkeeping note exists only for CASH/PENDING bookings with no real
+    // payment record, so it must never be used to paper over a real refund's
+    // actual state.
+    throw new ApiError(400, "This booking was paid online — its refund status is tracked automatically");
+  }
   if (booking.refundStatus === "MARKED_REFUNDED") {
     throw new ApiError(400, "Booking is already marked as refunded");
   }
@@ -498,7 +560,8 @@ export const createManualBooking = async (ownerId, { turfId, customerId, slotIds
 
   return Booking.find({ _id: { $in: bookingIds } })
     .populate("userId", "name email phone")
-    .populate("slotId", "startTime endTime price");
+    .populate("slotId", "startTime endTime price")
+    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt");
 };
 
 /**
@@ -519,6 +582,7 @@ export const getBookingsByTurf = async (ownerId, turfId, { page = 1, limit = 20 
     Booking.find(query)
       .populate("userId", "name email phone")
       .populate("slotId", "startTime endTime price")
+    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit),
@@ -533,7 +597,7 @@ export const getBookingsByTurf = async (ownerId, turfId, { page = 1, limit = 20 
  * date range, turf, status — and pagination. Established as the one
  * pagination pattern in this backend: { items, total, page, pages }.
  */
-export const getOwnerBookings = async (ownerId, { page = 1, limit = 20, from, to, turfId, status } = {}) => {
+export const getOwnerBookings = async (ownerId, { page = 1, limit = 20, from, to, turfId, status, paymentStatus, refundStatus } = {}) => {
   const turfs = await Turf.find({ ownerId }).select("_id");
   const turfIds = turfs.map((t) => t._id);
 
@@ -545,6 +609,11 @@ export const getOwnerBookings = async (ownerId, { page = 1, limit = 20, from, to
     query.turfId = turfId;
   }
   if (status) query.status = status;
+  if (refundStatus) query.refundStatus = refundStatus;
+  if (paymentStatus) {
+    const paymentIds = await Payment.find({ status: paymentStatus }).select("_id");
+    query.paymentId = { $in: paymentIds.map((p) => p._id) };
+  }
   if (from || to) {
     query.createdAt = {};
     if (from) query.createdAt.$gte = new Date(from);
@@ -557,6 +626,7 @@ export const getOwnerBookings = async (ownerId, { page = 1, limit = 20, from, to
       .populate("userId", "name email phone")
       .populate("turfId", "name location sportsType")
       .populate("slotId", "startTime endTime price")
+    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit),
@@ -637,6 +707,7 @@ export const getOwnerCustomerDetail = async (ownerId, customerId) => {
   const bookings = await Booking.find({ turfId: { $in: turfIds }, userId: customerId })
     .populate("turfId", "name location sportsType")
     .populate("slotId", "startTime endTime price")
+    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt")
     .sort({ createdAt: -1 });
 
   if (bookings.length === 0) {

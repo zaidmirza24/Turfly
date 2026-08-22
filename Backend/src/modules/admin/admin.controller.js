@@ -49,7 +49,7 @@ export const setUserBanned = async (req, res) => {
 };
 
 export const getAllBookings = async (req, res) => {
-  const { page, limit, from, to, turfId, status } = req.query;
+  const { page, limit, from, to, turfId, status, paymentStatus, refundStatus } = req.query;
   const bookings = await adminService.getAllBookingsForAdmin({
     page: page ? Number(page) : undefined,
     limit: limit ? Number(limit) : undefined,
@@ -57,6 +57,8 @@ export const getAllBookings = async (req, res) => {
     to,
     turfId,
     status,
+    paymentStatus,
+    refundStatus,
   });
   new ApiResponse(200, "Bookings fetched successfully", bookings).send(res);
 };

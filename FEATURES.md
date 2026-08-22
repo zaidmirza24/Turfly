@@ -53,7 +53,7 @@
 
 ---
 
-## Status vs current codebase (as of 2026-08-20)
-Already implemented: auth (JWT, role-based incl. ADMIN), turf CRUD, slot bulk-create, atomic slot locking + expiry cleanup job, booking create/cancel, owner revenue dashboard (Recharts), turf approval workflow (PENDING/APPROVED/REJECTED, public listing only shows APPROVED), admin panel wired to real backend data (stats, turf approve/reject, user list + ban/unban), user ban enforcement in `protect` middleware, frontend route guards on `/owner` and `/admin`.
+## Status vs current codebase (as of 2026-08-23)
+Already implemented: auth (JWT, role-based incl. ADMIN), turf CRUD, slot bulk-create, atomic slot locking + expiry cleanup job, booking create/cancel, owner revenue dashboard (Recharts), turf approval workflow (PENDING/APPROVED/REJECTED, public listing only shows APPROVED), admin panel wired to real backend data (stats, turf approve/reject, user list + ban/unban), user ban enforcement in `protect` middleware, frontend route guards on `/owner` and `/admin`, image upload, **real payment gateway (Razorpay) with server-side order creation, signature + webhook verification, idempotent booking confirmation, and refund-on-cancellation**, **transactional email (Brevo) on booking confirm/payment success/failure/cancellation/refund**.
 
-Not yet implemented (needed for Phase 1 lock): payment gateway + commission logic, image upload, transactional notifications (email/SMS on booking confirm/cancel).
+See "Payment & email integration" further down in `ai-context.md` for the full design. Not yet implemented: commission split logic (no % is taken anywhere — the full booking amount goes to the "platform" account since there is no owner-payout/Razorpay Route integration), owner payout automation, SMS notifications.

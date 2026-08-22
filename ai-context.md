@@ -234,9 +234,26 @@ It arms them rather than deleting, so nothing loses its grace period.
 |--------|---------------------|------|----------------------------------------------------|
 | POST   | `/api/logs/client`  | ❌   | Browser error reports. Rate limited, size capped   |
 
+### Payments
+| Method | Route                        | Auth | Role  | Description                                     |
+|--------|------------------------------|------|-------|--------------------------------------------------|
+| POST   | `/api/bookings/lock-multi`   | ✅   | USER  | Hold 1-10 contiguous slots without confirming     |
+| POST   | `/api/payments/create-order` | ✅   | USER  | Server-computed amount, Razorpay order (Phase 4) |
+| POST   | `/api/payments/verify`       | ✅   | USER  | Signature + status verify → confirms booking      |
+| GET    | `/api/payments/:id`          | ✅   | any   | Own payment (customer/owning-turf owner/admin)    |
+| POST   | `/api/payments/webhook`      | ❌   | —     | Razorpay webhook — raw-body HMAC verified          |
+
+### Notifications
+| Method | Route                                     | Auth                    | Description                              |
+|--------|--------------------------------------------|-------------------------|-------------------------------------------|
+| POST   | `/api/notifications/webhooks/brevo`         | shared token (`?token=`) | Brevo delivery events                    |
+| POST   | `/api/notifications/jobs/send-reminders`    | `X-Cron-Secret` header  | Meant to be invoked by an external scheduler |
+
 ### Scheduled work
-There is none, by design — no cron entries, no scheduler, and no HTTP job
-endpoints to secure. See "Recurring work without a scheduler" below.
+No in-process scheduler, by design — see "Recurring work without a
+scheduler" below. The one exception is booking reminders (`POST
+/api/notifications/jobs/send-reminders`), which genuinely needs an external
+trigger and is gated on `CRON_SECRET`.
 
 ## Request/Response Shapes
 
@@ -449,13 +466,74 @@ Deliberately **not** built, and why:
 - Saved locations — no concept of a delivery/service address applies to a
   turf-booking flow beyond the "near me" geolocation search already built.
 
+## Payment (Razorpay) & email (Brevo) integration (2026-08-23)
+
+Real money now moves. `modules/payment/`, `modules/notification/` are new;
+`booking.model.js`/`booking.service.js` gained the fields/hooks a real
+payment needed. Full design, API surface, dashboard checklists and test
+results are written up in `PRODUCTION_READINESS_ASSESSMENT.md`'s payment
+section (kept current as of this pass) — summary here:
+
+- **Architecture**: `Booking → Payment → Razorpay Order/Payment/Refund`, one
+  `Payment` doc per checkout session (`groupId`), created *before* any
+  `Booking` exists. A Booking is only ever created by
+  `payment.service.js#finalizePaymentSuccess` — the one authoritative
+  PENDING→PAID→booking-confirmed transition, called from both the client
+  verification callback and the `payment.captured`/`order.paid` webhook, and
+  safe to call from both concurrently (atomic `findOneAndUpdate` claim).
+- **Flow**: `POST /bookings/lock-multi` (hold slots, no booking yet) →
+  `POST /payments/create-order` (server computes the amount from the locked
+  slot price, extends the hold to `PAYMENT_RESERVATION_MINUTES`, creates a
+  Razorpay order) → Razorpay Standard Checkout in the browser → `POST
+  /payments/verify` (HMAC signature check against our own stored order id,
+  then a live `payments.fetch` status check — the callback itself is never
+  trusted) → booking(s) created. `POST /payments/webhook` (raw-body HMAC,
+  mounted ahead of `express.json()` in app.js) independently reaches the same
+  `finalizePaymentSuccess`, so a lost callback still confirms the booking.
+- **The one genuinely dangerous edge case**: payment captured but the slot
+  lock lapsed before confirmation ran (crash, extreme slowness, a second
+  checkout won the race). Handled explicitly — any bookings created in that
+  attempt are force-cancelled, the full payment is auto-refunded, and the
+  customer is emailed, rather than either silently keeping their money or
+  crashing.
+- **Idempotency**: `WebhookEvent` (unique `dedupeKey` = `event:entityId`)
+  makes duplicate Razorpay webhook delivery a no-op. `NotificationLog`
+  (unique `dedupeKey` per notification type + booking/payment) does the same
+  for emails — four `payment.captured` deliveries for one payment still send
+  exactly one confirmation email.
+- **Refunds**: no new business policy was invented — this platform has one
+  cancellation rule (free cancellation up to 6h before the slot,
+  `CANCELLATION_CUTOFF_MS` in booking.service.js), so "cancelled" and "fully
+  refund what was paid for this slot" are the same event. Cancellation always
+  succeeds even if the automatic refund call fails (the refund's own state —
+  `REFUND_PENDING`/`REFUNDED`/`REFUND_FAILED` on `Booking.refundStatus` —
+  only moves to `REFUNDED` once Razorpay's `refund.processed` webhook
+  confirms it, never just because the API call was accepted).
+- **Email**: centralized in `modules/notification/email.service.js` — no
+  Brevo calls anywhere else. Every send is idempotent and best-effort: a
+  failed email is logged and recorded in `NotificationLog`, never rolls back
+  a payment or booking.
+- **No scheduler still exists** (see below) except for one new, narrow
+  exception: booking reminders genuinely can't be derived from a request
+  path the way lock-expiry can, so `POST /api/notifications/jobs/send-reminders`
+  exists to be triggered by an *external* scheduler (Vercel Cron,
+  cron-job.org, etc), gated on `CRON_SECRET`.
+
+Deliberately not built in this pass (see the production-readiness doc's
+"Production risks" section for the full list): commission/owner-payout
+split (Razorpay Route), payment-status filter dropdowns in the admin/owner
+list UI (the backend query param exists; the booking detail drawer already
+shows full payment/refund state on click), SMS notifications, Brevo
+template-based sends (raw HTML is generated server-side instead — see
+`email.templates.js`).
+
 ## Still not implemented
 
-- ❌ Payment gateway — checkout is simulated; no money moves, and no commission
-  is calculated or recorded anywhere despite the commission business model
-- ❌ Transactional email/SMS on booking confirm/cancel
 - ❌ Password reset (the page says so rather than pretending to send a mail)
 - ❌ Pagination on any list endpoint
+- ❌ Commission/owner-payout split logic (the business model in FEATURES.md
+  calls for a platform cut; no such split is calculated or paid out anywhere)
+- ❌ SMS notifications (email only)
 
 ## Running the Project
 
@@ -483,7 +561,25 @@ ADMIN_PASSWORD=
 CORS_ORIGINS=         # comma-separated; blank = any origin
 LOG_LEVEL=            # debug|info|warn|error|silent (default: info in prod)
 MAX_IMAGE_BYTES=      # default 2097152 (2 MB)
+
+RAZORPAY_KEY_ID=                    # public — the only one of these sent to the browser
+RAZORPAY_KEY_SECRET=                # required in production if RAZORPAY_KEY_ID is set
+RAZORPAY_WEBHOOK_SECRET=            # required in production if RAZORPAY_KEY_ID is set
+PAYMENT_RESERVATION_MINUTES=10      # slot hold length once a Razorpay order exists
+
+BREVO_API_KEY=
+BREVO_SENDER_EMAIL=                 # must be a Brevo-verified sender
+BREVO_SENDER_NAME=Turf Booking
+BREVO_WEBHOOK_SECRET=               # optional — enables POST /api/notifications/webhooks/brevo
+
+FRONTEND_URL=http://localhost:5173  # used to build links inside emails
+SUPPORT_EMAIL=                      # shown in email footers
+BOOKING_REMINDER_HOURS_BEFORE=3
+CRON_SECRET=                        # required to call POST /api/notifications/jobs/send-reminders
 ```
+
+See `Backend/.env.example` for the full annotated version (where to get each
+credential, test vs. live).
 
 `npm run seed:test` **deletes every user, turf, slot and booking** in whatever
 `MONGO_URI` points at. It refuses to run when `NODE_ENV=production` and requires

@@ -55,8 +55,12 @@ export default function UserDashboard() {
     if (cancelId && !isCancelling) {
       setIsCancelling(true);
       try {
-        await cancelBooking(cancelId);
-        toast.success("Booking cancelled — you weren't charged, so there's nothing to refund");
+        const { refund } = await cancelBooking(cancelId);
+        toast.success(
+          refund.refunded
+            ? 'Booking cancelled — your refund has been initiated'
+            : 'Booking cancelled'
+        );
         queryClient.invalidateQueries({ queryKey: ['my-bookings'] });
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Failed to cancel booking');

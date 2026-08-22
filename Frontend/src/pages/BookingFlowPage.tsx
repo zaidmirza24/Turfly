@@ -9,26 +9,35 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
 import {
-  CheckCircle2, XCircle, ChevronLeft, CreditCard, Loader2, ShieldAlert,
-  Navigation, Phone, CalendarPlus, Share2, Copy,
+  CheckCircle2, XCircle, ChevronLeft, CreditCard, Loader2, ShieldCheck,
+  Navigation, Phone, CalendarPlus, Share2, Copy, Clock,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Turf, Booking } from '@/types';
 import { downloadIcsFile, googleCalendarUrl, directionsUrl } from '@/lib/calendarExport';
+import { lockSlotsForCheckout, createPaymentOrder, verifyPayment, getPayment } from '@/lib/payments';
+import { loadRazorpayScript, openRazorpayCheckout } from '@/lib/razorpay';
 
-type Step = 'summary' | 'payment' | 'success' | 'failure';
+type Step = 'summary' | 'payment' | 'verifying' | 'success' | 'failure' | 'unavailable';
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default function BookingFlowPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { selectedSlots, createBooking } = useBooking();
+  const { selectedSlots, clearSelection } = useBooking();
 
   const [step, setStep] = useState<Step>('summary');
   const [loading, setLoading] = useState(false);
   const [agreedToPolicy, setAgreedToPolicy] = useState(false);
   const [confirmedBookings, setConfirmedBookings] = useState<Booking[]>([]);
   const [failureReason, setFailureReason] = useState<string | null>(null);
+  const [verifyingMessage, setVerifyingMessage] = useState('Verifying your payment...');
+  // Preserved across a failed-payment retry within this checkout session so
+  // retrying reuses the same Razorpay order instead of creating a new one
+  // for every double-click / failed-attempt-then-retry (Phase 9).
+  const [checkout, setCheckout] = useState<{ paymentId: string; groupId: string } | null>(null);
 
   // Fetch Turf Detail
   const { data: turfResponse, isLoading: isLoadingTurf } = useQuery({
@@ -82,6 +91,72 @@ export default function BookingFlowPage() {
     queryClient.invalidateQueries({ queryKey: ['slots-month', id] });
   };
 
+  const onCheckoutSuccess = (bookings: Booking[]) => {
+    setConfirmedBookings(bookings);
+    clearSelection();
+    queryClient.invalidateQueries({ queryKey: ['all-slots', id] });
+    invalidateAvailability();
+    queryClient.invalidateQueries({ queryKey: ['my-bookings'] });
+    toast.success(sortedSlots.length > 1 ? 'Slots booked!' : 'Booking confirmed!');
+    setStep('success');
+  };
+
+  const onCheckoutFailure = (message: string) => {
+    toast.error(message);
+    setFailureReason(message);
+    invalidateAvailability();
+    setStep('failure');
+  };
+
+  /**
+   * The Razorpay Checkout `handler` callback fires as soon as the browser
+   * gets a response — it is never trusted as proof of payment on its own
+   * (Phase 7/16). It only triggers server-side verification; if that call
+   * itself fails to come back cleanly (dropped connection, tab backgrounded
+   * mid-request), the outcome is genuinely uncertain rather than a failure,
+   * so this polls our own payment record instead of guessing.
+   */
+  const handleRazorpaySuccess = async (
+    paymentId: string,
+    response: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }
+  ) => {
+    setStep('verifying');
+    setVerifyingMessage('Verifying your payment...');
+    try {
+      const res = await verifyPayment({ paymentId, ...response });
+      if (res.data.bookingFailed) {
+        onCheckoutFailure('Payment received, but this slot was taken by another customer at the same moment — a full refund has been automatically initiated. Check your email for details.');
+        return;
+      }
+      onCheckoutSuccess(res.data.bookings);
+    } catch {
+      // Verification itself failed to complete — the webhook may still
+      // confirm it independently, so poll our own record rather than
+      // declaring failure on an inconclusive signal.
+      setVerifyingMessage('Still confirming your payment — this can take a few seconds...');
+      for (let attempt = 0; attempt < 6; attempt++) {
+        await sleep(2000);
+        try {
+          const poll = await getPayment(paymentId);
+          if (poll.data.status === 'PAID') {
+            onCheckoutSuccess((poll.data.bookingIds as unknown as Booking[]) ?? []);
+            return;
+          }
+          if (poll.data.status === 'FAILED' || poll.data.status === 'EXPIRED') {
+            onCheckoutFailure('Payment could not be confirmed. If you were charged, it will be automatically refunded.');
+            return;
+          }
+        } catch {
+          // transient — keep polling until the attempt budget runs out
+        }
+      }
+      // Genuinely inconclusive after polling: never claim "failed" on an
+      // uncertain result — direct the customer to where the truth will land.
+      toast.message("We couldn't confirm your payment status yet — check My Bookings in a moment. If you were charged and no booking appears, it will be automatically refunded.");
+      navigate('/dashboard');
+    }
+  };
+
   const handlePayment = async () => {
     // `loading` also guards the double-submit case: the button is disabled
     // while in flight, but a second click can still land between the click
@@ -90,24 +165,52 @@ export default function BookingFlowPage() {
     setLoading(true);
     try {
       const slotIds = sortedSlots.map(s => s._id);
-      const res = await createBooking(slotIds);
-      // /bookings returns a single Booking object; /bookings/multi returns an array.
-      const bookings: Booking[] = Array.isArray(res) ? res : [res];
-      setConfirmedBookings(bookings);
 
-      // Invalidate queries to update UI elsewhere
-      queryClient.invalidateQueries({ queryKey: ['all-slots', id] });
-      invalidateAvailability();
-      queryClient.invalidateQueries({ queryKey: ['my-bookings'] });
+      if (!checkout) {
+        // First attempt: hold the slots, then open a fresh order.
+        await lockSlotsForCheckout(slotIds);
+      }
+      const orderRes = await createPaymentOrder(slotIds, checkout?.groupId);
+      const order = orderRes.data;
+      setCheckout({ paymentId: order.paymentId, groupId: order.groupId });
 
-      toast.success(sortedSlots.length > 1 ? 'Slots booked!' : 'Booking confirmed!');
-      setStep('success');
+      await loadRazorpayScript();
+      openRazorpayCheckout({
+        key: order.keyId,
+        amount: order.amount,
+        currency: order.currency,
+        name: order.name,
+        description: order.description,
+        order_id: order.orderId,
+        prefill: order.prefill,
+        theme: { color: '#16a34a' },
+        handler: (response) => {
+          void handleRazorpaySuccess(order.paymentId, response);
+        },
+        modal: {
+          ondismiss: () => {
+            // Slot hold is still active — this is a cancelled checkout, not
+            // a failed payment. Let the customer retry from the same screen.
+            setLoading(false);
+            toast.info('Payment cancelled — your slot is still held, you can try again');
+          },
+        },
+      }, (error) => {
+        // payment.failed only ever fires for an actual failed attempt (card
+        // declined, UPI timeout, etc) — Razorpay's own checkout UI stays open
+        // and lets the customer retry immediately, so this is a same-session
+        // UX signal only. The authoritative state change still comes from the
+        // payment.failed *webhook* (payment.service.js), same as everywhere
+        // else — this toast never updates Payment/Booking state itself.
+        toast.error(error.description || 'Payment failed — you can try again');
+      });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Booking failed';
-      toast.error(message);
-      setFailureReason(message);
-      invalidateAvailability();
-      setStep('failure');
+      const message = error instanceof Error ? error.message : 'Could not start payment';
+      if (message.includes('not configured')) {
+        setStep('unavailable');
+      } else {
+        onCheckoutFailure(message);
+      }
     } finally {
       setLoading(false);
     }
@@ -167,7 +270,7 @@ export default function BookingFlowPage() {
             ))}
             <div className="flex justify-between gap-3"><span className="text-muted-foreground">Duration</span><span className="font-medium">{durationLabel}</span></div>
             <div className="flex justify-between gap-3 font-bold border-t pt-2"><span>Total Paid</span><span className="text-primary">₹{chargedTotal}</span></div>
-            <div className="flex justify-between gap-3"><span className="text-muted-foreground">Payment status</span><span className="font-medium text-success">Paid (simulated)</span></div>
+            <div className="flex justify-between gap-3"><span className="text-muted-foreground">Payment status</span><span className="font-medium text-success">Paid</span></div>
             <div className="flex justify-between gap-3 text-[10px] text-muted-foreground mt-2"><span className="shrink-0">Booking Reference</span><span className="truncate min-w-0">#{reference}</span></div>
           </div>
 
@@ -211,6 +314,40 @@ export default function BookingFlowPage() {
     );
   }
 
+  if (step === 'verifying') {
+    return (
+      <div className="container mx-auto px-4 py-16 max-w-lg text-center">
+        <div className="bg-card border rounded-2xl p-8 shadow-sm">
+          <Loader2 size={48} className="mx-auto text-primary mb-4 animate-spin" />
+          <h1 className="text-xl font-bold">{verifyingMessage}</h1>
+          <p className="text-muted-foreground text-sm mt-2">
+            Please don't close this page. Your booking will only be confirmed once we've verified the payment with Razorpay.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'unavailable') {
+    return (
+      <div className="container mx-auto px-4 py-16 max-w-lg text-center">
+        <div className="bg-card border rounded-2xl p-8 shadow-sm">
+          <Clock size={64} className="mx-auto text-warning mb-4" />
+          <h1 className="text-2xl font-bold">Payments are temporarily unavailable</h1>
+          <p className="text-muted-foreground mt-2">
+            Online payments couldn't be started right now. Please try again shortly, or contact the venue directly to book.
+          </p>
+          <div className="flex gap-3 mt-6">
+            <Button variant="outline" className="flex-1" onClick={() => navigate(`/turfs/${id}`)}>Go Back</Button>
+            {turf?.contactPhone && (
+              <Button className="flex-1" asChild><a href={`tel:${turf.contactPhone}`}>Call venue</a></Button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (step === 'failure') {
     return (
       <div className="container mx-auto px-4 py-16 max-w-lg text-center">
@@ -218,12 +355,14 @@ export default function BookingFlowPage() {
           <XCircle size={64} className="mx-auto text-destructive mb-4" />
           <h1 className="text-2xl font-bold">Something went wrong</h1>
           <p className="text-muted-foreground mt-2">
-            We couldn't complete your booking — {failureReason || 'please try again.'}
+            {failureReason || "We couldn't complete your payment — please try again."}
           </p>
-          <p className="text-xs font-medium text-success mt-2">Your payment has not been charged.</p>
+          <p className="text-xs font-medium text-muted-foreground mt-2">
+            If your payment was actually charged, it will be automatically refunded — you can check the status from My Bookings.
+          </p>
           <div className="flex gap-3 mt-6">
             <Button variant="outline" className="flex-1" onClick={() => navigate(`/turfs/${id}`)}>Go Back</Button>
-            <Button className="flex-1" onClick={() => { setFailureReason(null); setStep('summary'); }}>Retry</Button>
+            <Button className="flex-1" onClick={() => { setFailureReason(null); setStep('payment'); }}>Retry Payment</Button>
           </div>
           <Link to="/help" className="text-xs text-muted-foreground hover:text-primary underline mt-4 inline-block">
             Still stuck? Contact support
@@ -277,7 +416,7 @@ export default function BookingFlowPage() {
 
         <div className="mt-6 border rounded-xl p-4 bg-muted/30 text-xs text-muted-foreground space-y-1">
           <p className="font-semibold text-foreground">Cancellation policy</p>
-          <p>Free cancellation up to 6 hours before your slot starts, from My Bookings. No charge is made until you confirm below, so there's nothing to refund if you cancel in time.</p>
+          <p>Free cancellation up to 6 hours before your slot starts, from My Bookings — cancelling in time refunds the full amount to your original payment method.</p>
         </div>
 
         {step === 'summary' && (
@@ -289,18 +428,9 @@ export default function BookingFlowPage() {
         {step === 'payment' && (
           <div className="mt-6 space-y-4">
             <div className="border rounded-xl p-4 bg-muted/30">
-              <h3 className="font-medium mb-3">Payment Method (Phase 1)</h3>
-              <div className="flex items-start gap-2 text-xs text-muted-foreground mb-3 bg-warning/10 border border-warning/20 rounded-lg p-2.5">
-                <ShieldAlert size={14} className="shrink-0 mt-0.5 text-warning" />
-                <span>This checkout is simulated — no real payment is processed and no money is charged. A real gateway (UPI/cards/net banking) will replace this before launch.</span>
-              </div>
-              <div className="space-y-2">
-                {['UPI / Google Pay', 'Credit / Debit Card', 'Net Banking'].map((method, i) => (
-                  <label key={method} className="flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/50">
-                    <input type="radio" name="payment" defaultChecked={i === 0} className="accent-primary" />
-                    <span className="text-sm">{method}</span>
-                  </label>
-                ))}
+              <div className="flex items-start gap-2 text-xs text-muted-foreground">
+                <ShieldCheck size={14} className="shrink-0 mt-0.5 text-success" />
+                <span>You'll pay securely via Razorpay — UPI, cards, net banking and wallets are all supported. Your card/UPI details are handled entirely by Razorpay and never reach our servers.</span>
               </div>
             </div>
 
@@ -312,7 +442,7 @@ export default function BookingFlowPage() {
             </label>
 
             <Button className="w-full" size="lg" onClick={handlePayment} disabled={loading || !agreedToPolicy}>
-              {loading ? <><Loader2 size={18} className="mr-2 animate-spin" /> Processing...</> : `Confirm & Pay ₹${total}`}
+              {loading ? <><Loader2 size={18} className="mr-2 animate-spin" /> Opening secure payment...</> : <><CreditCard size={18} className="mr-2" /> Pay ₹{total}</>}
             </Button>
           </div>
         )}

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   lockSlot,
+  lockMultipleSlots,
   confirmSlot,
   bookSlot,
   bookMultipleSlots,
@@ -35,6 +36,11 @@ router.post("/lock", protect, authorize("USER"), lockLimiter, lockSlot);
 
 // POST /api/bookings/confirm — Step 2: confirm lock → create booking
 router.post("/confirm", protect, authorize("USER"), confirmSlot);
+
+// POST /api/bookings/lock-multi — lock 1-10 contiguous slots without
+// confirming (step 1 of the real-payment checkout flow: lock → create
+// Razorpay order against these slots → pay → server-side confirm).
+router.post("/lock-multi", protect, authorize("USER"), lockLimiter, lockMultipleSlots);
 
 // POST /api/bookings — instant book (lock + confirm in one call)
 router.post("/", protect, authorize("USER"), lockLimiter, bookSlot);

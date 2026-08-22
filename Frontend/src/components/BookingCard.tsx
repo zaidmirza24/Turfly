@@ -19,6 +19,23 @@ interface BookingCardProps {
 // server is what actually enforces the rule.
 const CANCELLATION_CUTOFF_MS = 6 * 60 * 60 * 1000;
 
+const refundCopy = (booking: Booking): string => {
+  switch (booking.refundStatus) {
+    case 'REFUNDED':
+      return `Cancelled — ₹${booking.refundAmount ?? booking.amount} was refunded to your original payment method.`;
+    case 'REFUND_PENDING':
+      return 'Cancelled — your refund is being processed and typically lands in 5-7 business days.';
+    case 'REFUND_FAILED':
+      return "Cancelled — we couldn't process your refund automatically. Please contact support.";
+    case 'MARKED_REFUNDED':
+      return 'Cancelled — the venue has recorded this as refunded.';
+    default:
+      return booking.paymentMethod === 'ONLINE'
+        ? 'Cancelled.'
+        : "Cancelled — no online charge was made for this booking, so there's nothing to refund.";
+  }
+};
+
 export function BookingCard({ booking, onCancel, onViewReceipt, showCancel }: BookingCardProps) {
   const navigate = useNavigate();
   const turf = bookingTurf(booking);
@@ -56,7 +73,7 @@ export function BookingCard({ booking, onCancel, onViewReceipt, showCancel }: Bo
 
       {booking.status === 'CANCELLED' && (
         <p className="text-xs text-muted-foreground mt-3 bg-muted/50 rounded-lg px-3 py-2">
-          Cancelled — no charge was made for this booking, so there's nothing to refund.
+          {refundCopy(booking)}
         </p>
       )}
 

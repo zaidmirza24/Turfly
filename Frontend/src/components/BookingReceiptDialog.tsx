@@ -1,4 +1,4 @@
-import { Booking } from '@/types';
+import { Booking, Payment } from '@/types';
 import { bookingTurf, bookingSlot } from '@/lib/booking';
 import { formatSlotDate, formatSlotTime } from '@/lib/dateKey';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -15,6 +15,7 @@ import { Link } from 'react-router-dom';
 export function BookingReceiptDialog({ booking, onClose }: { booking: Booking | null; onClose: () => void }) {
   const turf = booking ? bookingTurf(booking) : undefined;
   const slot = booking ? bookingSlot(booking) : undefined;
+  const payment = booking && typeof booking.paymentId === 'object' ? (booking.paymentId as Payment) : null;
 
   return (
     <Dialog open={!!booking} onOpenChange={(open) => !open && onClose()}>
@@ -33,6 +34,19 @@ export function BookingReceiptDialog({ booking, onClose }: { booking: Booking | 
             )}
             <div className="flex justify-between gap-3"><span className="text-muted-foreground">Status</span><span className="font-medium">{booking.status}</span></div>
             <div className="flex justify-between gap-3 border-t pt-3 font-bold"><span>Amount</span><span className="text-primary">₹{booking.amount}</span></div>
+            {payment && (
+              <>
+                <div className="flex justify-between gap-3"><span className="text-muted-foreground">Currency</span><span>{payment.currency}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-muted-foreground shrink-0">Payment ref</span><span className="font-mono truncate min-w-0 text-xs">{payment.razorpayPaymentId ?? '—'}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-muted-foreground">Payment status</span><span className="font-medium">{payment.status === 'PAID' ? 'Paid' : payment.status}</span></div>
+                {payment.paidAt && (
+                  <div className="flex justify-between gap-3"><span className="text-muted-foreground">Paid on</span><span>{new Date(payment.paidAt).toLocaleString()}</span></div>
+                )}
+              </>
+            )}
+            {booking.refundStatus && booking.refundStatus !== 'NONE' && (
+              <div className="flex justify-between gap-3"><span className="text-muted-foreground">Refund</span><span className="font-medium">{booking.refundStatus === 'REFUNDED' ? `₹${booking.refundAmount ?? booking.amount} refunded` : booking.refundStatus.replace(/_/g, ' ').toLowerCase()}</span></div>
+            )}
             <div className="flex justify-between gap-3"><span className="text-muted-foreground">Booked on</span><span>{new Date(booking.createdAt).toLocaleDateString()}</span></div>
 
             <Button variant="outline" className="w-full mt-2 gap-2" onClick={() => window.print()}>

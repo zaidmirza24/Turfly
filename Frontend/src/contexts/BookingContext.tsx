@@ -14,7 +14,7 @@ interface BookingContextType {
   keepSelectionFor: (turfId: string) => void;
   clearSelection: () => void;
   createBooking: (slotIds: string[]) => Promise<Booking | Booking[]>;
-  cancelBooking: (bookingId: string) => Promise<Booking>;
+  cancelBooking: (bookingId: string) => Promise<{ booking: Booking; refund: { refunded: boolean; reason?: string } }>;
 }
 
 const BookingContext = createContext<BookingContextType | undefined>(undefined);
@@ -83,7 +83,7 @@ export function BookingProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const cancelBooking = useCallback(async (bookingId: string) => {
-    const res = await apiDelete<Booking>(`/bookings/${bookingId}`);
+    const res = await apiDelete<{ booking: Booking; refund: { refunded: boolean; reason?: string } }>(`/bookings/${bookingId}`);
     return res.data;
   }, []);
 

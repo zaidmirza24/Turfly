@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Loader2, User, MapPin, CalendarDays, CreditCard, StickyNote, ShieldCheck } from 'lucide-react';
 import { apiPatch } from '@/lib/api';
-import { Booking } from '@/types';
+import { Booking, Payment } from '@/types';
 import { bookingStartTime, bookingTurf, bookingUser } from '@/lib/booking';
 import { formatSlotDate, formatSlotTime } from '@/lib/dateKey';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
@@ -30,9 +30,10 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
   const invalidateAll = () => INVALIDATE_KEYS.forEach((key) => queryClient.invalidateQueries({ queryKey: [key] }));
 
   const cancelMutation = useMutation({
-    mutationFn: (bookingId: string) => apiPatch<Booking>(`/bookings/${bookingId}/cancel`, { reason: reason.trim() || undefined }),
-    onSuccess: () => {
-      toast.success('Booking cancelled');
+    mutationFn: (bookingId: string) =>
+      apiPatch<{ booking: Booking; refund: { refunded: boolean } }>(`/bookings/${bookingId}/cancel`, { reason: reason.trim() || undefined }),
+    onSuccess: (res) => {
+      toast.success(res.data.refund.refunded ? 'Booking cancelled — refund initiated' : 'Booking cancelled');
       setConfirmingCancel(false);
       setReason('');
       invalidateAll();
@@ -54,6 +55,8 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
   const customer = bookingUser(booking);
   const turf = bookingTurf(booking);
   const startTime = bookingStartTime(booking);
+  const payment = typeof booking.paymentId === 'object' ? (booking.paymentId as Payment) : null;
+  const isOnlinePayment = booking.paymentMethod === 'ONLINE' && !!booking.paymentId;
 
   return (
     <Sheet open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) { setConfirmingCancel(false); setReason(''); } }}>
@@ -68,7 +71,10 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
             <BookingStatusBadge status={booking.status} />
             {booking.status === 'CANCELLED' && (
               <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-                {booking.refundStatus === 'MARKED_REFUNDED' ? 'Refunded (recorded)' : 'Not refunded'}
+                {booking.refundStatus === 'REFUNDED' ? 'Refunded' :
+                  booking.refundStatus === 'REFUND_PENDING' ? 'Refund pending' :
+                  booking.refundStatus === 'REFUND_FAILED' ? 'Refund failed' :
+                  booking.refundStatus === 'MARKED_REFUNDED' ? 'Refunded (recorded)' : 'Not refunded'}
               </span>
             )}
           </div>
@@ -107,9 +113,13 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
                 <div className="font-bold">₹{booking.amount}</div>
                 <div className="text-sm text-muted-foreground">
                   {booking.paymentMethod === 'CASH' ? 'Cash (recorded by owner)' :
-                    booking.paymentMethod === 'PENDING' ? 'Payment pending' : 'Online (simulated checkout)'}
+                    booking.paymentMethod === 'PENDING' ? 'Payment pending' :
+                    payment ? `Online — ${payment.status === 'PAID' ? 'Paid' : payment.status}` : 'Online'}
                   {booking.createdBy === 'OWNER' && ' · Owner-created'}
                 </div>
+                {payment?.razorpayPaymentId && (
+                  <div className="text-xs text-muted-foreground font-mono truncate">{payment.razorpayPaymentId}</div>
+                )}
               </div>
             </div>
 
@@ -158,7 +168,21 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
             </div>
           )}
 
-          {booking.status === 'CANCELLED' && booking.refundStatus !== 'MARKED_REFUNDED' && (
+          {booking.status === 'CANCELLED' && isOnlinePayment && (
+            <div className="pt-4 border-t">
+              <p className="text-[11px] text-muted-foreground text-center">
+                {booking.refundStatus === 'REFUNDED'
+                  ? `₹${booking.refundAmount ?? booking.amount} was refunded automatically to the customer's original payment method.`
+                  : booking.refundStatus === 'REFUND_PENDING'
+                  ? "A refund was automatically initiated and is being processed by Razorpay — this updates on its own once it's confirmed."
+                  : booking.refundStatus === 'REFUND_FAILED'
+                  ? 'The automatic refund failed — this needs manual follow-up in the Razorpay dashboard.'
+                  : 'No refund was needed for this booking.'}
+              </p>
+            </div>
+          )}
+
+          {booking.status === 'CANCELLED' && !isOnlinePayment && booking.refundStatus !== 'MARKED_REFUNDED' && (
             <div className="pt-4 border-t space-y-2">
               <Button
                 variant="outline"

@@ -96,15 +96,67 @@ export interface Booking {
   // shared across every booking made in that same checkout, null otherwise.
   groupId?: string | null;
   cancelledBy?: 'CUSTOMER' | 'OWNER' | 'ADMIN' | 'SYSTEM' | null;
-  // The owner's own bookkeeping note that they refunded this booking outside
-  // the app — no payment gateway exists, so nothing here ever moves real
-  // money. Only meaningful once status is CANCELLED.
-  refundStatus?: 'NONE' | 'MARKED_REFUNDED';
+  // MARKED_REFUNDED is the owner's manual bookkeeping note for CASH/PENDING
+  // bookings (no gateway involved). The rest track a real Razorpay refund
+  // against `paymentId` — REFUND_PENDING the moment Razorpay accepts the
+  // refund request, REFUNDED only once it's actually confirmed processed.
+  refundStatus?: 'NONE' | 'MARKED_REFUNDED' | 'REFUND_PENDING' | 'REFUNDED' | 'REFUND_FAILED';
+  refundAmount?: number;
   notes?: string | null;
   // Whether the customer self-booked, or an owner entered this on their
   // behalf from the panel (phone/walk-in booking).
   createdBy?: 'CUSTOMER' | 'OWNER';
   paymentMethod?: 'ONLINE' | 'CASH' | 'PENDING';
+  // Populated on owner/admin/customer reads when this booking came from a
+  // real online payment (null for CASH/manual bookings).
+  paymentId?: string | Payment | null;
+}
+
+export type PaymentStatus =
+  | 'CREATED'
+  | 'ORDER_CREATED'
+  | 'AUTHORIZED'
+  | 'PAID'
+  | 'FAILED'
+  | 'EXPIRED'
+  | 'PAID_BOOKING_FAILED';
+
+export interface PaymentRefund {
+  razorpayRefundId: string;
+  amount: number;
+  status: 'CREATED' | 'PROCESSED' | 'FAILED';
+  createdAt: string;
+  processedAt?: string | null;
+}
+
+/** Payment.js as returned by GET /api/payments/:id and populated onto Booking.paymentId. */
+export interface Payment {
+  _id: string;
+  status: PaymentStatus;
+  razorpayOrderId?: string | null;
+  razorpayPaymentId?: string | null;
+  amount: number;
+  currency: string;
+  refunds?: PaymentRefund[];
+  failureCode?: string | null;
+  failureReason?: string | null;
+  paidAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  bookingIds?: string[];
+}
+
+/** Response of POST /api/payments/create-order — everything Razorpay Checkout needs. */
+export interface CheckoutOrder {
+  keyId: string;
+  paymentId: string;
+  groupId: string;
+  orderId: string;
+  amount: number; // paise
+  currency: string;
+  name: string;
+  description: string;
+  prefill: { name: string; email: string; contact?: string };
 }
 
 /** The one pagination shape used across the backend's paginated list endpoints. */
