@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import User from "./user.model.js";
 import Turf from "../turf/turf.model.js";
 import Booking from "../booking/booking.model.js";
@@ -5,6 +6,8 @@ import Slot from "../slot/slot.model.js";
 import ApiError from "../../common/utils/ApiError.js";
 import logger from "../../common/utils/logger.js";
 import { attachAvatarImage, rearmImagesByUrl } from "../image/image.service.js";
+
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const PROFILE_EDITABLE_FIELDS = ["name", "phone"];
 
@@ -118,4 +121,61 @@ export const getFavorites = async (userId) => {
   });
   if (!user) throw new ApiError(404, "User not found");
   return user.favorites;
+};
+
+/**
+ * Search customers for the manual-booking flow. Scoped to users who have
+ * actually booked at one of this owner's turfs, or guests this owner created
+ * — never the whole platform's users, which would let any owner harvest
+ * every other owner's customer PII by search term alone.
+ */
+export const searchCustomers = async (ownerId, query) => {
+  if (!query || typeof query !== "string" || query.trim().length < 2) {
+    throw new ApiError(400, "Search query must be at least 2 characters");
+  }
+
+  const turfs = await Turf.find({ ownerId }).select("_id");
+  const turfIds = turfs.map((t) => t._id);
+  const bookedUserIds = await Booking.find({ turfId: { $in: turfIds } }).distinct("userId");
+
+  const regex = new RegExp(escapeRegex(query.trim()), "i");
+  const customers = await User.find({
+    $and: [
+      { $or: [{ _id: { $in: bookedUserIds } }, { createdByOwnerId: ownerId }] },
+      { $or: [{ name: regex }, { phone: regex }, { email: regex }] },
+      { isDeleted: { $ne: true } },
+    ],
+  })
+    .select("name email phone isGuest")
+    .limit(10);
+
+  return customers;
+};
+
+/**
+ * Quick-create a walk-in customer with no real account (name + phone only) so
+ * an owner can record a phone/walk-in booking without forcing the customer to
+ * register. Guests get an unusable random password and a synthetic unique
+ * email — they can never log in, mirroring how a real front-desk log works.
+ */
+export const createGuestCustomer = async (ownerId, { name, phone }) => {
+  if (!name || typeof name !== "string" || !name.trim()) {
+    throw new ApiError(400, "Customer name is required");
+  }
+  const trimmedPhone = typeof phone === "string" ? phone.trim() : "";
+  if (!/^\+?[0-9]{7,15}$/.test(trimmedPhone)) {
+    throw new ApiError(400, "A valid phone number is required");
+  }
+
+  const guest = await User.create({
+    name: name.trim(),
+    email: `guest-${randomUUID()}@turfly.invalid`,
+    phone: trimmedPhone,
+    password: randomUUID(),
+    role: "USER",
+    isGuest: true,
+    createdByOwnerId: ownerId,
+  });
+
+  return guest;
 };

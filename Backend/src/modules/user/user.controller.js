@@ -35,3 +35,13 @@ export const removeFavorite = async (req, res) => {
   await userService.removeFavorite(req.user._id, req.params.turfId);
   new ApiResponse(200, "Removed from favorites", null).send(res);
 };
+
+export const searchCustomers = async (req, res) => {
+  const customers = await userService.searchCustomers(req.user._id, req.query.q);
+  new ApiResponse(200, "Customers found", customers).send(res);
+};
+
+export const createGuestCustomer = async (req, res) => {
+  const guest = await userService.createGuestCustomer(req.user._id, req.body);
+  new ApiResponse(201, "Guest customer created", guest).send(res);
+};

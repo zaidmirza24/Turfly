@@ -8,12 +8,13 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { User } from '@/types';
 import { TableSkeleton } from '@/components/Skeletons';
+import { QueryErrorState } from '@/components/QueryErrorState';
 
 export default function AdminUsersPage() {
   const [search, setSearch] = useState('');
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['admin-users'],
     queryFn: () => apiGet<User[]>('/admin/users'),
   });
@@ -39,6 +40,8 @@ export default function AdminUsersPage() {
       </div>
       {isLoading ? (
         <TableSkeleton rows={6} />
+      ) : isError ? (
+        <QueryErrorState message="Couldn't load users." onRetry={() => refetch()} />
       ) : filtered.length === 0 ? (
         <div className="border-2 border-dashed rounded-xl py-16 text-center text-muted-foreground">
           <p className="font-medium">{search ? 'No users match that search' : 'No users yet'}</p>

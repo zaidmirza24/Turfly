@@ -5,11 +5,12 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { Turf } from '@/types';
 import { TableSkeleton } from '@/components/Skeletons';
+import { QueryErrorState } from '@/components/QueryErrorState';
 
 export default function AdminTurfsPage() {
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['admin-turfs'],
     queryFn: () => apiGet<Turf[]>('/admin/turfs'),
   });
@@ -49,6 +50,8 @@ export default function AdminTurfsPage() {
       </div>
       {isLoading ? (
         <TableSkeleton rows={6} />
+      ) : isError ? (
+        <QueryErrorState message="Couldn't load turfs." onRetry={() => refetch()} />
       ) : turfs.length === 0 ? (
         <div className="border-2 border-dashed rounded-xl py-16 text-center text-muted-foreground">
           <p className="font-medium">No turfs submitted yet</p>

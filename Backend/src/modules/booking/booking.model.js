@@ -50,6 +50,38 @@ const bookingSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    // The owner's own bookkeeping note that they refunded this booking
+    // outside the app (cash handback, UPI transfer, etc). No payment gateway
+    // exists, so nothing here ever moves real money — this is a status label,
+    // not a refund transaction. Only settable once status is CANCELLED.
+    refundStatus: {
+      type: String,
+      enum: ["NONE", "MARKED_REFUNDED"],
+      default: "NONE",
+    },
+    // Free-text note — a cancellation reason, or context an owner attaches to
+    // a manually-created booking.
+    notes: {
+      type: String,
+      default: null,
+      maxlength: 500,
+    },
+    // Whether the customer self-booked (normal flow) or an owner entered this
+    // on their behalf (phone/walk-in booking created from the owner panel).
+    createdBy: {
+      type: String,
+      enum: ["CUSTOMER", "OWNER"],
+      default: "CUSTOMER",
+    },
+    // How the owner recorded payment for a manually-created booking. ONLINE
+    // is the default for customer self-service bookings (today's simulated
+    // checkout); CASH/PENDING are only ever set by the owner on a manual
+    // booking — there is no real payment collection behind either.
+    paymentMethod: {
+      type: String,
+      enum: ["ONLINE", "CASH", "PENDING"],
+      default: "ONLINE",
+    },
   },
   {
     timestamps: true, // createdAt serves as booking time

@@ -37,6 +37,7 @@ const OwnerDashboard = lazy(() => import("@/pages/owner/OwnerDashboardPage"));
 const ManageTurfsPage = lazy(() => import("@/pages/owner/ManageTurfsPage"));
 const SlotManagementPage = lazy(() => import("@/pages/owner/SlotManagementPage"));
 const OwnerBookingsPage = lazy(() => import("@/pages/owner/OwnerBookingsPage"));
+const OwnerCustomersPage = lazy(() => import("@/pages/owner/OwnerCustomersPage"));
 const AdminLayout = lazy(() => import("@/pages/admin/AdminLayout"));
 const AdminDashboardPage = lazy(() => import("@/pages/admin/AdminDashboardPage"));
 const AdminUsersPage = lazy(() => import("@/pages/admin/AdminUsersPage"));
@@ -105,6 +106,7 @@ const App = () => (
                     <Route path="turfs" element={<ManageTurfsPage />} />
                     <Route path="slots" element={<SlotManagementPage />} />
                     <Route path="bookings" element={<OwnerBookingsPage />} />
+                    <Route path="customers" element={<OwnerCustomersPage />} />
                   </Route>
                   <Route path="/admin" element={<RequireRole roles={["ADMIN"]}><ErrorBoundary boundary="admin"><AdminLayout /></ErrorBoundary></RequireRole>}>
                     <Route index element={<AdminDashboardPage />} />

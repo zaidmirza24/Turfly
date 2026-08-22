@@ -2,8 +2,9 @@ import { Router } from "express";
 import {
   getMe, updateMe, changePassword, deleteMe,
   getFavorites, addFavorite, removeFavorite,
+  searchCustomers, createGuestCustomer,
 } from "./user.controller.js";
-import { protect } from "../../common/middlewares/auth.js";
+import { protect, authorize } from "../../common/middlewares/auth.js";
 
 const router = Router();
 
@@ -17,5 +18,9 @@ router.delete("/me", deleteMe);
 router.get("/me/favorites", getFavorites);
 router.post("/me/favorites/:turfId", addFavorite);
 router.delete("/me/favorites/:turfId", removeFavorite);
+
+// Manual-booking customer lookup — owner only.
+router.get("/search", authorize("OWNER"), searchCustomers);
+router.post("/guest", authorize("OWNER"), createGuestCustomer);
 
 export default router;

@@ -1,9 +1,39 @@
 import { randomUUID } from "crypto";
+import mongoose from "mongoose";
 import Slot from "../slot/slot.model.js";
 import Booking from "./booking.model.js";
 import Turf from "../turf/turf.model.js";
+import User from "../user/user.model.js";
 import { isTurfBookable } from "../turf/turf.service.js";
 import ApiError from "../../common/utils/ApiError.js";
+
+// Verifies the caller owns the turf a booking belongs to. Every owner-only
+// mutation/read on a booking goes through this — role alone is never enough,
+// since any OWNER account could otherwise act on another owner's bookings.
+const assertOwnsBookingTurf = async (ownerId, turfId) => {
+  const turf = await Turf.findById(turfId).select("ownerId");
+  if (!turf) {
+    throw new ApiError(404, "Turf not found");
+  }
+  if (turf.ownerId.toString() !== ownerId.toString()) {
+    throw new ApiError(403, "You do not own this turf");
+  }
+  return turf;
+};
+
+// Same check, but for the cancel/refund routes an ADMIN can also reach —
+// an admin isn't the turf's owner, so it skips the ownership match rather
+// than failing it.
+const assertCanManageBooking = async (actor, turfId) => {
+  if (actor.role === "ADMIN") {
+    const turf = await Turf.findById(turfId).select("ownerId");
+    if (!turf) {
+      throw new ApiError(404, "Turf not found");
+    }
+    return turf;
+  }
+  return assertOwnsBookingTurf(actor._id, turfId);
+};
 
 /**
  * Lock expiry duration (ms).
@@ -351,6 +381,117 @@ export const cancelBooking = async (userId, bookingId) => {
 };
 
 /**
+ * Cancel a booking as the owner of the turf it belongs to (or an admin).
+ * Unlike the customer path, there is no cutoff/started check — an owner
+ * needs to be able to cancel right up to and past the start time (e.g. a
+ * maintenance emergency, a no-show they're voiding).
+ */
+export const cancelBookingAsOwner = async (actor, bookingId, reason) => {
+  const booking = await Booking.findById(bookingId);
+  if (!booking) {
+    throw new ApiError(404, "Booking not found");
+  }
+  await assertCanManageBooking(actor, booking.turfId);
+  if (booking.status === "CANCELLED") {
+    throw new ApiError(400, "Booking is already cancelled");
+  }
+
+  booking.status = "CANCELLED";
+  booking.cancelledBy = actor.role === "ADMIN" ? "ADMIN" : "OWNER";
+  if (reason) booking.notes = reason;
+  await booking.save();
+
+  await Slot.findByIdAndUpdate(booking.slotId, {
+    status: "AVAILABLE",
+    bookingId: null,
+    lockedBy: null,
+    lockExpiresAt: null,
+    lockedPrice: null,
+  });
+
+  return booking;
+};
+
+/**
+ * Mark a cancelled booking as refunded — the owner's own bookkeeping note
+ * that they handed the money back outside the app (cash, UPI, etc). No
+ * payment gateway exists, so this never moves real money; it only exists so
+ * an owner has somewhere to record that they did.
+ */
+export const markBookingRefunded = async (actor, bookingId) => {
+  const booking = await Booking.findById(bookingId);
+  if (!booking) {
+    throw new ApiError(404, "Booking not found");
+  }
+  await assertCanManageBooking(actor, booking.turfId);
+  if (booking.status !== "CANCELLED") {
+    throw new ApiError(400, "Only a cancelled booking can be marked as refunded");
+  }
+  if (booking.refundStatus === "MARKED_REFUNDED") {
+    throw new ApiError(400, "Booking is already marked as refunded");
+  }
+
+  booking.refundStatus = "MARKED_REFUNDED";
+  await booking.save();
+  return booking;
+};
+
+/**
+ * Create a booking on a customer's behalf (phone/walk-in) from the owner
+ * panel. Reuses bookMultipleSlots unchanged for the actual locking/pricing/
+ * contiguity logic — a manual booking is not a different booking mechanism,
+ * just a different caller identity (the owner, booking for someone else).
+ */
+export const createManualBooking = async (ownerId, { turfId, customerId, slotIds, paymentMethod, notes }) => {
+  if (!turfId || !customerId) {
+    throw new ApiError(400, "A turf and a customer are required");
+  }
+  if (!mongoose.isValidObjectId(customerId)) {
+    throw new ApiError(400, "Invalid customer");
+  }
+  await assertOwnsBookingTurf(ownerId, turfId);
+
+  if (!Array.isArray(slotIds) || slotIds.length === 0) {
+    throw new ApiError(400, "At least one slot must be selected");
+  }
+  const slotDocs = await Slot.find({ _id: { $in: slotIds } }).select("turfId").lean();
+  if (
+    slotDocs.length !== slotIds.length ||
+    slotDocs.some((s) => s.turfId.toString() !== turfId.toString())
+  ) {
+    throw new ApiError(400, "All selected slots must belong to the chosen turf");
+  }
+
+  // lockSlot's atomic update uses the aggregation-pipeline update form (so it
+  // can set lockedPrice from the slot's own current price in the same op) —
+  // pipeline updates skip Mongoose's normal schema casting on $set values, so
+  // a plain string here would get written into the ObjectId `lockedBy` field
+  // as a raw string. confirmSlot's later plain-object query casts its filter
+  // value to ObjectId as usual, so it would never match that stored string
+  // and every manual booking would fail at the confirm step with the slot
+  // left stuck LOCKED. Every other caller passes req.user._id, already a
+  // real ObjectId from the authenticated user document — this is the one
+  // path handing lockSlot a plain string, so it's the one that has to cast.
+  const customerObjectId = new mongoose.Types.ObjectId(customerId);
+
+  const bookings = await bookMultipleSlots(customerObjectId, slotIds);
+  const bookingIds = bookings.map((b) => b._id);
+
+  await Booking.updateMany(
+    { _id: { $in: bookingIds } },
+    {
+      createdBy: "OWNER",
+      paymentMethod: paymentMethod ?? "CASH",
+      notes: notes ?? null,
+    }
+  );
+
+  return Booking.find({ _id: { $in: bookingIds } })
+    .populate("userId", "name email phone")
+    .populate("slotId", "startTime endTime price");
+};
+
+/**
  * Get bookings for a specific turf (owner view).
  *
  * `ownerId` is required and verified against the turf: authenticating as
@@ -359,31 +500,151 @@ export const cancelBooking = async (userId, bookingId) => {
  * check any owner could enumerate turf ids and harvest the whole platform's
  * customer PII.
  */
-export const getBookingsByTurf = async (ownerId, turfId) => {
-  const turf = await Turf.findById(turfId).select("ownerId");
-  if (!turf) {
-    throw new ApiError(404, "Turf not found");
-  }
-  if (turf.ownerId.toString() !== ownerId.toString()) {
-    throw new ApiError(403, "You do not own this turf");
-  }
+export const getBookingsByTurf = async (ownerId, turfId, { page = 1, limit = 20 } = {}) => {
+  await assertOwnsBookingTurf(ownerId, turfId);
 
-  const bookings = await Booking.find({ turfId, status: "CONFIRMED" })
-    .populate("userId", "name email phone")
-    .populate("slotId", "startTime endTime price")
-    .sort({ createdAt: -1 });
-  return bookings;
+  const query = { turfId, status: "CONFIRMED" };
+  const skip = (page - 1) * limit;
+  const [items, total] = await Promise.all([
+    Booking.find(query)
+      .populate("userId", "name email phone")
+      .populate("slotId", "startTime endTime price")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    Booking.countDocuments(query),
+  ]);
+
+  return { items, total, page, pages: Math.ceil(total / limit) || 1 };
 };
 
 /**
- * Get all bookings for an owner (all their turfs).
+ * Get all bookings for an owner (all their turfs), with optional filters —
+ * date range, turf, status — and pagination. Established as the one
+ * pagination pattern in this backend: { items, total, page, pages }.
  */
-export const getOwnerBookings = async (ownerId) => {
-  const turfs = await Turf.find({ ownerId });
+export const getOwnerBookings = async (ownerId, { page = 1, limit = 20, from, to, turfId, status } = {}) => {
+  const turfs = await Turf.find({ ownerId }).select("_id");
   const turfIds = turfs.map((t) => t._id);
-  return await Booking.find({ turfId: { $in: turfIds } })
-    .populate("userId", "name email phone")
+
+  const query = { turfId: { $in: turfIds } };
+  if (turfId) {
+    if (!turfIds.some((id) => id.toString() === turfId)) {
+      throw new ApiError(403, "You do not own this turf");
+    }
+    query.turfId = turfId;
+  }
+  if (status) query.status = status;
+  if (from || to) {
+    query.createdAt = {};
+    if (from) query.createdAt.$gte = new Date(from);
+    if (to) query.createdAt.$lte = new Date(to);
+  }
+
+  const skip = (page - 1) * limit;
+  const [items, total] = await Promise.all([
+    Booking.find(query)
+      .populate("userId", "name email phone")
+      .populate("turfId", "name location sportsType")
+      .populate("slotId", "startTime endTime price")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    Booking.countDocuments(query),
+  ]);
+
+  return { items, total, page, pages: Math.ceil(total / limit) || 1 };
+};
+
+/**
+ * Aggregated customer list for an owner — one row per customer who has ever
+ * booked at one of their turfs, with booking counts and lifetime spend.
+ * There is no separate Customer collection; this is entirely derived from
+ * Booking + User, so it can never drift out of sync with the bookings
+ * themselves.
+ */
+export const getOwnerCustomers = async (ownerId, { page = 1, limit = 20 } = {}) => {
+  const turfs = await Turf.find({ ownerId }).select("_id");
+  const turfIds = turfs.map((t) => t._id);
+  const skip = (page - 1) * limit;
+
+  const basePipeline = [
+    { $match: { turfId: { $in: turfIds } } },
+    {
+      $group: {
+        _id: "$userId",
+        totalBookings: { $sum: 1 },
+        confirmedCount: { $sum: { $cond: [{ $eq: ["$status", "CONFIRMED"] }, 1, 0] } },
+        cancelledCount: { $sum: { $cond: [{ $eq: ["$status", "CANCELLED"] }, 1, 0] } },
+        totalSpent: { $sum: { $cond: [{ $eq: ["$status", "CONFIRMED"] }, "$amount", 0] } },
+        lastBookingAt: { $max: "$createdAt" },
+      },
+    },
+    { $sort: { lastBookingAt: -1 } },
+  ];
+
+  const [countResult] = await Booking.aggregate([...basePipeline, { $count: "total" }]);
+  const total = countResult?.total ?? 0;
+
+  const items = await Booking.aggregate([
+    ...basePipeline,
+    { $skip: skip },
+    { $limit: limit },
+    {
+      $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "user" },
+    },
+    { $unwind: "$user" },
+    {
+      $project: {
+        _id: 0,
+        userId: "$_id",
+        name: "$user.name",
+        email: "$user.email",
+        phone: "$user.phone",
+        isGuest: "$user.isGuest",
+        totalBookings: 1,
+        confirmedCount: 1,
+        cancelledCount: 1,
+        totalSpent: 1,
+        lastBookingAt: 1,
+      },
+    },
+  ]);
+
+  return { items, total, page, pages: Math.ceil(total / limit) || 1 };
+};
+
+/**
+ * One customer's full detail for an owner — stats plus every booking they've
+ * made at this owner's turfs. 404s rather than returning an empty result if
+ * the customer has never booked here, so this can't be used to probe whether
+ * an arbitrary userId exists on the platform.
+ */
+export const getOwnerCustomerDetail = async (ownerId, customerId) => {
+  const turfs = await Turf.find({ ownerId }).select("_id");
+  const turfIds = turfs.map((t) => t._id);
+
+  const bookings = await Booking.find({ turfId: { $in: turfIds }, userId: customerId })
     .populate("turfId", "name location sportsType")
     .populate("slotId", "startTime endTime price")
     .sort({ createdAt: -1 });
+
+  if (bookings.length === 0) {
+    throw new ApiError(404, "No bookings found for this customer at your turfs");
+  }
+
+  const customer = await User.findById(customerId).select("name email phone isGuest");
+  if (!customer) {
+    throw new ApiError(404, "Customer not found");
+  }
+
+  const confirmed = bookings.filter((b) => b.status === "CONFIRMED");
+  const stats = {
+    totalBookings: bookings.length,
+    confirmedCount: confirmed.length,
+    cancelledCount: bookings.length - confirmed.length,
+    totalSpent: confirmed.reduce((sum, b) => sum + b.amount, 0),
+  };
+
+  return { customer, stats, bookings };
 };

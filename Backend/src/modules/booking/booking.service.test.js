@@ -6,6 +6,7 @@ vi.mock("./booking.model.js", () => ({
 vi.mock("../slot/slot.model.js", () => ({
   default: {
     findById: vi.fn(),
+    find: vi.fn(),
     findOneAndUpdate: vi.fn(),
     findByIdAndUpdate: vi.fn(),
     countDocuments: vi.fn(),
@@ -17,11 +18,22 @@ vi.mock("../turf/turf.model.js", () => ({
 vi.mock("../turf/turf.service.js", () => ({
   isTurfBookable: vi.fn(() => true),
 }));
+vi.mock("../user/user.model.js", () => ({
+  default: { findById: vi.fn() },
+}));
 
-const { lockSlot, confirmSlot, cancelBooking } = await import("./booking.service.js");
+const {
+  lockSlot,
+  confirmSlot,
+  cancelBooking,
+  cancelBookingAsOwner,
+  markBookingRefunded,
+  createManualBooking,
+} = await import("./booking.service.js");
 const Slot = (await import("../slot/slot.model.js")).default;
 const Turf = (await import("../turf/turf.model.js")).default;
 const Booking = (await import("./booking.model.js")).default;
+const User = (await import("../user/user.model.js")).default;
 const { isTurfBookable } = await import("../turf/turf.service.js");
 
 const withSelect = (value) => ({ select: vi.fn().mockReturnValue({ lean: vi.fn().mockResolvedValue(value) }) });
@@ -176,5 +188,154 @@ describe("cancelBooking", () => {
     Slot.findById.mockReturnValue(withSelect({ startTime: new Date(Date.now() - 60 * 1000) }));
 
     await expect(cancelBooking("user1", "booking1")).rejects.toMatchObject({ statusCode: 400 });
+  });
+});
+
+describe("cancelBookingAsOwner", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const bookingDoc = (overrides = {}) => ({
+    _id: "booking1",
+    turfId: "turf1",
+    status: "CONFIRMED",
+    slotId: "slot1",
+    save: vi.fn().mockResolvedValue(true),
+    ...overrides,
+  });
+
+  it("rejects an owner cancelling a booking on a turf they don't own", async () => {
+    Booking.findById.mockResolvedValue(bookingDoc());
+    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: { toString: () => "some-other-owner" } }));
+
+    await expect(
+      cancelBookingAsOwner({ _id: "owner1", role: "OWNER" }, "booking1")
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  it("allows the owning owner to cancel regardless of the 6-hour cutoff, and records OWNER", async () => {
+    const booking = bookingDoc();
+    Booking.findById.mockResolvedValue(booking);
+    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: { toString: () => "owner1" } }));
+    Slot.findByIdAndUpdate.mockResolvedValue({});
+
+    await cancelBookingAsOwner({ _id: "owner1", role: "OWNER" }, "booking1", "maintenance emergency");
+
+    expect(booking.status).toBe("CANCELLED");
+    expect(booking.cancelledBy).toBe("OWNER");
+    expect(booking.notes).toBe("maintenance emergency");
+  });
+
+  it("allows an admin to cancel without owning the turf, and records ADMIN", async () => {
+    const booking = bookingDoc();
+    Booking.findById.mockResolvedValue(booking);
+    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: { toString: () => "owner1" } }));
+    Slot.findByIdAndUpdate.mockResolvedValue({});
+
+    await cancelBookingAsOwner({ _id: "admin1", role: "ADMIN" }, "booking1");
+
+    expect(booking.status).toBe("CANCELLED");
+    expect(booking.cancelledBy).toBe("ADMIN");
+  });
+
+  it("rejects cancelling an already-cancelled booking", async () => {
+    Booking.findById.mockResolvedValue(bookingDoc({ status: "CANCELLED" }));
+    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: { toString: () => "owner1" } }));
+
+    await expect(
+      cancelBookingAsOwner({ _id: "owner1", role: "OWNER" }, "booking1")
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+});
+
+describe("markBookingRefunded", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const bookingDoc = (overrides = {}) => ({
+    _id: "booking1",
+    turfId: "turf1",
+    status: "CANCELLED",
+    refundStatus: "NONE",
+    save: vi.fn().mockResolvedValue(true),
+    ...overrides,
+  });
+
+  it("rejects marking an active (non-cancelled) booking as refunded", async () => {
+    Booking.findById.mockResolvedValue(bookingDoc({ status: "CONFIRMED" }));
+    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: { toString: () => "owner1" } }));
+
+    await expect(
+      markBookingRefunded({ _id: "owner1", role: "OWNER" }, "booking1")
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it("rejects an owner acting on a turf they don't own", async () => {
+    Booking.findById.mockResolvedValue(bookingDoc());
+    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: { toString: () => "some-other-owner" } }));
+
+    await expect(
+      markBookingRefunded({ _id: "owner1", role: "OWNER" }, "booking1")
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  it("marks a cancelled booking refunded for the owning owner", async () => {
+    const booking = bookingDoc();
+    Booking.findById.mockResolvedValue(booking);
+    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: { toString: () => "owner1" } }));
+
+    await markBookingRefunded({ _id: "owner1", role: "OWNER" }, "booking1");
+
+    expect(booking.refundStatus).toBe("MARKED_REFUNDED");
+  });
+
+  it("rejects marking an already-refunded booking again", async () => {
+    Booking.findById.mockResolvedValue(bookingDoc({ refundStatus: "MARKED_REFUNDED" }));
+    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: { toString: () => "owner1" } }));
+
+    await expect(
+      markBookingRefunded({ _id: "owner1", role: "OWNER" }, "booking1")
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+});
+
+describe("createManualBooking", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("rejects an owner creating a manual booking on a turf they don't own", async () => {
+    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: { toString: () => "some-other-owner" } }));
+
+    await expect(
+      createManualBooking("owner1", { turfId: "turf1", customerId: "507f1f77bcf86cd799439011", slotIds: ["slot1"] })
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  it("rejects when a selected slot doesn't belong to the specified turf", async () => {
+    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: { toString: () => "owner1" } }));
+    Slot.find.mockReturnValue(withSelect([{ turfId: { toString: () => "some-other-turf" } }]));
+
+    await expect(
+      createManualBooking("owner1", { turfId: "turf1", customerId: "507f1f77bcf86cd799439011", slotIds: ["slot1"] })
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it("rejects when no slots are provided", async () => {
+    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: { toString: () => "owner1" } }));
+
+    await expect(
+      createManualBooking("owner1", { turfId: "turf1", customerId: "507f1f77bcf86cd799439011", slotIds: [] })
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it("rejects a malformed customerId before ever touching the turf/slots", async () => {
+    // Regression guard: lockSlot's atomic update is an aggregation-pipeline
+    // update, which skips Mongoose's normal schema casting on $set values —
+    // a plain string userId gets stored as a raw string in the ObjectId
+    // `lockedBy` field, so confirmSlot's later cast-to-ObjectId query never
+    // matches it and every manual booking fails at the confirm step with the
+    // slot stuck LOCKED. Catching a non-ObjectId customerId here up front is
+    // what makes that failure mode a clean 400 instead of a silent stuck lock.
+    await expect(
+      createManualBooking("owner1", { turfId: "turf1", customerId: "not-an-object-id", slotIds: ["slot1"] })
+    ).rejects.toMatchObject({ statusCode: 400 });
+    expect(Turf.findById).not.toHaveBeenCalled();
   });
 });

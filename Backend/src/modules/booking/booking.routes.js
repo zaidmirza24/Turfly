@@ -7,6 +7,11 @@ import {
   getMyBookings,
   getOwnerBookings,
   cancelBooking,
+  cancelBookingAsOwner,
+  markBookingRefunded,
+  createManualBooking,
+  getOwnerCustomers,
+  getOwnerCustomerDetail,
   getTurfBookings,
 } from "./booking.controller.js";
 import { protect, authorize } from "../../common/middlewares/auth.js";
@@ -49,8 +54,23 @@ router.get("/me", protect, getMyBookings);
 // GET /api/bookings/owner — all bookings for an owner
 router.get("/owner", protect, authorize("OWNER"), getOwnerBookings);
 
+// GET /api/bookings/owner/customers — aggregated customer list
+router.get("/owner/customers", protect, authorize("OWNER"), getOwnerCustomers);
+
+// GET /api/bookings/owner/customers/:userId — one customer's detail
+router.get("/owner/customers/:userId", protect, authorize("OWNER"), getOwnerCustomerDetail);
+
+// POST /api/bookings/manual — owner books on a customer's behalf (phone/walk-in)
+router.post("/manual", protect, authorize("OWNER"), createManualBooking);
+
 // DELETE /api/bookings/:id — user cancels booking
 router.delete("/:id", protect, authorize("USER"), cancelBooking);
+
+// PATCH /api/bookings/:id/cancel — owner/admin cancels a customer's booking
+router.patch("/:id/cancel", protect, authorize("OWNER", "ADMIN"), cancelBookingAsOwner);
+
+// PATCH /api/bookings/:id/refund — owner/admin marks a cancelled booking refunded
+router.patch("/:id/refund", protect, authorize("OWNER", "ADMIN"), markBookingRefunded);
 
 // GET /api/bookings/turf/:turfId — owner views bookings for their turf
 router.get(

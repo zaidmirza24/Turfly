@@ -58,6 +58,20 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // A customer an owner entered from the panel (phone/walk-in booking) with
+    // no real account of their own — no usable password, can never log in.
+    isGuest: {
+      type: Boolean,
+      default: false,
+    },
+    // Only set on a guest: which owner created them, so customer search stays
+    // scoped to that owner's own guests rather than leaking every owner's
+    // walk-in customers to every other owner.
+    createdByOwnerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
   },
   {
     timestamps: true, // createdAt + updatedAt

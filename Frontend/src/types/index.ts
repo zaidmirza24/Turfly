@@ -21,6 +21,9 @@ export interface User {
   isBanned?: boolean;
   favorites?: (string | Turf)[];
   createdAt: string;
+  // Set only on a customer an owner created from the panel (phone/walk-in
+  // booking) — they have no usable password and can never log in.
+  isGuest?: boolean;
 }
 
 export interface Turf {
@@ -92,4 +95,47 @@ export interface Booking {
   // Present when this booking was created as part of a multi-slot checkout —
   // shared across every booking made in that same checkout, null otherwise.
   groupId?: string | null;
+  cancelledBy?: 'CUSTOMER' | 'OWNER' | 'ADMIN' | 'SYSTEM' | null;
+  // The owner's own bookkeeping note that they refunded this booking outside
+  // the app — no payment gateway exists, so nothing here ever moves real
+  // money. Only meaningful once status is CANCELLED.
+  refundStatus?: 'NONE' | 'MARKED_REFUNDED';
+  notes?: string | null;
+  // Whether the customer self-booked, or an owner entered this on their
+  // behalf from the panel (phone/walk-in booking).
+  createdBy?: 'CUSTOMER' | 'OWNER';
+  paymentMethod?: 'ONLINE' | 'CASH' | 'PENDING';
+}
+
+/** The one pagination shape used across the backend's paginated list endpoints. */
+export interface Paginated<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pages: number;
+}
+
+/** One row of the owner's aggregated customer list — derived from Booking, no separate Customer collection. */
+export interface CustomerSummary {
+  userId: string;
+  name: string;
+  email: string;
+  phone: string;
+  isGuest?: boolean;
+  totalBookings: number;
+  confirmedCount: number;
+  cancelledCount: number;
+  totalSpent: number;
+  lastBookingAt: string;
+}
+
+export interface CustomerDetail {
+  customer: Pick<User, '_id' | 'name' | 'email' | 'phone' | 'isGuest'>;
+  stats: {
+    totalBookings: number;
+    confirmedCount: number;
+    cancelledCount: number;
+    totalSpent: number;
+  };
+  bookings: Booking[];
 }

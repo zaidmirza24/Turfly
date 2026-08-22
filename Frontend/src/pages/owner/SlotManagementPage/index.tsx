@@ -13,8 +13,10 @@ import { sameLocalHour, isPastBookableWindow, hourStart } from './utils';
 
 import { TurfSettingsDialog } from './components/TurfSettingsDialog';
 import { BulkGeneratorDialog } from './components/BulkGeneratorDialog';
+import { BlockTimeModal } from './components/BlockTimeModal';
 import { TurfTabs } from './components/TurfTabs';
 import { WeekNavigator } from './components/WeekNavigator';
+import { WeekOverview } from './components/WeekOverview';
 import { DaySwitcher } from './components/DaySwitcher';
 import { DayTimeline } from './components/DayTimeline';
 import { BulkStatusToolbar } from './components/BulkStatusToolbar';
@@ -131,6 +133,13 @@ export default function SlotManagementPage() {
             currentTurf={currentTurf}
             createSlotsMutation={createSlotsMutation}
           />
+          {selectedTurfId && (
+            <BlockTimeModal
+              selectedTurfId={selectedTurfId}
+              defaultDate={activeDay}
+              setStatusMutation={setStatusMutation}
+            />
+          )}
         </div>
       </div>
 
@@ -161,6 +170,14 @@ export default function SlotManagementPage() {
             onToday={goToToday}
             onJumpToDate={jumpToDate}
             isFetching={isFetchingSlots && !isLoadingSlots}
+          />
+
+          <WeekOverview
+            days={days}
+            hours={hours}
+            activeDayIndex={activeDayIndex}
+            getSlotForHour={getSlotForHour}
+            onSelect={setActiveDayIndex}
           />
 
           <DaySwitcher days={days} activeDayIndex={activeDayIndex} onSelect={setActiveDayIndex} />

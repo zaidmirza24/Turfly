@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { apiGet } from '@/lib/api';
 import { DollarSign, CalendarDays, TrendingUp, MapPin, ChevronRight, Activity } from 'lucide-react';
-import { Booking, Turf } from '@/types';
+import { Booking, Paginated, Turf } from '@/types';
 import { bookingStartTime, bookingTurf, bookingUser } from '@/lib/booking';
 import { formatSlotDate, formatSlotTime, toISTDateKey } from '@/lib/dateKey';
 import { turfCoverImage } from '@/lib/imageUrl';
@@ -13,21 +13,26 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { useNavigate } from 'react-router-dom';
 import { SyncingIndicator } from '@/components/SyncingIndicator';
 import { BookingStatusBadge } from '@/components/BookingStatusBadge';
+import { QueryErrorState } from '@/components/QueryErrorState';
 
 export default function OwnerDashboard() {
   const navigate = useNavigate();
-  const { data: turfsResponse, isLoading: isLoadingTurfs } = useQuery({
+  const { data: turfsResponse, isLoading: isLoadingTurfs, isError: isTurfsError, refetch: refetchTurfs } = useQuery({
     queryKey: ['my-turfs'],
     queryFn: () => apiGet<Turf[]>('/turfs/my-turfs'),
   });
 
-  const { data: bookingsResponse, isLoading: isLoadingBookings } = useQuery({
-    queryKey: ['owner-bookings'],
-    queryFn: () => apiGet<Booking[]>('/bookings/owner'),
+  // A dashboard-specific query key + a generous limit rather than the
+  // paginated 20-per-page default: this page only needs "enough recent
+  // bookings" for the 7-day chart and recent-activity list, not a page
+  // control of its own.
+  const { data: bookingsResponse, isLoading: isLoadingBookings, isError: isBookingsError, refetch: refetchBookings } = useQuery({
+    queryKey: ['owner-bookings-dashboard'],
+    queryFn: () => apiGet<Paginated<Booking>>('/bookings/owner?limit=500'),
   });
 
   const turfs = turfsResponse?.data ?? [];
-  const bookings = bookingsResponse?.data ?? [];
+  const bookings = bookingsResponse?.data?.items ?? [];
 
   const confirmed = bookings.filter(b => b.status === 'CONFIRMED');
   const revenue = confirmed.reduce((sum, b) => sum + (b.amount || 0), 0);
@@ -99,6 +104,15 @@ export default function OwnerDashboard() {
 
   if (isLoadingTurfs || isLoadingBookings) {
     return <SyncingIndicator label="Syncing Arena Data" double />;
+  }
+
+  if (isTurfsError || isBookingsError) {
+    return (
+      <QueryErrorState
+        message="Couldn't load your arena data."
+        onRetry={() => { refetchTurfs(); refetchBookings(); }}
+      />
+    );
   }
 
   return (
