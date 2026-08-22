@@ -20,6 +20,7 @@ import { recordTurfView } from '@/lib/recentlyViewed';
 import { getCachedPosition, distanceKm, formatDistance } from '@/lib/geo';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { ReviewsSection } from '@/components/ReviewsSection';
+import { startingPricePerHour } from '@/lib/turfPricing';
 
 const MAX_SLOTS_PER_BOOKING = 10;
 
@@ -143,7 +144,7 @@ export default function TurfDetailPage() {
   const images = turf.images?.length
     ? turf.images.map(url => resolveImageUrl(url) as string)
     : [TURF_PLACEHOLDER_IMAGE];
-  const pricePerHour = turf.pricePerHour || 500;
+  const pricePerHour = startingPricePerHour(turf);
   const isFavorite = favoriteIds.has(turf._id);
 
   return (

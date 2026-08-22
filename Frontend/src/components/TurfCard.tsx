@@ -6,6 +6,7 @@ import { turfCoverImage } from '@/lib/imageUrl';
 import { formatDistance } from '@/lib/geo';
 import { useFavorites } from '@/hooks/useFavorites';
 import { cn } from '@/lib/utils';
+import { startingPricePerHour } from '@/lib/turfPricing';
 
 interface TurfCardProps {
   turf: Turf;
@@ -14,7 +15,8 @@ interface TurfCardProps {
 export function TurfCard({ turf }: TurfCardProps) {
   const sports = turf.sportsType ?? [];
   const image = turfCoverImage(turf.images);
-  const price = turf.pricePerHour || 500;
+  const price = startingPricePerHour(turf);
+  const hasWeekendPricing = turf.defaultWeekendPrice != null && turf.defaultWeekendPrice !== turf.defaultWeekdayPrice;
   const hasRating = (turf.reviewCount ?? 0) > 0;
   const distance = turf.distanceMeters != null ? formatDistance(turf.distanceMeters / 1000) : null;
   const { favoriteIds, toggleFavorite, isCustomer } = useFavorites();
@@ -68,6 +70,7 @@ export function TurfCard({ turf }: TurfCardProps) {
           </div>
           <div className="flex items-center justify-end mt-5 pt-4 border-t">
             <div className="text-right">
+              {hasWeekendPricing && <span className="block text-[9px] text-muted-foreground font-bold uppercase tracking-wide">From</span>}
               <span className="font-black text-xl text-primary tracking-tighter">₹{price}</span>
               <span className="text-[10px] text-muted-foreground font-bold uppercase ml-1">/hr</span>
             </div>
