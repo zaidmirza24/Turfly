@@ -110,6 +110,60 @@ const MAX_PROVISION_DAYS = 62;
 // bookMultipleSlots groups several of these into one checkout.
 const SLOT_MINUTES = 30;
 
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * One-time-per-slot migration: a Slot document created before slots were
+ * split into half-hour units is still a full hour long (endTime - startTime
+ * === 1h). Left alone, it would sit right next to the new 30-min slots this
+ * function generates without lining up with them — e.g. an old 11:00-12:00
+ * slot next to a new 11:30-12:00 slot, overlapping and breaking the
+ * contiguous-block check bookMultipleSlots relies on. This splits any such
+ * slot in `turf`'s date range into two half-hour slots with the same status
+ * and half the price, so old and new inventory end up on one consistent grid.
+ *
+ * BOOKED/LOCKED slots are left untouched — they're real bookings/holds made
+ * back when an hour was one slot, and splitting them would misrepresent what
+ * was actually booked.
+ */
+const migrateHourlySlotsToHalfHour = async (turfId, startDateKey, endDateKey) => {
+  const { start } = istDayBounds(startDateKey);
+  const { end } = istDayBounds(endDateKey);
+
+  const staleHourly = await Slot.find({
+    turfId,
+    startTime: { $gte: start, $lte: end },
+    status: { $nin: ["BOOKED", "LOCKED"] },
+  }).select("startTime endTime price status").lean();
+
+  const toSplit = staleHourly.filter((s) => s.endTime.getTime() - s.startTime.getTime() === HOUR_MS);
+  if (toSplit.length === 0) return;
+
+  const halves = toSplit.flatMap((s) => {
+    const mid = new Date(s.startTime.getTime() + SLOT_MINUTES * 60 * 1000);
+    return [
+      { turfId, startTime: s.startTime, endTime: mid, price: s.price / 2, status: s.status },
+      { turfId, startTime: mid, endTime: s.endTime, price: s.price / 2, status: s.status },
+    ];
+  });
+
+  await Slot.deleteMany({
+    turfId,
+    startTime: { $in: toSplit.map((s) => s.startTime) },
+    status: { $nin: ["BOOKED", "LOCKED"] },
+  });
+  try {
+    // ordered:false so a duplicate from a concurrent migration of the same
+    // range doesn't abort the rest of the batch — same reasoning as
+    // provisionDefaultSlots' own insertMany below.
+    await Slot.insertMany(halves, { ordered: false });
+  } catch (err) {
+    if (err.code !== 11000 && !(err.writeErrors?.every((e) => e.code === 11000))) {
+      throw err;
+    }
+  }
+};
+
 /**
  * Idempotently create AVAILABLE slots for every operating half-hour of `turf`
  * across the IST calendar days [startDateKey, endDateKey] ("YYYY-MM-DD",
@@ -126,6 +180,8 @@ const SLOT_MINUTES = 30;
  * and would silently provision the wrong hours depending on where this runs.
  */
 const provisionDefaultSlots = async (turf, startDateKey, endDateKey) => {
+  await migrateHourlySlotsToHalfHour(turf._id, startDateKey, endDateKey);
+
   const openHour = turf.is24x7 === false ? (turf.openHour ?? 0) : 0;
   const closeHour = turf.is24x7 === false ? (turf.closeHour ?? 23) : 23;
 
