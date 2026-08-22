@@ -462,12 +462,12 @@ export default function TurfDetailPage() {
                     </p>
                   )}
                   <div className="flex gap-3">
-                    <Button variant="ghost" className="rounded-2xl font-bold" onClick={clearSelection}>
+                    <Button variant="ghost" className="rounded-2xl font-bold shrink-0" onClick={clearSelection}>
                       Clear
                     </Button>
                     <Button
                       disabled={!canBook}
-                      className="flex-1 h-16 rounded-2xl text-xl font-black gradient-primary shadow-xl shadow-primary/30 hover:scale-[1.02] transition-transform"
+                      className="flex-1 min-w-0 h-16 rounded-2xl text-base sm:text-xl font-black gradient-primary shadow-xl shadow-primary/30 hover:scale-[1.02] transition-transform whitespace-normal px-3"
                       onClick={handleProceed}
                     >
                       {isAuthenticated ? 'Confirm & Pay' : 'Log in to book'}
@@ -505,20 +505,20 @@ export default function TurfDetailPage() {
         scroll past About/Amenities/the calendar every time before they can
         act on price/selection. Mirrors it without duplicating booking logic.
       */}
-      <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 glass border-t border-primary/10 shadow-2xl px-4 py-3 flex items-center justify-between gap-4">
+      <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 glass border-t border-primary/10 shadow-2xl px-4 py-3 flex items-center justify-between gap-3">
         {selectedSlots.length === 0 ? (
           <>
-            <div>
+            <div className="shrink-0">
               <div className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Starting From</div>
               <div className="text-xl font-black text-primary tracking-tighter">₹{pricePerHour}<span className="text-xs text-muted-foreground font-medium">/hr</span></div>
             </div>
-            <Button className="rounded-2xl font-black h-12 px-6" onClick={() => document.getElementById('booking')?.scrollIntoView({ behavior: 'smooth' })}>
+            <Button className="rounded-2xl font-black h-12 px-6 whitespace-normal" onClick={() => document.getElementById('booking')?.scrollIntoView({ behavior: 'smooth' })}>
               Check Availability
             </Button>
           </>
         ) : (
           <>
-            <div>
+            <div className="shrink-0">
               <div className="text-[10px] font-black uppercase tracking-[0.2em] text-primary">
                 {selectedSlots.length} Slot{selectedSlots.length > 1 ? 's' : ''}
               </div>
@@ -526,7 +526,7 @@ export default function TurfDetailPage() {
             </div>
             <Button
               disabled={!canBook}
-              className="flex-1 max-w-[60%] h-12 rounded-2xl font-black gradient-primary shadow-lg shadow-primary/30"
+              className="flex-1 min-w-0 h-12 rounded-2xl font-black gradient-primary shadow-lg shadow-primary/30 whitespace-normal px-3 text-sm sm:text-base"
               onClick={handleProceed}
             >
               {isAuthenticated ? 'Confirm & Pay' : 'Log in to book'}

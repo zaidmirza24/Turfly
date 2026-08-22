@@ -270,13 +270,13 @@ export default function OwnerDashboard() {
                       <BookingStatusBadge status={b.status} />
                     </div>
                     <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="font-bold">{customer?.name || 'Customer'}</div>
-                        <div className="text-[10px] font-black text-primary uppercase tracking-widest mt-1">
+                      <div className="min-w-0">
+                        <div className="font-bold truncate">{customer?.name || 'Customer'}</div>
+                        <div className="text-[10px] font-black text-primary uppercase tracking-widest mt-1 truncate">
                           {startTime ? `${formatSlotDate(startTime)} • ${formatSlotTime(startTime)}` : '—'}
                         </div>
                       </div>
-                      <div className="font-black text-lg tracking-tighter text-foreground/80">₹{b.amount}</div>
+                      <div className="font-black text-lg tracking-tighter text-foreground/80 shrink-0">₹{b.amount}</div>
                     </div>
                   </div>
                 );

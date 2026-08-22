@@ -22,18 +22,18 @@ export function BookingReceiptDialog({ booking, onClose }: { booking: Booking | 
         <DialogHeader><DialogTitle>Booking Receipt</DialogTitle></DialogHeader>
         {booking && (
           <div id="booking-receipt" className="space-y-3 text-sm">
-            <div className="flex justify-between"><span className="text-muted-foreground">Reference</span><span className="font-mono">#{booking.groupId || booking._id}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Venue</span><span className="font-medium">{turf?.name ?? '—'}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Location</span><span>{turf?.location ?? '—'}</span></div>
+            <div className="flex justify-between gap-3"><span className="text-muted-foreground shrink-0">Reference</span><span className="font-mono truncate min-w-0">#{booking.groupId || booking._id}</span></div>
+            <div className="flex justify-between gap-3"><span className="text-muted-foreground shrink-0">Venue</span><span className="font-medium truncate min-w-0">{turf?.name ?? '—'}</span></div>
+            <div className="flex justify-between gap-3"><span className="text-muted-foreground shrink-0">Location</span><span className="truncate min-w-0">{turf?.location ?? '—'}</span></div>
             {slot && (
               <>
-                <div className="flex justify-between"><span className="text-muted-foreground">Date</span><span>{formatSlotDate(slot.startTime)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Time</span><span>{formatSlotTime(slot.startTime)} – {formatSlotTime(slot.endTime)}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-muted-foreground">Date</span><span>{formatSlotDate(slot.startTime)}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-muted-foreground shrink-0">Time</span><span className="text-right">{formatSlotTime(slot.startTime)} – {formatSlotTime(slot.endTime)}</span></div>
               </>
             )}
-            <div className="flex justify-between"><span className="text-muted-foreground">Status</span><span className="font-medium">{booking.status}</span></div>
-            <div className="flex justify-between border-t pt-3 font-bold"><span>Amount</span><span className="text-primary">₹{booking.amount}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Booked on</span><span>{new Date(booking.createdAt).toLocaleDateString()}</span></div>
+            <div className="flex justify-between gap-3"><span className="text-muted-foreground">Status</span><span className="font-medium">{booking.status}</span></div>
+            <div className="flex justify-between gap-3 border-t pt-3 font-bold"><span>Amount</span><span className="text-primary">₹{booking.amount}</span></div>
+            <div className="flex justify-between gap-3"><span className="text-muted-foreground">Booked on</span><span>{new Date(booking.createdAt).toLocaleDateString()}</span></div>
 
             <Button variant="outline" className="w-full mt-2 gap-2" onClick={() => window.print()}>
               <Printer size={14} /> Print

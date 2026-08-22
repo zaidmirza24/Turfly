@@ -199,10 +199,10 @@ export function ReviewsSection({ turfId, isOwnerOfTurf }: { turfId: string; isOw
 
             return (
               <div key={r._id} className="border-b pb-5 last:border-0">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-semibold text-sm flex items-center gap-1.5">
-                    {reviewer}
-                    <span className="flex items-center gap-0.5 text-[10px] font-bold text-success bg-success/10 rounded-full px-1.5 py-0.5" title="This reviewer has a confirmed booking at this turf">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <span className="font-semibold text-sm flex items-center gap-1.5 flex-wrap min-w-0">
+                    <span className="truncate">{reviewer}</span>
+                    <span className="flex items-center gap-0.5 text-[10px] font-bold text-success bg-success/10 rounded-full px-1.5 py-0.5 shrink-0" title="This reviewer has a confirmed booking at this turf">
                       <BadgeCheck size={11} /> Verified Booking
                     </span>
                   </span>

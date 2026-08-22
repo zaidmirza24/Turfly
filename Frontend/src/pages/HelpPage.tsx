@@ -46,10 +46,10 @@ export default function HelpPage() {
 
       <div className="grid grid-cols-2 gap-3 mb-10">
         {topics.map(t => (
-          <Button key={t.label} variant="outline" className="h-auto py-4 flex-col gap-2" asChild>
+          <Button key={t.label} variant="outline" className="h-auto py-4 flex-col gap-2 whitespace-normal" asChild>
             <a href={buildMailto(t.subject, bookingId)}>
               <t.icon size={18} className="text-primary" />
-              <span className="text-xs font-medium">{t.label}</span>
+              <span className="text-xs font-medium text-center">{t.label}</span>
             </a>
           </Button>
         ))}
