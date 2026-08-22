@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { hourStart, formatHourMark } from '../utils';
 
 export type EditingSlot = { date: Date; hour: number; price: number };
 
@@ -31,10 +32,8 @@ export function SlotPriceDialog({ editingSlot, onClose, selectedTurfId, createSl
       return;
     }
     const { date, hour } = editingSlot;
-    const startTime = new Date(date);
-    startTime.setHours(hour, 0, 0, 0);
-    const endTime = new Date(startTime);
-    endTime.setHours(hour + 1, 0, 0, 0);
+    const startTime = hourStart(date, hour);
+    const endTime = new Date(startTime.getTime() + 30 * 60 * 1000);
 
     createSlotsMutation.mutate({
       turfId: selectedTurfId,
@@ -53,13 +52,13 @@ export function SlotPriceDialog({ editingSlot, onClose, selectedTurfId, createSl
           <DialogHeader className="mb-6">
             <DialogTitle className="text-2xl font-black tracking-tighter">Set Slot Price</DialogTitle>
             <DialogDescription className="text-muted-foreground font-medium uppercase text-[10px] tracking-widest">
-              {editingSlot.date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })} @ {editingSlot.hour}:00
+              {editingSlot.date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })} @ {formatHourMark(editingSlot.hour)}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-6">
             <div className="group space-y-2">
-              <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-1">Price per Hour</Label>
+              <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-1">Price for this 30-min slot</Label>
               <div className="relative">
                 <div className="absolute left-4 top-1/2 -translate-y-1/2 text-primary font-bold text-xl">₹</div>
                 <Input

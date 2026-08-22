@@ -1,25 +1,37 @@
+// Every row in the owner's grid is a half-hour slot, so "hour" here is really
+// a time-of-day mark that can land on a half-hour (11, 11.5, 12, ...) — kept
+// as a single float rather than a separate {hour, minute} pair so the rest of
+// this module (ranges, drag-select, sorting) can keep doing plain arithmetic.
+const wholeHour = (hour: number) => Math.floor(hour);
+const minutesPart = (hour: number) => Math.round((hour % 1) * 60);
+
 export const sameLocalHour = (isoTime: string, date: Date, hour: number) => {
   const t = new Date(isoTime);
-  return t.getFullYear() === date.getFullYear() && t.getMonth() === date.getMonth() && t.getDate() === date.getDate() && t.getHours() === hour;
+  return (
+    t.getFullYear() === date.getFullYear() &&
+    t.getMonth() === date.getMonth() &&
+    t.getDate() === date.getDate() &&
+    t.getHours() === wholeHour(hour) &&
+    t.getMinutes() === minutesPart(hour)
+  );
 };
-
-// Mirrors booking.service.js's MIN_ADVANCE_NOTICE_MS (also duplicated in
-// SlotSelector.tsx for the customer-facing grid): a slot inside this window —
-// including one that's already started — can never actually be locked or
-// booked. Without treating it as such here too, the owner's grid kept
-// showing a plain "Available" badge on hours no customer could ever book,
-// which read as available inventory that quietly wasn't.
-export const MIN_ADVANCE_NOTICE_MS = 30 * 60 * 1000;
 
 export const hourStart = (date: Date, hour: number) => {
   const d = new Date(date);
-  d.setHours(hour, 0, 0, 0);
+  d.setHours(wholeHour(hour), minutesPart(hour), 0, 0);
   return d;
 };
 
-/** True once an hour is too close (or already past) to ever be bookable. */
+/** "11:30" style label for a half-hour mark. */
+export const formatHourMark = (hour: number) =>
+  `${String(wholeHour(hour)).padStart(2, '0')}:${String(minutesPart(hour)).padStart(2, '0')}`;
+
+/** The half-hour mark that comes right after `hour` (11 -> 11.5, 11.5 -> 12). */
+export const nextHourMark = (hour: number) => Math.round((hour + 0.5) * 2) / 2;
+
+/** True once a half-hour mark is too close (or already past) to ever be bookable. */
 export const isPastBookableWindow = (date: Date, hour: number, now: number = Date.now()) =>
-  hourStart(date, hour).getTime() <= now + MIN_ADVANCE_NOTICE_MS;
+  hourStart(date, hour).getTime() <= now;
 
 export type BulkConfig = {
   startDate: string;
@@ -39,20 +51,22 @@ export function buildBulkSlots(config: BulkConfig) {
     currentDate.setDate(start.getDate() + i);
 
     const isWeekend = currentDate.getDay() === 0 || currentDate.getDay() === 6;
-    const price = isWeekend ? config.weekendPrice : config.weekdayPrice;
+    const hourlyPrice = isWeekend ? config.weekendPrice : config.weekdayPrice;
 
+    // Two half-hour slots per operating hour, mirroring the server's own
+    // default provisioning (slot.service.js's provisionDefaultSlots) — each
+    // priced at half the hourly rate.
     for (let h = config.startHour; h <= config.endHour; h++) {
-      const startTime = new Date(currentDate);
-      startTime.setHours(h, 0, 0, 0);
+      for (const mark of [h, h + 0.5]) {
+        const startTime = hourStart(currentDate, mark);
+        const endTime = new Date(startTime.getTime() + 30 * 60 * 1000);
 
-      const endTime = new Date(startTime);
-      endTime.setHours(h + 1, 0, 0, 0);
-
-      newSlots.push({
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString(),
-        price: Number(price),
-      });
+        newSlots.push({
+          startTime: startTime.toISOString(),
+          endTime: endTime.toISOString(),
+          price: Number(hourlyPrice) / 2,
+        });
+      }
     }
   }
 

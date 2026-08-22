@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { TimeSlot } from '@/types';
 import { STATUS_META } from '../constants';
-import { isPastBookableWindow } from '../utils';
+import { isPastBookableWindow, formatHourMark, nextHourMark } from '../utils';
 
 type Props = {
   hours: number[];
@@ -64,7 +64,7 @@ export function DayTimeline({
             const meta = isPast ? STATUS_META.PAST : (STATUS_META[status] || STATUS_META.NONE);
             const isSelected = selectedHours.includes(h);
             const isDisabled = isLocked || isPast;
-            const timeLabel = `${h.toString().padStart(2, '0')}:00 – ${((h + 1) % 24).toString().padStart(2, '0')}:00`;
+            const timeLabel = `${formatHourMark(h)} – ${formatHourMark(nextHourMark(h) % 24)}`;
 
             return (
               <div

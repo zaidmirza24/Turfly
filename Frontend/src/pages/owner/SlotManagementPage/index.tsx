@@ -9,7 +9,7 @@ import { useWeekView } from './hooks/useWeekView';
 import { useSlotsQuery } from './hooks/useSlotsQuery';
 import { useSlotMutations } from './hooks/useSlotMutations';
 import { useHourSelection } from './hooks/useHourSelection';
-import { sameLocalHour, isPastBookableWindow } from './utils';
+import { sameLocalHour, isPastBookableWindow, hourStart } from './utils';
 
 import { TurfSettingsDialog } from './components/TurfSettingsDialog';
 import { BulkGeneratorDialog } from './components/BulkGeneratorDialog';
@@ -46,15 +46,16 @@ export default function SlotManagementPage() {
     onSelectionApplied: () => clearSelection(),
   });
 
-  // Hours shown for the active day, based on the turf's operating hours
+  // Half-hour marks shown for the active day, based on the turf's operating
+  // hours — two rows (:00 and :30) per operating hour, matching the server's
+  // own 30-minute slot grid (slot.service.js).
   const hours = useMemo(() => {
-    if (!currentTurf || currentTurf.is24x7 !== false) {
-      return Array.from({ length: 24 }, (_, i) => i);
+    const start = !currentTurf || currentTurf.is24x7 !== false ? 0 : (currentTurf.openHour ?? 0);
+    const end = !currentTurf || currentTurf.is24x7 !== false ? 23 : (currentTurf.closeHour ?? 23);
+    const list: number[] = [];
+    for (let h = start; h <= end; h++) {
+      list.push(h, h + 0.5);
     }
-    const start = currentTurf.openHour ?? 0;
-    const end = currentTurf.closeHour ?? 23;
-    const list = [];
-    for (let h = start; h <= end; h++) list.push(h);
     return list;
   }, [currentTurf]);
 
@@ -74,10 +75,8 @@ export default function SlotManagementPage() {
   const applyStatusToSelection = (status: 'AVAILABLE' | 'CLOSED' | 'FULL') => {
     if (selectedHours.length === 0 || isMutatingSlots) return;
     const slotPayload = selectedHours.map(h => {
-      const start = new Date(activeDay);
-      start.setHours(h, 0, 0, 0);
-      const end = new Date(start);
-      end.setHours(h + 1, 0, 0, 0);
+      const start = hourStart(activeDay, h);
+      const end = new Date(start.getTime() + 30 * 60 * 1000);
       return { startTime: start.toISOString(), endTime: end.toISOString() };
     });
     setStatusMutation.mutate({ turfId: selectedTurfId, slots: slotPayload, status });
@@ -88,8 +87,10 @@ export default function SlotManagementPage() {
     const istDay = getISTDay(date.toISOString());
     const isWeekend = istDay === 0 || istDay === 6;
     const existing = getSlotForHour(date, hour);
-    const defaultPrice = isWeekend ? currentTurf?.defaultWeekendPrice : currentTurf?.defaultWeekdayPrice;
-    setEditingSlot({ date, hour, price: existing?.price ?? Number(defaultPrice || currentTurf?.pricePerHour || 1000) });
+    const hourlyDefault = isWeekend ? currentTurf?.defaultWeekendPrice : currentTurf?.defaultWeekdayPrice;
+    // Half the hourly default — this dialog prices one 30-minute slot.
+    const defaultPrice = Number(hourlyDefault || currentTurf?.pricePerHour || 1000) / 2;
+    setEditingSlot({ date, hour, price: existing?.price ?? defaultPrice });
   };
 
   if (isLoadingTurfs) return <div className="flex justify-center py-12"><Loader2 className="animate-spin text-primary" /></div>;

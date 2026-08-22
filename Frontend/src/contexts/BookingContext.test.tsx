@@ -3,11 +3,11 @@ import { act, renderHook } from '@testing-library/react';
 import { BookingProvider, useBooking } from './BookingContext';
 import { TimeSlot } from '@/types';
 
-const slot = (id: string, turfId: string): TimeSlot => ({
+const slot = (id: string, turfId: string, startTime = '2026-08-22T05:30:00.000Z', endTime = '2026-08-22T06:00:00.000Z'): TimeSlot => ({
   _id: id,
   turfId,
-  startTime: '2026-08-22T05:30:00.000Z',
-  endTime: '2026-08-22T06:30:00.000Z',
+  startTime,
+  endTime,
   status: 'AVAILABLE',
   price: 1000,
 });
@@ -18,13 +18,25 @@ const setup = () =>
   });
 
 describe('slot selection', () => {
-  it('accumulates slots from the same turf', () => {
+  it('accumulates back-to-back slots from the same turf', () => {
     const { result } = setup();
-    act(() => result.current.toggleSlot(slot('s1', 'turf-a')));
-    act(() => result.current.toggleSlot(slot('s2', 'turf-a')));
+    act(() => result.current.toggleSlot(slot('s1', 'turf-a', '2026-08-22T05:30:00.000Z', '2026-08-22T06:00:00.000Z')));
+    act(() => result.current.toggleSlot(slot('s2', 'turf-a', '2026-08-22T06:00:00.000Z', '2026-08-22T06:30:00.000Z')));
 
     expect(result.current.selectedSlots.map(s => s._id)).toEqual(['s1', 's2']);
     expect(result.current.selectedTurfId).toBe('turf-a');
+  });
+
+  it('selecting a non-adjacent slot from the same turf restarts the selection', () => {
+    // A booking must be one uninterrupted block of time (the API rejects a
+    // gap between slots), so a slot that doesn't extend the current block
+    // starts a fresh selection instead of producing a combination that would
+    // just be rejected at checkout.
+    const { result } = setup();
+    act(() => result.current.toggleSlot(slot('s1', 'turf-a', '2026-08-22T05:30:00.000Z', '2026-08-22T06:00:00.000Z')));
+    act(() => result.current.toggleSlot(slot('s3', 'turf-a', '2026-08-22T07:00:00.000Z', '2026-08-22T07:30:00.000Z')));
+
+    expect(result.current.selectedSlots.map(s => s._id)).toEqual(['s3']);
   });
 
   it('toggling a selected slot removes it', () => {

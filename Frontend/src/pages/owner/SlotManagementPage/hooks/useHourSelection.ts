@@ -44,7 +44,7 @@ export function useHourSelection({ activeDay, getSlotForHour, isMutating, resetK
     const start = Math.min(dragAnchor.current, hour);
     const end = Math.max(dragAnchor.current, hour);
     const range = [];
-    for (let h = start; h <= end; h++) {
+    for (let h = start; h <= end; h += 0.5) {
       if (!isHourUnselectable(activeDay, h)) range.push(h);
     }
     setSelectedHours(range);

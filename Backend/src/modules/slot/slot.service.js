@@ -27,11 +27,12 @@ export const isWithinOperatingHours = (turf, start) => {
  * Accepts an array of slot objects for bulk creation.
  */
 // One request may generate at most this many slot documents. The owner UI's
-// bulk generator multiplies days x hours with no ceiling of its own, so a
-// "365 days" entry would otherwise post ~8,760 documents in a single request
-// (a deleteMany plus an insertMany of that size) — enough to stall the API for
-// every other caller. 62 days of 24h slots fits comfortably under the cap.
-const MAX_SLOTS_PER_REQUEST = 1500;
+// bulk generator multiplies days x hours x 2 (half-hour slots) with no
+// ceiling of its own, so a "365 days" entry would otherwise post ~17,520
+// documents in a single request (a deleteMany plus an insertMany of that
+// size) — enough to stall the API for every other caller. 62 days of 24h
+// (half-hour) slots fits comfortably under the cap.
+const MAX_SLOTS_PER_REQUEST = 3000;
 
 export const createSlots = async (ownerId, turfId, slots) => {
   if (!Array.isArray(slots) || slots.length === 0) {
@@ -104,8 +105,13 @@ export const createSlots = async (ownerId, turfId, slots) => {
 // of Slot documents in one request.
 const MAX_PROVISION_DAYS = 62;
 
+// Length of one bookable slot. Half-hour granularity is what lets a customer
+// start a booking at :30 (e.g. 11:30) and combine slots for a 1.5h duration —
+// bookMultipleSlots groups several of these into one checkout.
+const SLOT_MINUTES = 30;
+
 /**
- * Idempotently create AVAILABLE slots for every operating hour of `turf`
+ * Idempotently create AVAILABLE slots for every operating half-hour of `turf`
  * across the IST calendar days [startDateKey, endDateKey] ("YYYY-MM-DD",
  * inclusive) that don't already have a Slot document.
  *
@@ -126,8 +132,11 @@ const provisionDefaultSlots = async (turf, startDateKey, endDateKey) => {
   const wantedStartTimes = [];
   let cursor = startDateKey;
   for (let i = 0; cursor <= endDateKey && i < MAX_PROVISION_DAYS; i++) {
+    // closeHour is the start hour of the last bookable *hour* of the day, so
+    // both its :00 and :30 half-hours are still within the operating window.
     for (let h = openHour; h <= closeHour; h++) {
-      wantedStartTimes.push(istDateTime(cursor, h));
+      wantedStartTimes.push(istDateTime(cursor, h, 0));
+      wantedStartTimes.push(istDateTime(cursor, h, 30));
     }
     cursor = nextDateKey(cursor);
   }
@@ -143,9 +152,9 @@ const provisionDefaultSlots = async (turf, startDateKey, endDateKey) => {
   const toCreate = wantedStartTimes
     .filter((t) => !existingTimes.has(t.getTime()))
     .map((startTime) => {
-      const endTime = new Date(startTime);
-      endTime.setHours(endTime.getHours() + 1);
-      return { turfId: turf._id, startTime, endTime, price: turf.pricePerHour, status: "AVAILABLE" };
+      const endTime = new Date(startTime.getTime() + SLOT_MINUTES * 60 * 1000);
+      // Half the hourly rate, since each slot is now half an hour.
+      return { turfId: turf._id, startTime, endTime, price: turf.pricePerHour / 2, status: "AVAILABLE" };
     });
 
   if (toCreate.length === 0) return;

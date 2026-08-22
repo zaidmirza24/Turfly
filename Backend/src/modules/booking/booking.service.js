@@ -18,11 +18,6 @@ const LOCK_TTL_MS = 5 * 60 * 1000; // 5 minutes
 // Set well above the largest real checkout (MAX_SLOTS_PER_BOOKING = 10).
 const MAX_CONCURRENT_LOCKS_PER_USER = 15;
 
-// A slot can't be locked once it's this close to starting — gives the venue
-// some minimum notice instead of accepting a booking made seconds before
-// (or, given the 5-minute hold TTL, one that could expire mid-checkout).
-const MIN_ADVANCE_NOTICE_MS = 30 * 60 * 1000; // 30 minutes
-
 // A slot can't be locked if it starts further out than this — bounds how far
 // into the future a booking can be made. Kept comfortably under
 // MAX_PROVISION_DAYS (62, in slot.service.js) so it never rejects a slot that
@@ -41,7 +36,6 @@ const MAX_ADVANCE_BOOKING_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 export const lockSlot = async (userId, slotId) => {
   const now = new Date();
   const lockExpiresAt = new Date(now.getTime() + LOCK_TTL_MS);
-  const minBookableStart = new Date(now.getTime() + MIN_ADVANCE_NOTICE_MS);
   const maxBookableStart = new Date(now.getTime() + MAX_ADVANCE_BOOKING_MS);
 
   // A slot only sells if its turf is actually live. Slot documents exist for
@@ -86,11 +80,10 @@ export const lockSlot = async (userId, slotId) => {
   const lockedSlot = await Slot.findOneAndUpdate(
     {
       _id: slotId,
-      // Combines three time rules in one atomic check, so none of them can
-      // race with the status check below: the slot must not have started,
-      // must be at least MIN_ADVANCE_NOTICE_MS out, and must not be further
-      // than MAX_ADVANCE_BOOKING_MS in the future.
-      startTime: { $gt: minBookableStart, $lte: maxBookableStart },
+      // Combines two time rules in one atomic check, so neither can race with
+      // the status check below: the slot must not have started yet, and must
+      // not be further than MAX_ADVANCE_BOOKING_MS in the future.
+      startTime: { $gt: now, $lte: maxBookableStart },
       $or: [{ status: "AVAILABLE" }, { status: "LOCKED", lockExpiresAt: { $lt: now } }],
     },
     [
@@ -115,12 +108,6 @@ export const lockSlot = async (userId, slotId) => {
     }
     if (exists.startTime <= now) {
       throw new ApiError(400, "This slot has already started and can no longer be booked");
-    }
-    if (exists.startTime <= minBookableStart) {
-      throw new ApiError(
-        400,
-        "This slot starts too soon to be booked — bookings need at least 30 minutes' notice"
-      );
     }
     if (exists.startTime > maxBookableStart) {
       throw new ApiError(400, "This slot is too far in the future to be booked yet — try again closer to the date");
@@ -273,13 +260,23 @@ export const bookMultipleSlots = async (userId, slotIds) => {
   // context that isn't reset when the customer switches turfs, so a mixed-turf
   // slotIds array is reachable in practice — and it would charge for, and book,
   // a venue other than the one shown on the confirmation screen.
-  const slotDocs = await Slot.find({ _id: { $in: uniqueIds } }).select("turfId").lean();
+  const slotDocs = await Slot.find({ _id: { $in: uniqueIds } }).select("turfId startTime endTime").lean();
   if (slotDocs.length !== uniqueIds.length) {
     throw new ApiError(404, "One or more slots no longer exist");
   }
   const turfIds = new Set(slotDocs.map((s) => s.turfId.toString()));
   if (turfIds.size > 1) {
     throw new ApiError(400, "All slots in one booking must belong to the same turf");
+  }
+
+  // A "duration" booking (e.g. 11:30 for 1.5h) only makes sense as one
+  // uninterrupted block of court time — this rejects a selection with a gap
+  // or overlap between slots before anything gets locked.
+  const sortedByStart = [...slotDocs].sort((a, b) => a.startTime - b.startTime);
+  for (let i = 1; i < sortedByStart.length; i++) {
+    if (sortedByStart[i].startTime.getTime() !== sortedByStart[i - 1].endTime.getTime()) {
+      throw new ApiError(400, "Slots in one booking must be back-to-back with no gaps or overlaps");
+    }
   }
 
   await lockMultipleSlots(userId, uniqueIds);

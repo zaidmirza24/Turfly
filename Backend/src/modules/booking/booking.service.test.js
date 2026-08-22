@@ -61,16 +61,14 @@ describe("lockSlot", () => {
     expect(Slot.findOneAndUpdate).not.toHaveBeenCalled();
   });
 
-  it("rejects a slot starting less than 30 minutes from now (min advance notice)", async () => {
-    Slot.findById
-      .mockReturnValueOnce(withSelect({ turfId: "turf1" }))
-      .mockReturnValueOnce({ startTime: new Date(Date.now() + 10 * 60 * 1000) }); // 10 min out
+  it("allows a slot starting just minutes from now (no minimum advance notice)", async () => {
+    Slot.findById.mockReturnValue(withSelect({ turfId: "turf1" }));
     Turf.findById.mockReturnValue(withSelectNoLean({ isActive: true, approvalStatus: "APPROVED" }));
     isTurfBookable.mockReturnValue(true);
     Slot.countDocuments.mockResolvedValue(0);
-    Slot.findOneAndUpdate.mockResolvedValue(null);
+    Slot.findOneAndUpdate.mockResolvedValue({ _id: "slot1", status: "LOCKED" });
 
-    await expect(lockSlot("user1", "slot1")).rejects.toMatchObject({ statusCode: 400 });
+    await expect(lockSlot("user1", "slot1")).resolves.toMatchObject({ _id: "slot1" });
   });
 
   it("rejects a slot starting more than 30 days from now (max advance booking)", async () => {

@@ -64,7 +64,12 @@ export default function BookingFlowPage() {
   }
 
   const total = sortedSlots.reduce((sum, s) => sum + s.price, 0);
-  const durationHours = sortedSlots.length;
+  // Each slot is 30 minutes, not an hour — sum actual elapsed time instead of
+  // counting slots, and format it as "1h 30m" style text below.
+  const durationMinutes = sortedSlots.length * 30;
+  const durationLabel = durationMinutes % 60 === 0
+    ? `${durationMinutes / 60}h`
+    : `${Math.floor(durationMinutes / 60)}h ${durationMinutes % 60}m`;
 
   // A slot conflict (someone else confirmed it while this customer was on the
   // summary/payment screen) surfaces as a 409 from the server. The stale
@@ -160,7 +165,7 @@ export default function BookingFlowPage() {
                 <span className="font-medium shrink-0">{formatSlotTime(slot.startTime)}</span>
               </div>
             ))}
-            <div className="flex justify-between gap-3"><span className="text-muted-foreground">Duration</span><span className="font-medium">{durationHours} hour{durationHours > 1 ? 's' : ''}</span></div>
+            <div className="flex justify-between gap-3"><span className="text-muted-foreground">Duration</span><span className="font-medium">{durationLabel}</span></div>
             <div className="flex justify-between gap-3 font-bold border-t pt-2"><span>Total Paid</span><span className="text-primary">₹{chargedTotal}</span></div>
             <div className="flex justify-between gap-3"><span className="text-muted-foreground">Payment status</span><span className="font-medium text-success">Paid (simulated)</span></div>
             <div className="flex justify-between gap-3 text-[10px] text-muted-foreground mt-2"><span className="shrink-0">Booking Reference</span><span className="truncate min-w-0">#{reference}</span></div>
@@ -263,7 +268,7 @@ export default function BookingFlowPage() {
               </div>
             ))}
           </div>
-          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Duration</span><span className="font-medium">{durationHours} hour{durationHours > 1 ? 's' : ''}</span></div>
+          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Duration</span><span className="font-medium">{durationLabel}</span></div>
           <div className="flex justify-between gap-3 text-muted-foreground"><span>Taxes &amp; platform fee</span><span className="shrink-0">₹0 — none charged</span></div>
           <div className="flex justify-between gap-3 text-lg font-bold border-t pt-3">
             <span>Total Amount</span><span className="text-primary shrink-0">₹{total}</span>

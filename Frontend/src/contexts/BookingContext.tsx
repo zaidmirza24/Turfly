@@ -25,13 +25,38 @@ export function BookingProvider({ children }: { children: React.ReactNode }) {
   const toggleSlot = useCallback((slot: TimeSlot) => {
     setSelectedSlots(prev => {
       const exists = prev.some(s => s._id === slot._id);
-      if (exists) return prev.filter(s => s._id !== slot._id);
+      if (exists) {
+        const sorted = [...prev].sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+        // Removing an interior slot would split the remaining selection into
+        // two disconnected blocks — the API books one contiguous stretch of
+        // time, not several, so that state can never be sent as-is. Removing
+        // from either end keeps what's left contiguous; anything else just
+        // restarts the selection with only the clicked slot.
+        const isEdge = sorted[0]?._id === slot._id || sorted[sorted.length - 1]?._id === slot._id;
+        return isEdge ? prev.filter(s => s._id !== slot._id) : [];
+      }
+
       // Selecting a slot from a different venue replaces the selection rather
       // than adding to it. A checkout is per-turf: the confirmation screen
       // shows one turf's name and price, and the API rejects a mixed-turf
       // booking outright.
       const sameTurf = prev.filter(s => s.turfId === slot.turfId);
-      return [...sameTurf, slot];
+      if (sameTurf.length === 0) return [slot];
+
+      // A booking is one uninterrupted block of time — the API rejects a
+      // selection with a gap between slots — so only accept a new slot that
+      // extends the current block at either end. Anything else (a slot with
+      // a gap from the current selection) starts a fresh selection instead of
+      // silently producing a combination the checkout would just reject.
+      const sorted = [...sameTurf].sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+      const first = sorted[0];
+      const last = sorted[sorted.length - 1];
+      const extendsEnd = new Date(slot.startTime).getTime() === new Date(last.endTime).getTime();
+      const extendsStart = new Date(slot.endTime).getTime() === new Date(first.startTime).getTime();
+      if (extendsEnd || extendsStart) {
+        return extendsStart ? [slot, ...sorted] : [...sorted, slot];
+      }
+      return [slot];
     });
   }, []);
 

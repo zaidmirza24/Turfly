@@ -144,7 +144,7 @@ export function useSlotMutations({ selectedTurfId, currentTurf, slotsQueryKey, o
     },
     onSuccess: (_data, variables) => {
       const label = STATUS_META[variables.status].label;
-      toast.success(`Marked ${variables.slots.length} hour${variables.slots.length > 1 ? 's' : ''} as ${label}`);
+      toast.success(`Marked ${variables.slots.length} slot${variables.slots.length > 1 ? 's' : ''} as ${label}`);
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['slots-range', selectedTurfId] }),
   });

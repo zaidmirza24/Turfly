@@ -14,18 +14,14 @@ interface SlotSelectorProps {
   onToggle: (slot: TimeSlot) => void;
 }
 
-// Mirrors booking.service.js's MIN_ADVANCE_NOTICE_MS — kept in sync manually
-// since the two run in different codebases.
-const MIN_ADVANCE_NOTICE_MS = 30 * 60 * 1000;
-
 export function SlotSelector({ slots: allSlots, selectedSlotIds, onToggle }: SlotSelectorProps) {
   const now = Date.now();
-  // CLOSED slots are hours the turf isn't operating, and a slot starting
-  // within the minimum-notice window (or one that's already started) can't
-  // be booked (booking.service.js enforces both server-side too — this is
-  // just so a customer never sees either as a selectable option).
+  // CLOSED slots are hours the turf isn't operating, and a slot that's
+  // already started can't be booked (booking.service.js enforces both
+  // server-side too — this is just so a customer never sees either as a
+  // selectable option).
   const slots = allSlots.filter(
-    s => s.status.toUpperCase() !== 'CLOSED' && new Date(s.startTime).getTime() > now + MIN_ADVANCE_NOTICE_MS
+    s => s.status.toUpperCase() !== 'CLOSED' && new Date(s.startTime).getTime() > now
   );
 
   if (slots.length === 0) {

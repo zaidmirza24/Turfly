@@ -9,12 +9,12 @@
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 /**
- * The UTC instant corresponding to `hour:00 IST` on the given "YYYY-MM-DD"
- * calendar date.
+ * The UTC instant corresponding to `hour:minute IST` on the given
+ * "YYYY-MM-DD" calendar date.
  */
-export const istDateTime = (dateStr, hour = 0) => {
+export const istDateTime = (dateStr, hour = 0, minute = 0) => {
   const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d, hour, 0, 0, 0) - IST_OFFSET_MS);
+  return new Date(Date.UTC(y, m - 1, d, hour, minute, 0, 0) - IST_OFFSET_MS);
 };
 
 /**
