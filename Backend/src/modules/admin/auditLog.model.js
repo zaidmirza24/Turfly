@@ -22,6 +22,7 @@ const auditLogSchema = new mongoose.Schema(
         "USER_UNBANNED",
         "BOOKING_CANCELLED",
         "BOOKING_REFUNDED",
+        "BOOKING_PAID_OUT",
       ],
       required: true,
     },

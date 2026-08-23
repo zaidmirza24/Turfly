@@ -3,6 +3,7 @@ import {
   getMe, updateMe, changePassword, deleteMe,
   getFavorites, addFavorite, removeFavorite,
   searchCustomers, createGuestCustomer,
+  updatePayoutDetails,
 } from "./user.controller.js";
 import { protect, authorize } from "../../common/middlewares/auth.js";
 
@@ -12,6 +13,7 @@ router.use(protect);
 
 router.get("/me", getMe);
 router.patch("/me", updateMe);
+router.patch("/me/payout-details", authorize("OWNER"), updatePayoutDetails);
 router.post("/me/change-password", changePassword);
 router.delete("/me", deleteMe);
 

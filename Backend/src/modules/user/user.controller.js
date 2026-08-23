@@ -11,6 +11,11 @@ export const updateMe = async (req, res) => {
   new ApiResponse(200, "Profile updated", user).send(res);
 };
 
+export const updatePayoutDetails = async (req, res) => {
+  const user = await userService.updatePayoutDetails(req.user._id, req.body);
+  new ApiResponse(200, "Payout details updated", user).send(res);
+};
+
 export const changePassword = async (req, res) => {
   await userService.changePassword(req.user._id, req.body.currentPassword, req.body.newPassword);
   new ApiResponse(200, "Password changed successfully", null).send(res);

@@ -76,7 +76,7 @@ export default function AccountSettingsPage() {
         <h2 className="font-semibold">Profile</h2>
         <div className="flex items-center gap-4">
           <Avatar className="h-16 w-16">
-            <AvatarImage src={avatarDraft[0] ? resolveImageUrl(avatarDraft[0]) : undefined} />
+            <AvatarImage src={avatarDraft[0] ? resolveImageUrl(avatarDraft[0], 'card') : undefined} />
             <AvatarFallback className="bg-primary/10 text-primary font-bold text-xl">
               {user.name?.charAt(0).toUpperCase()}
             </AvatarFallback>

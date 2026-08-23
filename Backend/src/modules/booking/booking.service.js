@@ -5,6 +5,7 @@ import Booking from "./booking.model.js";
 import Turf from "../turf/turf.model.js";
 import User from "../user/user.model.js";
 import Payment from "../payment/payment.model.js";
+import Payout from "../payout/payout.model.js";
 import { isTurfBookable } from "../turf/turf.service.js";
 import { logAdminAction } from "../admin/admin.service.js";
 import ApiError from "../../common/utils/ApiError.js";
@@ -528,6 +529,65 @@ export const markBookingRefunded = async (actor, bookingId) => {
 };
 
 /**
+ * Admin-only: settle one booking's owed-to-owner share outside the app (UPI/
+ * bank transfer) and record it. Creates a Payout document covering just this
+ * one booking and flips the booking's payoutStatus PENDING → PAID.
+ *
+ * Restricted to bookings still PENDING — VOID/CLAWBACK_OWED/NONE/already-PAID
+ * are all refused, since none of those represent a real amount currently
+ * owed to the owner. Owners never call this themselves (they'd have every
+ * incentive to mark their own payouts paid without actually being paid).
+ */
+export const markBookingPaidOut = async (adminId, bookingId, { method, note }) => {
+  if (!["UPI", "BANK_TRANSFER", "OTHER"].includes(method)) {
+    throw new ApiError(400, "Payout method must be UPI, BANK_TRANSFER, or OTHER");
+  }
+
+  const booking = await Booking.findById(bookingId);
+  if (!booking) {
+    throw new ApiError(404, "Booking not found");
+  }
+  if (booking.payoutStatus !== "PENDING") {
+    throw new ApiError(400, `This booking has no pending payout to settle (status: ${booking.payoutStatus})`);
+  }
+
+  const turf = await Turf.findById(booking.turfId).select("ownerId");
+  if (!turf) {
+    throw new ApiError(404, "Turf not found");
+  }
+
+  const payout = await Payout.create({
+    ownerId: turf.ownerId,
+    bookingIds: [booking._id],
+    amount: booking.ownerAmount,
+    method,
+    note: note || null,
+    paidBy: adminId,
+  });
+
+  // Atomic claim mirrors the rest of this file's payment-state transitions —
+  // refuses to double-settle a booking that raced to PAID (or was refunded)
+  // between the read above and this write.
+  const settled = await Booking.findOneAndUpdate(
+    { _id: booking._id, payoutStatus: "PENDING" },
+    { payoutStatus: "PAID", payoutId: payout._id, paidOutAt: new Date() },
+    { new: true }
+  );
+  if (!settled) {
+    await Payout.findByIdAndDelete(payout._id);
+    throw new ApiError(409, "This booking's payout was already settled or changed — please refresh");
+  }
+
+  await logAdminAction(adminId, "BOOKING_PAID_OUT", "BOOKING", booking._id, {
+    amount: payout.amount,
+    method,
+    ownerId: String(turf.ownerId),
+  });
+
+  return settled;
+};
+
+/**
  * Create a booking on a customer's behalf (phone/walk-in) from the owner
  * panel. Reuses bookMultipleSlots unchanged for the actual locking/pricing/
  * contiguity logic — a manual booking is not a different booking mechanism,
@@ -616,7 +676,7 @@ export const getBookingsByTurf = async (ownerId, turfId, { page = 1, limit = 20 
  * date range, turf, status — and pagination. Established as the one
  * pagination pattern in this backend: { items, total, page, pages }.
  */
-export const getOwnerBookings = async (ownerId, { page = 1, limit = 20, from, to, turfId, status, paymentStatus, refundStatus } = {}) => {
+export const getOwnerBookings = async (ownerId, { page = 1, limit = 20, from, to, turfId, status, paymentStatus, refundStatus, payoutStatus } = {}) => {
   const turfs = await Turf.find({ ownerId }).select("_id");
   const turfIds = turfs.map((t) => t._id);
 
@@ -629,6 +689,7 @@ export const getOwnerBookings = async (ownerId, { page = 1, limit = 20, from, to
   }
   if (status) query.status = status;
   if (refundStatus) query.refundStatus = refundStatus;
+  if (payoutStatus) query.payoutStatus = payoutStatus;
   if (paymentStatus) {
     const paymentIds = await Payment.find({ status: paymentStatus }).select("_id");
     query.paymentId = { $in: paymentIds.map((p) => p._id) };

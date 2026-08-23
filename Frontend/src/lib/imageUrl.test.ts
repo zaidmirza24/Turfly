@@ -26,12 +26,18 @@ describe('resolveImageUrl', () => {
     expect(resolveImageUrl(null)).toBeUndefined();
     expect(resolveImageUrl('')).toBeUndefined();
   });
+
+  it('appends the requested delivery size so the backend picks the matching ImageKit variant', () => {
+    expect(resolveImageUrl('/api/images/507f1f77bcf86cd799439011', 'card')).toBe(
+      `${API_ORIGIN}/api/images/507f1f77bcf86cd799439011?size=card`
+    );
+  });
 });
 
 describe('turfCoverImage', () => {
-  it('uses the first image as the cover', () => {
+  it('uses the first image as the cover, sized for a card', () => {
     expect(turfCoverImage(['/api/images/507f1f77bcf86cd799439011', '/api/images/507f1f77bcf86cd799439012'])).toBe(
-      `${API_ORIGIN}/api/images/507f1f77bcf86cd799439011`
+      `${API_ORIGIN}/api/images/507f1f77bcf86cd799439011?size=card`
     );
   });
 

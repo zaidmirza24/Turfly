@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Users, MapPin, ClipboardList, UserCircle, History, ChevronLeft } from 'lucide-react';
+import { LayoutDashboard, Users, MapPin, ClipboardList, UserCircle, History, ChevronLeft, Wallet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { UserMenu } from '@/components/UserMenu';
 import { cn } from '@/lib/utils';
@@ -11,6 +11,7 @@ const links = [
   { to: '/admin/users', label: 'Users', icon: Users },
   { to: '/admin/bookings', label: 'Bookings', icon: ClipboardList },
   { to: '/admin/customers', label: 'Customers', icon: UserCircle },
+  { to: '/admin/payouts', label: 'Payouts', icon: Wallet },
   { to: '/admin/activity', label: 'Activity', icon: History },
 ];
 

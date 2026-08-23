@@ -101,6 +101,43 @@ const bookingSchema = new mongoose.Schema(
       enum: ["ONLINE", "CASH", "PENDING"],
       default: "ONLINE",
     },
+    // Commission split (payment.service.js finalizePaymentSuccess), set once
+    // at booking-confirmation time for ONLINE bookings only — a CASH/PENDING
+    // booking never has the platform holding money on the owner's behalf, so
+    // there is nothing to split or pay out. Computed from `amount` and
+    // env.PLATFORM_COMMISSION_RATE at that moment and never recalculated, so
+    // a later rate change can't silently reprice an already-confirmed booking.
+    commissionAmount: {
+      type: Number,
+      default: null,
+    },
+    ownerAmount: {
+      type: Number,
+      default: null,
+    },
+    // NONE: not applicable (CASH/PENDING, or no payment yet). PENDING: owed
+    // to the owner, unpaid. PAID: settled, see payoutId. VOID: booking was
+    // refunded to the customer while still PENDING — the platform never
+    // collected a real commission on this booking, so nothing is owed either
+    // way (full clawback). CLAWBACK_OWED: refunded to the customer *after*
+    // the owner had already been paid out — the owner now owes that amount
+    // back to the platform; there is no automated recovery for this, it's a
+    // flag for admin to reconcile manually.
+    payoutStatus: {
+      type: String,
+      enum: ["NONE", "PENDING", "PAID", "VOID", "CLAWBACK_OWED"],
+      default: "NONE",
+      index: true,
+    },
+    payoutId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Payout",
+      default: null,
+    },
+    paidOutAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true, // createdAt serves as booking time

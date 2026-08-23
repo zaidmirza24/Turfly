@@ -38,6 +38,17 @@ if (NODE_ENV === "production" && !process.env.CORS_ORIGINS) {
   );
 }
 
+// Turf photos are stored on ImageKit, not in MongoDB (see
+// image.model.js/image.service.js) — without these, every upload would fail
+// and every existing listing would render broken images. Unlike
+// Razorpay/Brevo, there's no reduced-functionality mode to fall back to, so
+// this is required whenever the app is meant to actually serve traffic.
+if (NODE_ENV === "production" && (!process.env.IMAGEKIT_PUBLIC_KEY || !process.env.IMAGEKIT_PRIVATE_KEY || !process.env.IMAGEKIT_URL_ENDPOINT)) {
+  throw new Error(
+    "IMAGEKIT_PUBLIC_KEY, IMAGEKIT_PRIVATE_KEY and IMAGEKIT_URL_ENDPOINT must all be set in production — refusing to start with image uploads/delivery broken."
+  );
+}
+
 const env = {
   PORT: process.env.PORT || 5000,
   MONGO_URI: process.env.MONGO_URI || "mongodb://127.0.0.1:27017/turf_booking",
@@ -52,8 +63,18 @@ const env = {
   // debug | info | warn | error | silent. Defaults to info in production,
   // debug elsewhere.
   LOG_LEVEL: process.env.LOG_LEVEL || "",
-  // Max accepted image upload size in bytes (default 2 MB).
-  MAX_IMAGE_BYTES: Number(process.env.MAX_IMAGE_BYTES || 2 * 1024 * 1024),
+  // Max accepted image upload size in bytes (default 10 MB). Masters are
+  // stored on ImageKit, not in MongoDB, so this is no longer bounded by
+  // Mongo's 16 MB document limit — it exists to keep uploads reasonably fast
+  // on mobile networks while still allowing full-quality DSLR/phone photos.
+  MAX_IMAGE_BYTES: Number(process.env.MAX_IMAGE_BYTES || 10 * 1024 * 1024),
+
+  // ── ImageKit (turf photo storage + delivery CDN) ──
+  // Dashboard → Developer options → API keys.
+  IMAGEKIT_PUBLIC_KEY: process.env.IMAGEKIT_PUBLIC_KEY || "",
+  IMAGEKIT_PRIVATE_KEY: process.env.IMAGEKIT_PRIVATE_KEY || "",
+  // Dashboard → Developer options → URL endpoint (e.g. https://ik.imagekit.io/yourid).
+  IMAGEKIT_URL_ENDPOINT: process.env.IMAGEKIT_URL_ENDPOINT || "",
 
   // ── Razorpay ──
   // Server-side only. RAZORPAY_KEY_ID is the one value ever sent to the
@@ -68,6 +89,13 @@ const env = {
   // record atomically, so abandoned checkouts self-heal the same way an
   // abandoned slot hold already does — no scheduler needed.
   PAYMENT_RESERVATION_MINUTES: Number(process.env.PAYMENT_RESERVATION_MINUTES || 10),
+
+  // Flat platform commission taken out of every ONLINE booking's amount, the
+  // rest being owed to the turf's owner (see payment.service.js's commission
+  // split, computed once at booking-confirmation time and never recomputed
+  // later even if this value changes — so a rate change only affects bookings
+  // confirmed after the change, never rewrites history). 0.10 = 10%.
+  PLATFORM_COMMISSION_RATE: Number(process.env.PLATFORM_COMMISSION_RATE ?? 0.1),
 
   // ── Brevo (transactional email) ──
   BREVO_API_KEY: process.env.BREVO_API_KEY || "",
@@ -109,7 +137,13 @@ function logWarnNoCronSecret() {
 if (env.RAZORPAY_KEY_ID && !env.RAZORPAY_KEY_SECRET) {
   throw new Error("RAZORPAY_KEY_SECRET must be set whenever RAZORPAY_KEY_ID is.");
 }
+if (Number.isNaN(env.PLATFORM_COMMISSION_RATE) || env.PLATFORM_COMMISSION_RATE < 0 || env.PLATFORM_COMMISSION_RATE >= 1) {
+  throw new Error("PLATFORM_COMMISSION_RATE must be a number between 0 (inclusive) and 1 (exclusive).");
+}
+
 export const isRazorpayConfigured = () => Boolean(env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET);
 export const isBrevoConfigured = () => Boolean(env.BREVO_API_KEY && env.BREVO_SENDER_EMAIL);
+export const isImageKitConfigured = () =>
+  Boolean(env.IMAGEKIT_PUBLIC_KEY && env.IMAGEKIT_PRIVATE_KEY && env.IMAGEKIT_URL_ENDPOINT);
 
 export default env;

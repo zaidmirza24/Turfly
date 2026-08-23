@@ -24,6 +24,18 @@ export interface User {
   // Set only on a customer an owner created from the panel (phone/walk-in
   // booking) — they have no usable password and can never log in.
   isGuest?: boolean;
+  // Where an admin should send an OWNER's payout — see PayoutDetails below.
+  // Only meaningful for role: OWNER, informational only (nothing moves money
+  // to it automatically).
+  payoutDetails?: PayoutDetails | null;
+}
+
+export interface PayoutDetails {
+  method: 'UPI' | 'BANK';
+  upiId?: string | null;
+  bankAccountHolder?: string | null;
+  bankAccountNumber?: string | null;
+  bankIfsc?: string | null;
 }
 
 export interface Turf {
@@ -110,6 +122,41 @@ export interface Booking {
   // Populated on owner/admin/customer reads when this booking came from a
   // real online payment (null for CASH/manual bookings).
   paymentId?: string | Payment | null;
+  // Commission split (see Backend/src/modules/booking/booking.model.js) — set
+  // only for ONLINE bookings once payment is confirmed. null for CASH/PENDING
+  // bookings, which the platform never held money for.
+  commissionAmount?: number | null;
+  ownerAmount?: number | null;
+  // NONE: n/a. PENDING: owed to the owner. PAID: settled (see payoutId).
+  // VOID: refunded before payout — nothing owed either way. CLAWBACK_OWED:
+  // refunded *after* the owner was already paid — they owe it back (no
+  // automated recovery, admin reconciles manually).
+  payoutStatus?: 'NONE' | 'PENDING' | 'PAID' | 'VOID' | 'CLAWBACK_OWED';
+  payoutId?: string | null;
+  paidOutAt?: string | null;
+}
+
+/** A settled owner payout — see Backend/src/modules/payout/payout.model.js. */
+export interface Payout {
+  _id: string;
+  ownerId: string | Pick<User, '_id' | 'name' | 'email'>;
+  bookingIds: string[];
+  amount: number;
+  method: 'UPI' | 'BANK_TRANSFER' | 'OTHER';
+  note?: string | null;
+  paidBy: string | Pick<User, '_id' | 'name' | 'email'>;
+  createdAt: string;
+}
+
+/** One row of GET /api/admin/payouts/pending — one owner's payable balance. */
+export interface PendingPayoutSummary {
+  ownerId: string;
+  ownerName: string;
+  ownerEmail: string;
+  payoutDetails?: PayoutDetails | null;
+  pendingAmount: number;
+  pendingCount: number;
+  oldestPendingAt: string;
 }
 
 export type PaymentStatus =
@@ -199,6 +246,9 @@ export interface AdminStats {
   totalTurfs: number;
   totalBookings: number;
   totalRevenue: number;
+  totalCommissionEarned: number;
+  totalOwedToOwners: number;
+  totalPaidToOwners: number;
   dailySeries: { date: string; bookings: number; revenue: number }[];
 }
 
@@ -214,7 +264,8 @@ export type AdminAction =
   | 'USER_BANNED'
   | 'USER_UNBANNED'
   | 'BOOKING_CANCELLED'
-  | 'BOOKING_REFUNDED';
+  | 'BOOKING_REFUNDED'
+  | 'BOOKING_PAID_OUT';
 
 /** One row of the admin action audit trail. */
 export interface AuditLogEntry {

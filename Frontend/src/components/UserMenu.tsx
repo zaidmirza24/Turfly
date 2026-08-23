@@ -70,7 +70,7 @@ export function UserMenu({ align = 'end', className }: Props) {
           aria-label={`Account menu for ${user.name}`}
         >
           <Avatar className="h-9 w-9">
-            {user.avatar && <AvatarImage src={resolveImageUrl(user.avatar)} alt="" />}
+            {user.avatar && <AvatarImage src={resolveImageUrl(user.avatar, 'card')} alt="" />}
             <AvatarFallback className="bg-primary/10 text-primary font-bold">
               {user.name?.charAt(0).toUpperCase() || <UserIcon size={16} aria-hidden="true" />}
             </AvatarFallback>

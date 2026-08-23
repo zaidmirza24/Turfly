@@ -125,7 +125,7 @@ export const getTurfBookings = async (req, res) => {
 };
 
 export const getOwnerBookings = async (req, res) => {
-  const { page, limit, from, to, turfId, status, paymentStatus, refundStatus } = req.query;
+  const { page, limit, from, to, turfId, status, paymentStatus, refundStatus, payoutStatus } = req.query;
   const bookings = await bookingService.getOwnerBookings(req.user._id, {
     page: page ? Number(page) : undefined,
     limit: limit ? Number(limit) : undefined,
@@ -135,8 +135,14 @@ export const getOwnerBookings = async (req, res) => {
     status,
     paymentStatus,
     refundStatus,
+    payoutStatus,
   });
   new ApiResponse(200, "Owner bookings fetched successfully", bookings).send(
     res
   );
+};
+
+export const markBookingPaidOut = async (req, res) => {
+  const booking = await bookingService.markBookingPaidOut(req.user._id, req.params.id, req.body);
+  new ApiResponse(200, "Booking payout recorded", booking).send(res);
 };

@@ -127,18 +127,28 @@ production, readable lines in development, filtered by `LOG_LEVEL`.
   land in one stream, joined by the same request id.
 
 ### 7. Image storage
-Uploads are stored as binary in MongoDB (`modules/image/image.model.js`), not
-on disk: every deployment target is serverless, where the filesystem is
-ephemeral. The `data` field is `select: false` so listings never pull binaries.
+Uploads go to **ImageKit** (`modules/image/image.model.js`), not MongoDB and not
+disk: `Image` documents hold only metadata (`fileId`/`filePath`/`url` +
+owner/turf/expiry), never pixel bytes. The master keeps its original quality —
+nothing is permanently downsampled on upload.
+
+Delivery is transformation-based: `GET /api/images/:id?size=card|gallery|full`
+redirects (301, so browsers can skip the hop on repeat views) to a
+server-picked ImageKit transformation URL (`DELIVERY_VARIANTS` in
+`image.service.js`). The size is never a client-supplied width/height — that
+would let anyone force arbitrary billable transforms — only one of three fixed
+presets. `f-auto` in each preset lets ImageKit's edge negotiate AVIF/WebP
+against the browser's `Accept` header.
 
 The format is decided by the file's **magic bytes**, never by the client's
 `Content-Type` or file extension — see `image.validation.js`. SVG is refused on
-purpose: it is a document format that executes script.
+purpose: it is a document format that executes script. That check still runs
+before the buffer is handed to ImageKit.
 
 A turf's `images` array only ever holds our own `/api/images/:id` paths, and
 every write goes through `attachImagesToTurf`, which verifies each id exists
 and belongs to the caller. That is what stops the field becoming a way to point
-the site at arbitrary third-party URLs.
+the site at arbitrary third-party URLs. `MAX_IMAGES_PER_TURF` is 24.
 
 ### 8. Recurring work without a scheduler
 
@@ -159,16 +169,23 @@ on the slot read path, so the act of looking at a schedule is what corrects it.
 A slot nobody is looking at does not need correcting.
 
 **Abandoned image uploads** — a file is stored the moment the owner picks it,
-but the turf is only saved on submit, so an abandoned form leaves a binary
-nothing references. Rather than hunt for those on a timer, every upload is
-written with an `expiresAt` and MongoDB's own TTL monitor removes it. Attaching
-the image to a turf clears the field (a live listing's photo must never vanish);
-removing it from the turf sets it again. The lifetime is a property of the
-document, so it stays correct with no traffic, no process and no configuration.
+but the turf is only saved on submit, so an abandoned form leaves a master
+nothing references. Every upload is written with an `expiresAt`; attaching the
+image to a turf clears the field (a live listing's photo must never vanish),
+removing it from the turf sets it again. This part still needs no traffic, no
+process and no configuration — it's a property of the document.
 
-`npm run images:prune` exists only to backfill documents written before
-`expiresAt` did — a TTL index cannot see a document that has no expiry field.
-It arms them rather than deleting, so nothing loses its grace period.
+Unlike the old Mongo-blob storage, this is the one place that genuinely
+outgrew that pattern: deleting the *master* means calling ImageKit's delete
+API, and a MongoDB TTL index can't make an outbound HTTP call. So
+`pruneOrphanedImages` (`npm run images:prune`, or `POST
+/api/images/jobs/prune-orphans` behind `CRON_SECRET` — same shape as
+`/jobs/send-reminders`) is the only thing that ever deletes an orphan, and it
+has to be invoked on a schedule by something outside this app. It's the
+deliberate exception to "no cron jobs": the two existing timer-free mechanisms
+(atomic expiry checks, request-path correction) only work when correctness can
+be derived from a request that's already happening — there's no request that
+naturally touches an abandoned, never-attached upload.
 
 ---
 
@@ -225,7 +242,7 @@ It arms them rather than deleting, so nothing loses its grace period.
 | Method | Route              | Auth | Role         | Description                                     |
 |--------|--------------------|------|--------------|-------------------------------------------------|
 | POST   | `/api/images`      | ✅   | OWNER        | Multipart, field `image`. Rate limited          |
-| GET    | `/api/images/:id`  | ❌   | —            | Serves the bytes; immutable cache headers       |
+| GET    | `/api/images/:id`  | ❌   | —            | 301 → ImageKit variant. `?size=card\|gallery\|full` |
 | GET    | `/api/images`      | ✅   | OWNER/ADMIN  | Caller's uploads (metadata only)                |
 | DELETE | `/api/images/:id`  | ✅   | OWNER/ADMIN  | Uploader or admin; unlinks it from any turf     |
 
@@ -302,8 +319,8 @@ trigger and is gated on `CRON_SECRET`.
 - **Admin panel** — approval workflow, user ban/unban, platform stats.
 - **Multi-slot checkout** — `/api/bookings/multi`, all-or-nothing with
   compensating rollback, all slots must belong to one turf.
-- **Image upload** — owner uploads, magic-byte validation, MongoDB storage,
-  public serving with immutable cache headers, self-expiring orphan uploads.
+- **Image upload** — owner uploads, magic-byte validation, ImageKit storage +
+  CDN delivery with size-variant transformations, self-expiring orphan uploads.
 - **Structured logging and error tracking** — request-correlated JSON logs on
   the server, a mirrored client logger, a React error boundary, and client
   error reports flowing into the same stream.
@@ -348,8 +365,8 @@ Deliberately **not** built, and why:
   fixed-length per turf, set by the owner: a customer picks one or more
   contiguous hourly slots, not an independent duration.
 - Video in the gallery — image upload is validated by magic bytes and stored
-  as MongoDB binary (2MB cap); that pipeline is deliberately not built for
-  video, which needs real object storage + streaming.
+  on ImageKit (10MB cap); that pipeline is deliberately not built for video,
+  which needs real streaming, not just object storage.
 
 ## Availability, checkout & booking-lifecycle UX (2026-08-21)
 
@@ -417,7 +434,7 @@ same way it already rejected banned ones.
   roles or while an upcoming CONFIRMED booking exists — a customer just
   cancels first, which is always allowed up to 6 hours out.
 - **Avatars and review photos** reuse the existing turf-image upload
-  pipeline (magic-byte validation, MongoDB storage) through two new,
+  pipeline (magic-byte validation, ImageKit storage) through two new,
   deliberately simpler helpers in `image.service.js` — `attachAvatarImage`/
   `attachReviewImages` skip turf.images's cross-document "still used
   elsewhere" check, because an avatar or a review's photos are only ever
@@ -520,12 +537,53 @@ section (kept current as of this pass) — summary here:
   cron-job.org, etc), gated on `CRON_SECRET`.
 
 Deliberately not built in this pass (see the production-readiness doc's
-"Production risks" section for the full list): commission/owner-payout
-split (Razorpay Route), payment-status filter dropdowns in the admin/owner
-list UI (the backend query param exists; the booking detail drawer already
-shows full payment/refund state on click), SMS notifications, Brevo
-template-based sends (raw HTML is generated server-side instead — see
-`email.templates.js`).
+"Production risks" section for the full list): payment-status filter
+dropdowns in the admin/owner list UI (the backend query param exists; the
+booking detail drawer already shows full payment/refund state on click), SMS
+notifications, Brevo template-based sends (raw HTML is generated server-side
+instead — see `email.templates.js`).
+
+### Commission split & owner payout (ledger-only, 2026-08-23)
+
+Every ONLINE booking now carries a commission split, computed once at
+booking-confirmation time (`payment.service.js`'s `computeCommissionSplit`,
+called from `finalizePaymentSuccess`) and stored on the `Booking` itself
+(`commissionAmount`, `ownerAmount`, `payoutStatus`) rather than derived later
+— so a future change to `env.PLATFORM_COMMISSION_RATE` (flat 10% by default)
+never reprices an already-confirmed booking. CASH/PENDING bookings are
+untouched: the platform never held that money, so there's nothing to split.
+
+This is deliberately **ledger-only, not Razorpay Route**: no linked
+sub-accounts, no owner KYC, no automatic transfer at capture time. The
+platform keeps 100% of the customer's payment in its own Razorpay account as
+before; `ownerAmount` is just the amount the platform *owes* the owner. An
+admin settles that debt outside the app (UPI/bank transfer) and then records
+having done so via `PATCH /api/bookings/:id/payout`
+(`booking.service.js`'s `markBookingPaidOut`), which creates a `Payout`
+document and flips that one booking's `payoutStatus` `PENDING → PAID`. This
+was a scoped choice over Razorpay Route/RazorpayX Payouts — see the "Payout
+mechanism" decision point recorded when this was scoped — Route/RazorpayX
+would need real KYC-linked-account onboarding this project doesn't have.
+
+Full clawback on refund (`payment.service.js`'s `finalizeRefundIfComplete`):
+a refunded booking never owes the owner anything and the platform never
+actually keeps a commission on money it gave back. If the booking was still
+`PENDING`, refunding it flips `payoutStatus` to `VOID`. If the owner had
+*already* been paid (`payoutStatus: PAID`) before the refund landed —
+possible since payout settlement and the 6-hour cancellation cutoff aren't
+otherwise linked — it flips to `CLAWBACK_OWED` instead. There's no automated
+recovery for that case; it's a flag surfaced on `GET
+/api/admin/payouts/clawbacks` for an admin to chase down manually.
+
+Owners record where to send their payout (`User.payoutDetails` — UPI id, or
+bank account + IFSC) via `PATCH /api/users/me/payout-details`. This is purely
+informational: nothing in this codebase moves money to it. Admin-facing
+endpoints: `GET /api/admin/payouts/pending` (per-owner payable totals), `GET
+/api/admin/payouts/pending/:ownerId/bookings` (that owner's individual
+pending bookings, each settled independently — one `Payout` document per
+`markBookingPaidOut` call, not batched), `GET /api/admin/payouts/history`.
+`admin.service.js`'s `getStats` also now reports `totalCommissionEarned`,
+`totalOwedToOwners`, `totalPaidToOwners` alongside gross `totalRevenue`.
 
 ### Two bugs found and fixed during live testing (2026-08-23)
 
@@ -561,8 +619,9 @@ not from unit tests against mocks:
 
 - ❌ Password reset (the page says so rather than pretending to send a mail)
 - ❌ Pagination on any list endpoint
-- ❌ Commission/owner-payout split logic (the business model in FEATURES.md
-  calls for a platform cut; no such split is calculated or paid out anywhere)
+- ❌ Owner payout automation (settlement is a ledger + an admin's manual
+  "mark paid" action, not a real money transfer — see "Commission split &
+  owner payout" above; no Razorpay Route/RazorpayX integration)
 - ❌ SMS notifications (email only)
 
 ## Running the Project
@@ -590,7 +649,11 @@ ADMIN_EMAIL=          # used only by npm run seed:admin
 ADMIN_PASSWORD=
 CORS_ORIGINS=         # comma-separated; blank = any origin
 LOG_LEVEL=            # debug|info|warn|error|silent (default: info in prod)
-MAX_IMAGE_BYTES=      # default 2097152 (2 MB)
+MAX_IMAGE_BYTES=      # default 10485760 (10 MB)
+
+IMAGEKIT_PUBLIC_KEY=                 # turf photo storage + CDN — required in production
+IMAGEKIT_PRIVATE_KEY=
+IMAGEKIT_URL_ENDPOINT=               # e.g. https://ik.imagekit.io/yourid
 
 RAZORPAY_KEY_ID=                    # public — the only one of these sent to the browser
 RAZORPAY_KEY_SECRET=                # required in production if RAZORPAY_KEY_ID is set
@@ -606,6 +669,7 @@ FRONTEND_URL=http://localhost:5173  # used to build links inside emails
 SUPPORT_EMAIL=                      # shown in email footers
 BOOKING_REMINDER_HOURS_BEFORE=3
 CRON_SECRET=                        # required to call POST /api/notifications/jobs/send-reminders
+                                     # and POST /api/images/jobs/prune-orphans
 ```
 
 See `Backend/.env.example` for the full annotated version (where to get each

@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { LayoutDashboard, MapPin, Calendar, ClipboardList, Users, ChevronLeft, LogOut } from 'lucide-react';
+import { LayoutDashboard, MapPin, Calendar, ClipboardList, Users, Wallet, ChevronLeft, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
@@ -11,6 +11,7 @@ const links = [
   { to: '/owner/slots', label: 'Slot Management', icon: Calendar },
   { to: '/owner/bookings', label: 'Bookings', icon: ClipboardList },
   { to: '/owner/customers', label: 'Customers', icon: Users },
+  { to: '/owner/payouts', label: 'Payouts', icon: Wallet },
 ];
 
 export default function OwnerLayout() {

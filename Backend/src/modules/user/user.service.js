@@ -40,6 +40,47 @@ export const updateMe = async (userId, data) => {
   return user;
 };
 
+/**
+ * Owner-only: set/update where the admin should send this owner's payouts
+ * (see payout.model.js). Validated shape per method — a UPI id with no
+ * bank fields set, or full bank details with no UPI id — since a
+ * half-filled record would leave the admin unable to actually act on it.
+ */
+export const updatePayoutDetails = async (userId, data) => {
+  const method = data?.method;
+  if (method !== "UPI" && method !== "BANK") {
+    throw new ApiError(400, "Payout method must be UPI or BANK");
+  }
+
+  let payoutDetails;
+  if (method === "UPI") {
+    const upiId = typeof data.upiId === "string" ? data.upiId.trim() : "";
+    if (!/^[\w.\-]{2,256}@[a-zA-Z][\w.\-]{1,64}$/.test(upiId)) {
+      throw new ApiError(400, "A valid UPI id is required (e.g. name@bank)");
+    }
+    payoutDetails = { method, upiId, bankAccountHolder: null, bankAccountNumber: null, bankIfsc: null };
+  } else {
+    const bankAccountHolder = typeof data.bankAccountHolder === "string" ? data.bankAccountHolder.trim() : "";
+    const bankAccountNumber = typeof data.bankAccountNumber === "string" ? data.bankAccountNumber.trim() : "";
+    const bankIfsc = typeof data.bankIfsc === "string" ? data.bankIfsc.trim().toUpperCase() : "";
+    if (!bankAccountHolder) {
+      throw new ApiError(400, "Account holder name is required");
+    }
+    if (!/^[0-9]{6,20}$/.test(bankAccountNumber)) {
+      throw new ApiError(400, "A valid bank account number is required");
+    }
+    if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(bankIfsc)) {
+      throw new ApiError(400, "A valid IFSC code is required");
+    }
+    payoutDetails = { method, upiId: null, bankAccountHolder, bankAccountNumber, bankIfsc };
+  }
+
+  const user = await User.findByIdAndUpdate(userId, { payoutDetails }, { new: true });
+  if (!user) throw new ApiError(404, "User not found");
+  logger.info("Payout details updated", { userId: String(userId), method });
+  return user;
+};
+
 export const changePassword = async (userId, currentPassword, newPassword) => {
   if (typeof newPassword !== "string" || newPassword.length < 6) {
     throw new ApiError(400, "New password must be at least 6 characters");

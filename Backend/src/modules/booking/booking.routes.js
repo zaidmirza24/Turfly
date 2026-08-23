@@ -12,6 +12,7 @@ import {
   getOwnerCustomers,
   getOwnerCustomerDetail,
   getTurfBookings,
+  markBookingPaidOut,
 } from "./booking.controller.js";
 import { protect, authorize } from "../../common/middlewares/auth.js";
 import { rateLimit } from "../../common/middlewares/rateLimit.js";
@@ -83,6 +84,12 @@ router.patch("/:id/cancel", protect, authorize("OWNER", "ADMIN"), cancelBookingA
 
 // PATCH /api/bookings/:id/refund — owner/admin marks a cancelled booking refunded
 router.patch("/:id/refund", protect, authorize("OWNER", "ADMIN"), markBookingRefunded);
+
+// PATCH /api/bookings/:id/payout — admin records having paid the owner their
+// share of this booking outside the app. Admin-only, deliberately not
+// reachable by OWNER — an owner marking their own payout paid would have
+// every incentive to do so without actually being paid.
+router.patch("/:id/payout", protect, authorize("ADMIN"), markBookingPaidOut);
 
 // GET /api/bookings/turf/:turfId — owner views bookings for their turf
 router.get(

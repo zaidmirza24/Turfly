@@ -1,6 +1,25 @@
 # TURF Project Progress Report
 
-## Current Status: Real payments (Razorpay) + transactional email (Brevo) integrated
+## Current Status: Commission split + ledger-based owner payouts
+**Date:** 2026-08-23
+
+Every ONLINE booking now splits into a platform commission (flat 10%,
+`env.PLATFORM_COMMISSION_RATE`) and an owner share, computed once at
+booking-confirmation time and stored on the booking. This is a bookkeeping
+ledger, not Razorpay Route — the platform still holds 100% of the money;
+settling an owner's payable balance is a manual admin action (send the
+money outside the app, then click "Mark Paid") recorded via `Payout`
+documents. A refund fully claws back the split (nothing owed either way);
+if the owner had already been paid before the refund landed, it's flagged
+`CLAWBACK_OWED` for the admin to chase down manually — no automated recovery.
+Owners record UPI/bank payout details on their profile (informational only).
+New UI: Owner → Payouts (pending balance, payout details form), Admin →
+Payouts (per-owner pending settlement, clawback list, payout history). See
+`ai-context.md`'s "Commission split & owner payout" section for the full
+design and the decisions made when this was scoped (ledger vs. Razorpay
+Route, flat vs. per-turf rate, refund clawback policy).
+
+## Previous milestone: Real payments (Razorpay) + transactional email (Brevo) integrated
 **Date:** 2026-08-23
 
 Checkout is no longer simulated. Real money moves through Razorpay Standard
@@ -25,7 +44,8 @@ success/failure, cancellation, and refund. See `ai-context.md`'s "Payment
 - Two real bugs found and fixed during live testing (a slot re-lock
   collision, and a Mongo sparse-index gotcha on `Payment.razorpayOrderId`) —
   see `ai-context.md` for details.
-- Not yet done: commission/owner-payout split, SMS notifications, payment
+- Not yet done as of this milestone (commission/owner-payout split has since
+  shipped — see the current-status entry above): SMS notifications, payment
   filter dropdowns in the admin/owner UI (data is already there, just no
   dropdown yet).
 

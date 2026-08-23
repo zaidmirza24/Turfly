@@ -38,6 +38,7 @@ const ManageTurfsPage = lazy(() => import("@/pages/owner/ManageTurfsPage"));
 const SlotManagementPage = lazy(() => import("@/pages/owner/SlotManagementPage"));
 const OwnerBookingsPage = lazy(() => import("@/pages/owner/OwnerBookingsPage"));
 const OwnerCustomersPage = lazy(() => import("@/pages/owner/OwnerCustomersPage"));
+const OwnerPayoutsPage = lazy(() => import("@/pages/owner/OwnerPayoutsPage"));
 const AdminLayout = lazy(() => import("@/pages/admin/AdminLayout"));
 const AdminDashboardPage = lazy(() => import("@/pages/admin/AdminDashboardPage"));
 const AdminUsersPage = lazy(() => import("@/pages/admin/AdminUsersPage"));
@@ -45,6 +46,7 @@ const AdminTurfsPage = lazy(() => import("@/pages/admin/AdminTurfsPage"));
 const AdminBookingsPage = lazy(() => import("@/pages/admin/AdminBookingsPage"));
 const AdminCustomersPage = lazy(() => import("@/pages/admin/AdminCustomersPage"));
 const AdminActivityPage = lazy(() => import("@/pages/admin/AdminActivityPage"));
+const AdminPayoutsPage = lazy(() => import("@/pages/admin/AdminPayoutsPage"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -110,6 +112,7 @@ const App = () => (
                     <Route path="slots" element={<SlotManagementPage />} />
                     <Route path="bookings" element={<OwnerBookingsPage />} />
                     <Route path="customers" element={<OwnerCustomersPage />} />
+                    <Route path="payouts" element={<OwnerPayoutsPage />} />
                   </Route>
                   <Route path="/admin" element={<RequireRole roles={["ADMIN"]}><ErrorBoundary boundary="admin"><AdminLayout /></ErrorBoundary></RequireRole>}>
                     <Route index element={<AdminDashboardPage />} />
@@ -117,6 +120,7 @@ const App = () => (
                     <Route path="turfs" element={<AdminTurfsPage />} />
                     <Route path="bookings" element={<AdminBookingsPage />} />
                     <Route path="customers" element={<AdminCustomersPage />} />
+                    <Route path="payouts" element={<AdminPayoutsPage />} />
                     <Route path="activity" element={<AdminActivityPage />} />
                   </Route>
                   <Route path="*" element={<PlayerLayout><NotFound /></PlayerLayout>} />

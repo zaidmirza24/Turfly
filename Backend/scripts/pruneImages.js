@@ -6,29 +6,25 @@ import { pruneOrphanedImages } from "../src/modules/image/image.service.js";
 /**
  * Manual sweep for unattached image uploads.
  *
- * Routine cleanup needs nothing run: every upload is stored with an
- * `expiresAt`, and MongoDB's TTL monitor removes it if it is never attached to
- * a turf (see src/modules/image/image.model.js).
+ * Every upload is stored with an `expiresAt`; deleting the master also means
+ * calling ImageKit's delete API, which nothing but this sweep (or the
+ * equivalent POST /api/images/jobs/prune-orphans endpoint) ever does — there
+ * is no MongoDB TTL index doing this in the background (see
+ * src/modules/image/image.model.js for why).
  *
- * This command exists for the gap a TTL index can't close on its own —
- * documents written before `expiresAt` existed carry no expiry, so the TTL
- * monitor will never consider them. Running this once after deploying arms
- * them; after that there is nothing to schedule.
- *
- * It sets an expiry rather than deleting, so anything it touches still gets
- * the full grace period and an owner mid-upload can't lose a file to it.
+ * Run this on a schedule (e.g. via the same external cron that triggers
+ * booking reminders) — each run arms expiry on newly-old orphans and purges
+ * (ImageKit delete + Mongo delete) any whose expiry has already passed.
+ * Idempotent: safe to run more often than needed.
  *
  *   npm run images:prune
  */
 const run = async () => {
   await connectDB();
 
-  const armed = await pruneOrphanedImages();
+  const { armed, purged } = await pruneOrphanedImages();
 
-  logger.info("Image prune complete", {
-    armed,
-    note: armed > 0 ? "these will be removed by MongoDB's TTL monitor once their expiry passes" : "nothing to do",
-  });
+  logger.info("Image prune complete", { armed, purged });
 
   await mongoose.disconnect();
   process.exit(0);

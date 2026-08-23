@@ -11,6 +11,10 @@ import {
   getAllCustomers,
   getCustomerDetail,
   getAuditLog,
+  getPendingPayouts,
+  getPendingPayoutBookingsForOwner,
+  getClawbacksOwed,
+  getPayoutHistory,
 } from "./admin.controller.js";
 import { protect, authorize } from "../../common/middlewares/auth.js";
 
@@ -34,5 +38,10 @@ router.get("/customers", getAllCustomers);
 router.get("/customers/:userId", getCustomerDetail);
 
 router.get("/audit-log", getAuditLog);
+
+router.get("/payouts/pending", getPendingPayouts);
+router.get("/payouts/pending/:ownerId/bookings", getPendingPayoutBookingsForOwner);
+router.get("/payouts/clawbacks", getClawbacksOwed);
+router.get("/payouts/history", getPayoutHistory);
 
 export default router;

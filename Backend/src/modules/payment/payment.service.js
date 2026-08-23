@@ -23,6 +23,19 @@ const RESERVATION_MS = env.PAYMENT_RESERVATION_MINUTES * 60 * 1000;
 const log = logger.child({ module: "payment" });
 
 /**
+ * Commission split for one ONLINE booking's `amount`, computed once at
+ * booking-confirmation time (below) and stored on the Booking rather than
+ * derived later, so a future PLATFORM_COMMISSION_RATE change never silently
+ * reprices an already-confirmed booking. Rounded to paise (2dp) since amount
+ * is rupees throughout this codebase.
+ */
+const computeCommissionSplit = (amount) => {
+  const commissionAmount = Math.round(amount * env.PLATFORM_COMMISSION_RATE * 100) / 100;
+  const ownerAmount = Math.round((amount - commissionAmount) * 100) / 100;
+  return { commissionAmount, ownerAmount };
+};
+
+/**
  * Extends the slot lock(s) this payment covers to the (longer) payment
  * reservation window, atomically and only if still held by this user. If any
  * slot has already slipped out of this user's hold — someone else's checkout
@@ -285,7 +298,14 @@ export const finalizePaymentSuccess = async ({ paymentDoc, razorpayOrderId, razo
   try {
     for (const slotId of claimed.slotIds) {
       const booking = await confirmSlot(claimed.userId, slotId, groupId);
-      await Booking.findByIdAndUpdate(booking._id, { paymentId: claimed._id, paymentMethod: "ONLINE" });
+      const { commissionAmount, ownerAmount } = computeCommissionSplit(booking.amount);
+      await Booking.findByIdAndUpdate(booking._id, {
+        paymentId: claimed._id,
+        paymentMethod: "ONLINE",
+        commissionAmount,
+        ownerAmount,
+        payoutStatus: "PENDING",
+      });
       createdBookings.push(booking);
     }
   } catch (err) {
@@ -648,6 +668,17 @@ const finalizeRefundIfComplete = async (payment, refundEntity) => {
   if (refundedBooking) {
     refundedBooking.refundStatus = "REFUNDED";
     refundedBooking.refundAmount = (refundedBooking.refundAmount || 0) + toRupees(refundEntity.amount);
+    // Full clawback: a refunded booking never owes the owner anything, and
+    // the platform never actually keeps a commission on money it gave back.
+    // If the owner had already been paid out for this booking (payoutStatus
+    // PAID), that payout now needs to be recovered from the owner outside
+    // this system — CLAWBACK_OWED just flags it for admin, nothing here
+    // reverses the payout automatically.
+    if (refundedBooking.payoutStatus === "PENDING") {
+      refundedBooking.payoutStatus = "VOID";
+    } else if (refundedBooking.payoutStatus === "PAID") {
+      refundedBooking.payoutStatus = "CLAWBACK_OWED";
+    }
     await refundedBooking.save();
     await emailService.sendRefundCompleted(refundedBooking, payment, refundEntity.id).catch((e) =>
       log.error("Failed to send refund-completed email", { err: e, bookingId: refundedBooking._id })

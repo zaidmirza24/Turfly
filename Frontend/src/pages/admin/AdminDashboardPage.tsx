@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { apiGet } from '@/lib/api';
-import { Users, MapPin, CalendarDays, DollarSign, Activity, ArrowRight } from 'lucide-react';
+import { Users, MapPin, CalendarDays, DollarSign, Activity, ArrowRight, Percent, Wallet } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { motion } from 'framer-motion';
 import { AdminStats, AuditLogEntry, Paginated } from '@/types';
@@ -34,6 +34,8 @@ export default function AdminDashboardPage() {
     { label: 'Total Turfs', value: stats?.totalTurfs ?? 0, icon: MapPin, color: 'from-primary/20 to-primary/5 text-primary' },
     { label: 'Total Bookings', value: stats?.totalBookings ?? 0, icon: CalendarDays, color: 'from-amber-500/20 to-amber-500/5 text-amber-500' },
     { label: 'Total Revenue', value: `₹${(stats?.totalRevenue ?? 0).toLocaleString('en-IN')}`, icon: DollarSign, color: 'from-success/20 to-success/5 text-success' },
+    { label: 'Commission Earned', value: `₹${(stats?.totalCommissionEarned ?? 0).toLocaleString('en-IN')}`, icon: Percent, color: 'from-primary/20 to-primary/5 text-primary' },
+    { label: 'Owed to Owners', value: `₹${(stats?.totalOwedToOwners ?? 0).toLocaleString('en-IN')}`, icon: Wallet, color: 'from-warning/20 to-warning/5 text-warning' },
   ];
 
   if (isLoading) {

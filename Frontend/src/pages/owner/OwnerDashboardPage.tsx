@@ -35,7 +35,15 @@ export default function OwnerDashboard() {
   const bookings = bookingsResponse?.data?.items ?? [];
 
   const confirmed = bookings.filter(b => b.status === 'CONFIRMED');
-  const revenue = confirmed.reduce((sum, b) => sum + (b.amount || 0), 0);
+  // Net of the platform's commission for ONLINE bookings (what the owner
+  // actually receives), full amount for CASH/PENDING ones (the owner
+  // collected that themselves — the platform never held it). Bookings
+  // confirmed before the commission-split rollout have no ownerAmount set;
+  // treat those as pre-commission, full-amount, same as CASH.
+  const revenue = confirmed.reduce((sum, b) => {
+    if (b.paymentMethod === 'ONLINE' && b.ownerAmount != null) return sum + b.ownerAmount;
+    return sum + (b.amount || 0);
+  }, 0);
 
   const now = Date.now();
   const upcoming = confirmed.filter(b => {
@@ -56,9 +64,9 @@ export default function OwnerDashboard() {
       color: 'from-blue-500/15 to-blue-600/15 text-blue-600',
     },
     {
-      label: 'Revenue',
+      label: 'Your Earnings',
       value: `₹${revenue.toLocaleString('en-IN')}`,
-      caption: 'From confirmed bookings',
+      caption: 'Net of platform commission',
       icon: DollarSign,
       color: 'from-success/15 to-success/25 text-success',
     },
@@ -96,7 +104,8 @@ export default function OwnerDashboard() {
         if (b.status !== 'CONFIRMED') return sum;
         const start = bookingStartTime(b);
         if (!start || toISTDateKey(start) !== key) return sum;
-        return sum + (b.amount || 0);
+        const net = b.paymentMethod === 'ONLINE' && b.ownerAmount != null ? b.ownerAmount : (b.amount || 0);
+        return sum + net;
       }, 0);
       return { date: label, revenue: revenueForDay };
     });

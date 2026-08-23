@@ -49,7 +49,7 @@ export const setUserBanned = async (req, res) => {
 };
 
 export const getAllBookings = async (req, res) => {
-  const { page, limit, from, to, turfId, status, paymentStatus, refundStatus } = req.query;
+  const { page, limit, from, to, turfId, status, paymentStatus, refundStatus, payoutStatus } = req.query;
   const bookings = await adminService.getAllBookingsForAdmin({
     page: page ? Number(page) : undefined,
     limit: limit ? Number(limit) : undefined,
@@ -59,8 +59,33 @@ export const getAllBookings = async (req, res) => {
     status,
     paymentStatus,
     refundStatus,
+    payoutStatus,
   });
   new ApiResponse(200, "Bookings fetched successfully", bookings).send(res);
+};
+
+export const getPendingPayouts = async (_req, res) => {
+  const payouts = await adminService.getPendingPayoutsSummary();
+  new ApiResponse(200, "Pending payouts fetched successfully", payouts).send(res);
+};
+
+export const getPendingPayoutBookingsForOwner = async (req, res) => {
+  const bookings = await adminService.getPendingPayoutBookingsForOwner(req.params.ownerId);
+  new ApiResponse(200, "Pending payout bookings fetched successfully", bookings).send(res);
+};
+
+export const getClawbacksOwed = async (_req, res) => {
+  const bookings = await adminService.getClawbacksOwed();
+  new ApiResponse(200, "Clawbacks fetched successfully", bookings).send(res);
+};
+
+export const getPayoutHistory = async (req, res) => {
+  const { page, limit } = req.query;
+  const history = await adminService.getPayoutHistory({
+    page: page ? Number(page) : undefined,
+    limit: limit ? Number(limit) : undefined,
+  });
+  new ApiResponse(200, "Payout history fetched successfully", history).send(res);
 };
 
 export const getAllCustomers = async (req, res) => {

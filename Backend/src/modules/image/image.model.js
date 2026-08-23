@@ -1,34 +1,42 @@
 import mongoose from "mongoose";
 
 /**
- * Uploaded image binary.
+ * Metadata for an uploaded image whose bytes live on ImageKit.
  *
- * Stored in MongoDB rather than on disk because every deployment target here
- * is serverless (Vercel), where the filesystem is ephemeral and read-only
- * outside /tmp — a file written during one request is gone by the next. Using
- * the database that is already provisioned also avoids adding an object-store
- * dependency and a second set of credentials to operate.
- *
- * The trade-off is deliberate and bounded: uploads are capped well below
- * MongoDB's 16 MB per-document limit, and `data` is `select: false` so a
- * listing query never drags binaries into memory. If image volume ever
- * outgrows this, the swap is confined to image.service.js — every consumer
- * only ever sees the `/api/images/:id` URL.
+ * The master file is stored at full quality on ImageKit; nothing here ever
+ * holds pixel data. Every consumer renders a *transformed* variant built at
+ * request time (see image.controller.js / image.service.js buildDeliveryUrl)
+ * so a card thumbnail, a gallery image and a fullscreen view all come from
+ * the same untouched original — re-cropping or re-encoding for a new layout
+ * never requires a re-upload.
  */
 const imageSchema = new mongoose.Schema(
   {
-    data: {
-      type: Buffer,
+    /** ImageKit's internal file id — needed to delete the master later. */
+    fileId: {
+      type: String,
       required: true,
-      // Never returned unless explicitly asked for. Without this, any populate
-      // or find() on this collection would pull megabytes of binary per row.
-      select: false,
+    },
+    /**
+     * Path within the ImageKit media library (e.g. "/turf-app/<ownerId>/xyz.jpg").
+     * Combined with IMAGEKIT_URL_ENDPOINT + a transformation string to build
+     * the URL an <img> tag actually loads.
+     */
+    filePath: {
+      type: String,
+      required: true,
+    },
+    /** ImageKit's own delivery URL for the untransformed master. */
+    url: {
+      type: String,
+      required: true,
     },
     contentType: {
       type: String,
       required: true,
       enum: ["image/jpeg", "image/png", "image/webp"],
     },
+    /** Original upload size in bytes (the master, not any transformed variant). */
     size: {
       type: Number,
       required: true,
@@ -58,29 +66,26 @@ const imageSchema = new mongoose.Schema(
      *
      * An upload happens the moment the owner picks a file, but the turf is only
      * saved when they submit the form — so every abandoned dialog leaves a
-     * stored binary that nothing references. Rather than schedule a job to hunt
+     * stored file that nothing references. Rather than schedule a job to hunt
      * for them, each upload arrives already carrying its own expiry, and the
      * expiry is removed the moment the image is attached to a turf (see
-     * armExpiry/disarmExpiry in image.service.js).
+     * attachImagesToTurf/rearmDetachedImages in image.service.js).
      *
-     * The TTL index below is what enforces it. MongoDB's own background monitor
-     * removes expired documents roughly once a minute, with no cron entry, no
-     * HTTP endpoint to secure, and no dependence on the app receiving traffic.
-     * A document whose `expiresAt` is unset is simply never considered — which
-     * is exactly the "attached images live forever" rule we want.
+     * Unlike the old Mongo-blob storage, deleting the *master* also means
+     * calling ImageKit's delete API — something a MongoDB TTL index can't do
+     * on its own. So this field is a marker only: the actual purge (ImageKit
+     * delete + Mongo delete) runs from pruneOrphanedImages, invoked by the
+     * `images:prune` script or the protected /api/images/jobs/prune-orphans
+     * endpoint, the same external-cron pattern used for booking reminders.
      */
     expiresAt: {
       type: Date,
       default: null,
+      index: true,
     },
   },
   { timestamps: true }
 );
-
-// expireAfterSeconds: 0 means "delete when `expiresAt` is reached" (rather than
-// N seconds after it). Documents missing the field, or holding null, are
-// ignored by the TTL monitor entirely.
-imageSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 const Image = mongoose.model("Image", imageSchema);
 export default Image;

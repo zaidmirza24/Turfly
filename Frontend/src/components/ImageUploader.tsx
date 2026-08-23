@@ -10,11 +10,11 @@ import logger from '@/lib/logger';
 const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const ACCEPTED_LABEL = 'JPEG, PNG or WebP';
 
-/** Must match MAX_IMAGE_BYTES on the server (default 2 MB). */
-const MAX_BYTES = 2 * 1024 * 1024;
+/** Must match MAX_IMAGE_BYTES on the server (default 10 MB). */
+const MAX_BYTES = 10 * 1024 * 1024;
 
 /** Must match MAX_IMAGES_PER_TURF in image.service.js. */
-export const MAX_IMAGES = 6;
+export const MAX_IMAGES = 24;
 
 interface UploadedImage {
   _id: string;
@@ -174,7 +174,7 @@ export function ImageUploader({ value, onChange, max = MAX_IMAGES, disabled }: P
             {value.map((url, index) => (
               <li key={url} className="relative group aspect-video rounded-lg overflow-hidden border bg-muted">
                 <img
-                  src={resolveImageUrl(url)}
+                  src={resolveImageUrl(url, 'card')}
                   alt={index === 0 ? 'Cover photo' : `Photo ${index + 1}`}
                   className="w-full h-full object-cover"
                   loading="lazy"

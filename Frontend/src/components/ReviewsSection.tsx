@@ -226,7 +226,7 @@ export function ReviewsSection({ turfId, isOwnerOfTurf }: { turfId: string; isOw
                 {(r.images ?? []).length > 0 && (
                   <div className="flex gap-2 mt-2 overflow-x-auto">
                     {r.images!.map(img => (
-                      <img key={img} src={resolveImageUrl(img)} alt="Review photo" className="w-20 h-20 rounded-lg object-cover shrink-0" loading="lazy" />
+                      <img key={img} src={resolveImageUrl(img, 'card')} alt="Review photo" className="w-20 h-20 rounded-lg object-cover shrink-0" loading="lazy" />
                     ))}
                   </div>
                 )}

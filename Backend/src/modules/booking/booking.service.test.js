@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("./booking.model.js", () => ({
-  default: { create: vi.fn(), findById: vi.fn() },
+  default: { create: vi.fn(), findById: vi.fn(), findOneAndUpdate: vi.fn() },
+}));
+vi.mock("../payout/payout.model.js", () => ({
+  default: { create: vi.fn(), findByIdAndDelete: vi.fn() },
 }));
 vi.mock("../slot/slot.model.js", () => ({
   default: {
@@ -29,11 +32,13 @@ const {
   cancelBookingAsOwner,
   markBookingRefunded,
   createManualBooking,
+  markBookingPaidOut,
 } = await import("./booking.service.js");
 const Slot = (await import("../slot/slot.model.js")).default;
 const Turf = (await import("../turf/turf.model.js")).default;
 const Booking = (await import("./booking.model.js")).default;
 const User = (await import("../user/user.model.js")).default;
+const Payout = (await import("../payout/payout.model.js")).default;
 const { isTurfBookable } = await import("../turf/turf.service.js");
 
 const withSelect = (value) => ({ select: vi.fn().mockReturnValue({ lean: vi.fn().mockResolvedValue(value) }) });
@@ -337,5 +342,66 @@ describe("createManualBooking", () => {
       createManualBooking("owner1", { turfId: "turf1", customerId: "not-an-object-id", slotIds: ["slot1"] })
     ).rejects.toMatchObject({ statusCode: 400 });
     expect(Turf.findById).not.toHaveBeenCalled();
+  });
+});
+
+describe("markBookingPaidOut (admin settles an owner's pending commission-split payout)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("rejects an invalid method before touching the database", async () => {
+    await expect(
+      markBookingPaidOut("admin1", "booking1", { method: "CRYPTO" })
+    ).rejects.toMatchObject({ statusCode: 400 });
+    expect(Booking.findById).not.toHaveBeenCalled();
+  });
+
+  it("rejects a booking with no pending payout (already PAID, VOID, or never PENDING)", async () => {
+    Booking.findById.mockResolvedValue({ _id: "booking1", payoutStatus: "PAID" });
+    await expect(
+      markBookingPaidOut("admin1", "booking1", { method: "UPI" })
+    ).rejects.toMatchObject({ statusCode: 400 });
+    expect(Payout.create).not.toHaveBeenCalled();
+  });
+
+  it("creates a Payout and flips the booking PENDING -> PAID on the happy path", async () => {
+    Booking.findById.mockResolvedValue({
+      _id: "booking1",
+      turfId: "turf1",
+      payoutStatus: "PENDING",
+      ownerAmount: 450,
+    });
+    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: "owner1" }));
+    Payout.create.mockResolvedValue({ _id: "payout1", amount: 450, ownerId: "owner1" });
+    Booking.findOneAndUpdate.mockResolvedValue({ _id: "booking1", payoutStatus: "PAID", payoutId: "payout1" });
+
+    const result = await markBookingPaidOut("admin1", "booking1", { method: "UPI", note: "utr-123" });
+
+    expect(Payout.create).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerId: "owner1", bookingIds: ["booking1"], amount: 450, method: "UPI", note: "utr-123", paidBy: "admin1" })
+    );
+    expect(Booking.findOneAndUpdate).toHaveBeenCalledWith(
+      { _id: "booking1", payoutStatus: "PENDING" },
+      expect.objectContaining({ payoutStatus: "PAID", payoutId: "payout1" }),
+      { new: true }
+    );
+    expect(result).toMatchObject({ payoutStatus: "PAID" });
+  });
+
+  it("rolls back the just-created Payout if a concurrent settlement wins the atomic claim first", async () => {
+    Booking.findById.mockResolvedValue({
+      _id: "booking1",
+      turfId: "turf1",
+      payoutStatus: "PENDING",
+      ownerAmount: 450,
+    });
+    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: "owner1" }));
+    Payout.create.mockResolvedValue({ _id: "payout1", amount: 450, ownerId: "owner1" });
+    Booking.findOneAndUpdate.mockResolvedValue(null); // lost the race
+
+    await expect(
+      markBookingPaidOut("admin1", "booking1", { method: "UPI" })
+    ).rejects.toMatchObject({ statusCode: 409 });
+
+    expect(Payout.findByIdAndDelete).toHaveBeenCalledWith("payout1");
   });
 });

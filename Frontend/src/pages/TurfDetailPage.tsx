@@ -142,7 +142,10 @@ export default function TurfDetailPage() {
 
   const sports = turf.sportsType || [];
   const images = turf.images?.length
-    ? turf.images.map(url => resolveImageUrl(url) as string)
+    ? turf.images.map(url => resolveImageUrl(url, 'gallery') as string)
+    : [TURF_PLACEHOLDER_IMAGE];
+  const thumbnails = turf.images?.length
+    ? turf.images.map(url => resolveImageUrl(url, 'card') as string)
     : [TURF_PLACEHOLDER_IMAGE];
   const pricePerHour = startingPricePerHour(turf);
   const isFavorite = favoriteIds.has(turf._id);
@@ -202,16 +205,16 @@ export default function TurfDetailPage() {
         {/* The thumbnail strip is pointless with a single photo. */}
         {images.length > 1 && (
           <div className="grid grid-cols-4 md:grid-cols-1 gap-3">
-            {images.slice(0, 4).map((img, i) => (
+            {thumbnails.slice(0, 4).map((thumb, i) => (
               <button
-                key={img}
+                key={thumb}
                 type="button"
                 onClick={() => setSelectedImage(i)}
                 aria-label={`Show photo ${i + 1}`}
                 aria-current={i === selectedImage}
                 className={cn('rounded-2xl overflow-hidden border-4 transition-all aspect-video shadow-md bg-muted',
                   i === selectedImage ? 'border-primary' : 'border-transparent opacity-60 hover:opacity-100 hover:scale-105')}>
-                <img src={img} alt="" className="w-full h-full object-cover" loading="lazy" />
+                <img src={thumb} alt="" className="w-full h-full object-cover" loading="lazy" />
               </button>
             ))}
           </div>

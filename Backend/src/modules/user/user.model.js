@@ -72,6 +72,21 @@ const userSchema = new mongoose.Schema(
       ref: "User",
       default: null,
     },
+    // Where an admin should send an OWNER's payout (see payout.model.js).
+    // Purely informational — nothing in this codebase moves money to it
+    // automatically; it exists so the admin settling a payout knows where to
+    // actually send it instead of coordinating out-of-band. Only meaningful
+    // for role: OWNER.
+    payoutDetails: {
+      type: {
+        method: { type: String, enum: ["UPI", "BANK"], required: true },
+        upiId: { type: String, default: null, trim: true },
+        bankAccountHolder: { type: String, default: null, trim: true },
+        bankAccountNumber: { type: String, default: null, trim: true },
+        bankIfsc: { type: String, default: null, trim: true, uppercase: true },
+      },
+      default: null,
+    },
   },
   {
     timestamps: true, // createdAt + updatedAt

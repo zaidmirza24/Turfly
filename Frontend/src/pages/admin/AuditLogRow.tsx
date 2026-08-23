@@ -1,4 +1,4 @@
-import { CheckCircle2, XCircle, Ban, ShieldCheck, CalendarX, RotateCcw } from 'lucide-react';
+import { CheckCircle2, XCircle, Ban, ShieldCheck, CalendarX, RotateCcw, Wallet } from 'lucide-react';
 import { AuditLogEntry } from '@/types';
 
 const ACTION_META: Record<AuditLogEntry['action'], { label: string; icon: typeof CheckCircle2; color: string }> = {
@@ -8,6 +8,7 @@ const ACTION_META: Record<AuditLogEntry['action'], { label: string; icon: typeof
   USER_UNBANNED: { label: 'unbanned a user', icon: ShieldCheck, color: 'text-success bg-success/10' },
   BOOKING_CANCELLED: { label: 'cancelled a booking', icon: CalendarX, color: 'text-destructive bg-destructive/10' },
   BOOKING_REFUNDED: { label: 'marked a booking refunded', icon: RotateCcw, color: 'text-primary bg-primary/10' },
+  BOOKING_PAID_OUT: { label: 'settled an owner payout', icon: Wallet, color: 'text-success bg-success/10' },
 };
 
 function adminName(entry: AuditLogEntry) {

@@ -3,6 +3,7 @@ import Turf from "../turf/turf.model.js";
 import Booking from "../booking/booking.model.js";
 import Slot from "../slot/slot.model.js";
 import Payment from "../payment/payment.model.js";
+import Payout from "../payout/payout.model.js";
 import AuditLog from "./auditLog.model.js";
 import ApiError from "../../common/utils/ApiError.js";
 import logger from "../../common/utils/logger.js";
@@ -32,13 +33,28 @@ export const getStats = async () => {
   seriesStart.setHours(0, 0, 0, 0);
   seriesStart.setDate(seriesStart.getDate() - 13);
 
-  const [totalUsers, totalTurfs, totalBookings, revenueAgg, dailySeriesRaw] = await Promise.all([
+  const [totalUsers, totalTurfs, totalBookings, revenueAgg, commissionAgg, payableAgg, paidOutAgg, dailySeriesRaw] = await Promise.all([
     User.countDocuments(),
     Turf.countDocuments(),
     Booking.countDocuments(),
     Booking.aggregate([
       { $match: { status: "CONFIRMED" } },
       { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]),
+    // Commission actually earned by the platform — ONLINE bookings only,
+    // since CASH/PENDING bookings never had the platform holding the money
+    // (see booking.model.js's payoutStatus doc comment).
+    Booking.aggregate([
+      { $match: { status: "CONFIRMED", paymentMethod: "ONLINE" } },
+      { $group: { _id: null, total: { $sum: "$commissionAmount" } } },
+    ]),
+    Booking.aggregate([
+      { $match: { payoutStatus: "PENDING" } },
+      { $group: { _id: null, total: { $sum: "$ownerAmount" } } },
+    ]),
+    Booking.aggregate([
+      { $match: { payoutStatus: "PAID" } },
+      { $group: { _id: null, total: { $sum: "$ownerAmount" } } },
     ]),
     Booking.aggregate([
       { $match: { createdAt: { $gte: seriesStart } } },
@@ -69,6 +85,9 @@ export const getStats = async () => {
     totalTurfs,
     totalBookings,
     totalRevenue: revenueAgg[0]?.total || 0,
+    totalCommissionEarned: commissionAgg[0]?.total || 0,
+    totalOwedToOwners: payableAgg[0]?.total || 0,
+    totalPaidToOwners: paidOutAgg[0]?.total || 0,
     dailySeries,
   };
 };
@@ -188,11 +207,12 @@ export const setUserBanned = async (adminId, userId, isBanned) => {
  * refunded. Booking has no Payment.status of its own to query directly, so a
  * paymentStatus filter is resolved as a Payment lookup first.
  */
-export const getAllBookingsForAdmin = async ({ page = 1, limit = 20, from, to, turfId, status, paymentStatus, refundStatus } = {}) => {
+export const getAllBookingsForAdmin = async ({ page = 1, limit = 20, from, to, turfId, status, paymentStatus, refundStatus, payoutStatus } = {}) => {
   const query = {};
   if (turfId) query.turfId = turfId;
   if (status) query.status = status;
   if (refundStatus) query.refundStatus = refundStatus;
+  if (payoutStatus) query.payoutStatus = payoutStatus;
   if (paymentStatus) {
     const paymentIds = await Payment.find({ status: paymentStatus }).select("_id");
     query.paymentId = { $in: paymentIds.map((p) => p._id) };
@@ -293,6 +313,91 @@ export const getCustomerDetailForAdmin = async (customerId) => {
   };
 
   return { customer, stats, bookings };
+};
+
+/**
+ * Owners with a nonzero pending payout balance — one row per owner, so the
+ * admin payouts screen can show "who do I owe money to" without listing
+ * every individual booking up front. Drill-down into one owner's actual
+ * pending bookings goes through GET /admin/bookings?payoutStatus=PENDING
+ * (the existing bookings list already supports filtering that way), scoped
+ * to that owner's turfs on the frontend.
+ */
+export const getPendingPayoutsSummary = async () => {
+  const rows = await Booking.aggregate([
+    { $match: { payoutStatus: "PENDING" } },
+    { $lookup: { from: "turfs", localField: "turfId", foreignField: "_id", as: "turf" } },
+    { $unwind: "$turf" },
+    {
+      $group: {
+        _id: "$turf.ownerId",
+        pendingAmount: { $sum: "$ownerAmount" },
+        pendingCount: { $sum: 1 },
+        oldestPendingAt: { $min: "$createdAt" },
+      },
+    },
+    { $sort: { pendingAmount: -1 } },
+    { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "owner" } },
+    { $unwind: "$owner" },
+    {
+      $project: {
+        _id: 0,
+        ownerId: "$_id",
+        ownerName: "$owner.name",
+        ownerEmail: "$owner.email",
+        payoutDetails: "$owner.payoutDetails",
+        pendingAmount: 1,
+        pendingCount: 1,
+        oldestPendingAt: 1,
+      },
+    },
+  ]);
+  return rows;
+};
+
+/**
+ * One owner's individual pending-payout bookings — the drill-down behind
+ * getPendingPayoutsSummary's per-owner totals, so the admin payouts screen
+ * can settle (or inspect) one booking at a time without a separate
+ * turf-by-turf query on the frontend.
+ */
+export const getPendingPayoutBookingsForOwner = async (ownerId) => {
+  const turfs = await Turf.find({ ownerId }).select("_id");
+  const turfIds = turfs.map((t) => t._id);
+  return Booking.find({ turfId: { $in: turfIds }, payoutStatus: "PENDING" })
+    .populate("turfId", "name location")
+    .populate("userId", "name email")
+    .sort({ createdAt: 1 });
+};
+
+/**
+ * Bookings currently flagged CLAWBACK_OWED — refunded to the customer after
+ * the owner had already been paid out for them. No automated recovery exists
+ * (see booking.model.js's payoutStatus doc comment); this just surfaces the
+ * list so an admin can reconcile with the owner manually.
+ */
+export const getClawbacksOwed = async () => {
+  return Booking.find({ payoutStatus: "CLAWBACK_OWED" })
+    .populate("turfId", "name location ownerId")
+    .populate("userId", "name email")
+    .sort({ paidOutAt: -1 });
+};
+
+/**
+ * Paginated history of settled payouts, newest first.
+ */
+export const getPayoutHistory = async ({ page = 1, limit = 20 } = {}) => {
+  const skip = (page - 1) * limit;
+  const [items, total] = await Promise.all([
+    Payout.find()
+      .populate("ownerId", "name email")
+      .populate("paidBy", "name email")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    Payout.countDocuments(),
+  ]);
+  return { items, total, page, pages: Math.ceil(total / limit) || 1 };
 };
 
 /**
