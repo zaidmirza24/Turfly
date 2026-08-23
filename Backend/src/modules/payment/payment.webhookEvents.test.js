@@ -94,7 +94,7 @@ describe("handleWebhookEvent (Section 4/8 — one already-deduped event)", () =>
   });
 
   it("TC-4.8 — refund webhook for an unknown razorpayPaymentId is skipped safely", async () => {
-    Payment.findOne.mockResolvedValue(null);
+    Payment.findOneAndUpdate.mockResolvedValue(null); // no doc matches at any of upsertRefundEntry's three attempts
     await expect(
       handleWebhookEvent(
         "refund.processed",
@@ -104,69 +104,86 @@ describe("handleWebhookEvent (Section 4/8 — one already-deduped event)", () =>
   });
 
   it("TC-4.12 — refund.processed on a fresh refund entry appends it as PROCESSED and marks the matching booking REFUNDED", async () => {
-    const paymentDoc = {
+    // upsertRefundEntry now does this atomically (Payment.findOneAndUpdate),
+    // not a load-then-.save() round trip: case 1 (update an existing entry)
+    // finds nothing, case 2 ($push a new one) succeeds and returns the
+    // updated document — see payment.service.js.
+    const pushedDoc = {
       _id: "pay_doc_1",
-      refunds: [],
+      amount: 500,
+      refunds: [{ razorpayRefundId: "rfnd_1", status: "PROCESSED", amount: 500, notes: { bookingId: "b1" } }],
       refundedAmount: () => 500,
-      save: vi.fn().mockResolvedValue(true),
     };
-    Payment.findOne.mockResolvedValue(paymentDoc);
-    Booking.find.mockResolvedValue([{ _id: "b1", refundStatus: "REFUND_PENDING", save: vi.fn().mockResolvedValue(true) }]);
+    Payment.findOneAndUpdate.mockResolvedValueOnce(null).mockResolvedValueOnce(pushedDoc);
+    const bookingDoc = { _id: "b1", status: "CANCELLED", refundStatus: "REFUND_PENDING", payoutStatus: "PENDING", save: vi.fn().mockResolvedValue(true) };
+    Booking.find.mockResolvedValue([bookingDoc]);
 
     await handleWebhookEvent(
       "refund.processed",
       webhookPayload("refund.processed", "refund", { id: "rfnd_1", payment_id: "pay_real", amount: 50000 })
     );
 
-    expect(paymentDoc.refunds).toHaveLength(1);
-    expect(paymentDoc.refunds[0]).toMatchObject({ razorpayRefundId: "rfnd_1", status: "PROCESSED", amount: 500 });
-    expect(paymentDoc.save).toHaveBeenCalled();
+    expect(Payment.findOneAndUpdate).toHaveBeenCalledTimes(2);
+    expect(Payment.findOneAndUpdate).toHaveBeenNthCalledWith(
+      2,
+      { razorpayPaymentId: "pay_real", "refunds.razorpayRefundId": { $ne: "rfnd_1" } },
+      expect.objectContaining({ $push: { refunds: expect.objectContaining({ razorpayRefundId: "rfnd_1", amount: 500, status: "PROCESSED" }) } }),
+      { new: true }
+    );
+    expect(bookingDoc.refundStatus).toBe("REFUNDED");
+    expect(bookingDoc.save).toHaveBeenCalled();
   });
 
   it("TC-4.10/4.12 — a duplicate refund.processed delivery for a refund id already recorded updates in place, not a second entry", async () => {
-    const existingEntry = {
-      razorpayRefundId: "rfnd_1",
-      amount: 500,
-      status: "CREATED",
-      notes: { bookingId: "b1" },
-    };
-    const paymentDoc = {
+    // Case 1 (update-in-place) matches immediately every time — the entry
+    // already exists, so there's never a $push, and never a second entry.
+    const updatedDoc = {
       _id: "pay_doc_1",
-      refunds: [existingEntry],
+      amount: 500,
+      refunds: [{ razorpayRefundId: "rfnd_1", amount: 500, status: "PROCESSED", processedAt: new Date(), notes: { bookingId: "b1" } }],
       refundedAmount: () => 500,
-      save: vi.fn().mockResolvedValue(true),
     };
-    Payment.findOne.mockResolvedValue(paymentDoc);
-    Booking.find.mockResolvedValue([{ _id: "b1", refundStatus: "REFUND_PENDING", save: vi.fn().mockResolvedValue(true) }]);
+    Payment.findOneAndUpdate.mockResolvedValue(updatedDoc);
+    const bookingDoc = { _id: "b1", status: "CANCELLED", refundStatus: "REFUND_PENDING", payoutStatus: "PENDING", save: vi.fn().mockResolvedValue(true) };
+    Booking.find.mockResolvedValue([bookingDoc]);
 
     await handleWebhookEvent(
       "refund.processed",
       webhookPayload("refund.processed", "refund", { id: "rfnd_1", payment_id: "pay_real", amount: 50000 })
     );
 
-    // still exactly one entry for this refund id — updated, not duplicated
-    expect(paymentDoc.refunds).toHaveLength(1);
-    expect(paymentDoc.refunds[0].status).toBe("PROCESSED");
-    expect(paymentDoc.refunds[0].processedAt).toBeInstanceOf(Date);
+    expect(Payment.findOneAndUpdate).toHaveBeenCalledTimes(1); // case 1 matched — no $push attempted
+    expect(Payment.findOneAndUpdate).toHaveBeenCalledWith(
+      { razorpayPaymentId: "pay_real", "refunds.razorpayRefundId": "rfnd_1" },
+      expect.objectContaining({ $set: expect.objectContaining({ "refunds.$.status": "PROCESSED" }) }),
+      { new: true }
+    );
 
-    // replaying the exact same webhook again must not add a second entry either
+    // replaying the exact same webhook again still only ever hits case 1
     await handleWebhookEvent(
       "refund.processed",
       webhookPayload("refund.processed", "refund", { id: "rfnd_1", payment_id: "pay_real", amount: 50000 })
     );
-    expect(paymentDoc.refunds).toHaveLength(1);
+    expect(Payment.findOneAndUpdate).toHaveBeenCalledTimes(2);
   });
 
   it("refund.failed records the failure without throwing, for manual follow-up", async () => {
-    const paymentDoc = { _id: "pay_doc_1", refunds: [], save: vi.fn().mockResolvedValue(true) };
-    Payment.findOne.mockResolvedValue(paymentDoc);
+    Payment.findOneAndUpdate.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      _id: "pay_doc_1",
+      refunds: [{ razorpayRefundId: "rfnd_1", status: "FAILED", amount: 500 }],
+    });
 
     await handleWebhookEvent(
       "refund.failed",
       webhookPayload("refund.failed", "refund", { id: "rfnd_1", payment_id: "pay_real", amount: 50000 })
     );
 
-    expect(paymentDoc.refunds[0]).toMatchObject({ status: "FAILED" });
+    expect(Payment.findOneAndUpdate).toHaveBeenNthCalledWith(
+      2,
+      { razorpayPaymentId: "pay_real", "refunds.razorpayRefundId": { $ne: "rfnd_1" } },
+      expect.objectContaining({ $push: { refunds: expect.objectContaining({ razorpayRefundId: "rfnd_1", status: "FAILED", amount: 500 }) } }),
+      { new: true }
+    );
   });
 
   it("an unrecognized event type is a safe no-op", async () => {

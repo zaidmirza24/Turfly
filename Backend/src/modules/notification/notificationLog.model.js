@@ -29,6 +29,7 @@ const notificationLogSchema = new mongoose.Schema(
         "BOOKING_REMINDER",
         "OWNER_NEW_BOOKING",
         "OWNER_BOOKING_CANCELLED",
+        "PASSWORD_RESET",
       ],
       required: true,
       index: true,

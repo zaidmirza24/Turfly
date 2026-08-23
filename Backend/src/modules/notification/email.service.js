@@ -201,6 +201,21 @@ export const sendBookingReminder = async (booking) => {
   });
 };
 
+export const sendPasswordReset = async (user, resetUrl) => {
+  const { subject, html } = tpl.passwordResetEmail(user.name, resetUrl);
+  // Deduped per-token (embedded in resetUrl) rather than per-user, so a
+  // customer who requests a second reset a minute later still gets that
+  // second (different) email instead of it being silently swallowed as a
+  // duplicate of the first.
+  return sendOnce({
+    type: "PASSWORD_RESET",
+    recipientEmail: user.email,
+    dedupeKeySuffix: resetUrl,
+    subject,
+    html,
+  });
+};
+
 export const sendOwnerNewBooking = async (bookings, payment) => {
   const turf = await turfOf(payment.turfId);
   if (!turf) return;

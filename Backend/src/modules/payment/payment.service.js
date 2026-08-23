@@ -307,6 +307,14 @@ export const finalizePaymentSuccess = async ({ paymentDoc, razorpayOrderId, razo
         payoutStatus: "PENDING",
       });
       createdBookings.push(booking);
+      // Persisted after *every* booking, not just once the whole loop
+      // finishes: if this function is killed mid-loop (serverless timeout,
+      // crash, deploy), Payment.bookingIds still reflects exactly how far it
+      // got, instead of staying `[]` on a payment that's already PAID —
+      // which is what makes findStuckPayments/reconcileStuckPayment (below)
+      // able to tell "nothing happened yet" apart from "partially completed"
+      // and finish the rest rather than re-doing or losing bookings.
+      await Payment.findByIdAndUpdate(claimed._id, { $push: { bookingIds: booking._id } });
     }
   } catch (err) {
     // Roll back any bookings this call itself created, then treat the whole
@@ -348,6 +356,107 @@ export const finalizePaymentSuccess = async ({ paymentDoc, razorpayOrderId, razo
   ]);
 
   return { payment: finalPayment, bookings: createdBookings };
+};
+
+// ── Stuck-payment reconciliation (admin-triggered) ──────────────────────
+
+const STUCK_PAYMENT_MINUTES = 15;
+
+/**
+ * Payments that captured real money (status PAID) but whose booking creation
+ * never finished — the one genuinely dangerous crash window in
+ * finalizePaymentSuccess: killed mid-loop (serverless timeout, OOM, a
+ * mid-request deploy) after the atomic PAID claim but before every slot was
+ * confirmed. Detected by comparing `bookingIds.length` against
+ * `slotIds.length` rather than just "bookingIds is empty", since
+ * `bookingIds` is now pushed to incrementally as each slot is confirmed (see
+ * `finalizePaymentSuccess` above) — a crash can land after some, not zero,
+ * slots were booked. Bounded to payments older than STUCK_PAYMENT_MINUTES so
+ * an order that's simply still in flight isn't flagged as stuck.
+ */
+export const findStuckPayments = async () => {
+  const cutoff = new Date(Date.now() - STUCK_PAYMENT_MINUTES * 60 * 1000);
+  const candidates = await Payment.find({ status: "PAID", paidAt: { $lt: cutoff } })
+    .select("status userId turfId slotIds bookingIds amount paidAt groupId razorpayPaymentId")
+    .sort({ paidAt: 1 })
+    .lean();
+  return candidates.filter((p) => (p.bookingIds?.length || 0) < p.slotIds.length);
+};
+
+/**
+ * Admin-triggered recovery for one stuck payment (see findStuckPayments).
+ * Finishes what finalizePaymentSuccess didn't: confirms whichever of this
+ * payment's slots are still unclaimed. If even one of them can no longer be
+ * claimed — someone else's checkout took it in the meantime, the same race
+ * finalizePaymentSuccess's own catch block already handles for a
+ * non-crashed run — the whole payment is rolled back and fully refunded
+ * instead of left half-fulfilled, exactly like the crash-free path would do.
+ */
+export const reconcileStuckPayment = async (paymentId) => {
+  const payment = await Payment.findById(paymentId);
+  if (!payment) throw new ApiError(404, "PAYMENT_NOT_FOUND");
+  if (payment.status !== "PAID") {
+    throw new ApiError(400, `Only a PAID payment can be reconciled (current status: ${payment.status})`);
+  }
+
+  const alreadyBooked = await Booking.find({ _id: { $in: payment.bookingIds } }).select("_id slotId");
+  const alreadyBookedSlotIds = new Set(alreadyBooked.map((b) => b.slotId.toString()));
+  const missingSlotIds = payment.slotIds.map(String).filter((id) => !alreadyBookedSlotIds.has(id));
+
+  if (missingSlotIds.length === 0) {
+    // Nothing was actually missing — bookingIds just hadn't caught up to
+    // reality (or this payment was already fixed). Reconcile the array and
+    // stop; no new bookings, no refund.
+    await Payment.findByIdAndUpdate(payment._id, { bookingIds: alreadyBooked.map((b) => b._id) });
+    return { payment: await Payment.findById(payment._id), recovered: [], alreadyComplete: true };
+  }
+
+  const groupId = payment.slotIds.length > 1 ? payment.groupId : null;
+  const recovered = [];
+  try {
+    for (const slotId of missingSlotIds) {
+      const booking = await confirmSlot(payment.userId, slotId, groupId);
+      const { commissionAmount, ownerAmount } = computeCommissionSplit(booking.amount);
+      await Booking.findByIdAndUpdate(booking._id, {
+        paymentId: payment._id,
+        paymentMethod: "ONLINE",
+        commissionAmount,
+        ownerAmount,
+        payoutStatus: "PENDING",
+      });
+      recovered.push(booking);
+      await Payment.findByIdAndUpdate(payment._id, { $push: { bookingIds: booking._id } });
+    }
+  } catch (err) {
+    // Same failure handling as the crash-free path: can't complete the set,
+    // so nothing is kept — roll back whatever this call recovered *and*
+    // whatever had already been booked before reconciliation ran, then
+    // refund the whole payment in full.
+    await Promise.all(
+      [...recovered, ...alreadyBooked].map((b) =>
+        forceCancelForSystem(b._id, "Slot lost during stuck-payment reconciliation — auto-refunded")
+      )
+    );
+    await Payment.findByIdAndUpdate(payment._id, { status: "PAID_BOOKING_FAILED", bookingIds: [] });
+    log.error("Stuck-payment reconciliation failed — refunding", { paymentId: payment._id, err });
+
+    const refunded = await refundPaymentInternal(payment, {
+      amount: payment.amount,
+      initiatedBy: "SYSTEM",
+      reason: "Slot no longer available during stuck-payment reconciliation",
+    });
+    await emailService.sendPaymentSucceededBookingFailed(payment).catch((e) =>
+      log.error("Failed to send payment-succeeded-booking-failed email", { err: e, paymentId: payment._id })
+    );
+    return { payment: await Payment.findById(payment._id), recovered: [], bookingFailed: true, refund: refunded };
+  }
+
+  const finalPayment = await Payment.findById(payment._id);
+  await emailService
+    .sendBookingConfirmed([...alreadyBooked, ...recovered], finalPayment)
+    .catch((e) => log.error("Failed to send booking confirmation email", { err: e, paymentId: finalPayment._id }));
+  log.info("Stuck payment reconciled", { paymentId: payment._id, recoveredCount: recovered.length });
+  return { payment: finalPayment, recovered };
 };
 
 /**
@@ -529,7 +638,10 @@ const refundPaymentInternal = async (payment, { amount, initiatedBy, notes, reas
         processedAt: refund.status === "processed" ? new Date() : null,
       },
     },
-    status: already + amount >= payment.amount ? "PAID" : "PAID", // status stays PAID; refund progress tracked on the Booking + refunds[]
+    // Payment.status is deliberately left at PAID regardless of how much of
+    // it has since been refunded — PAID means "this order was successfully
+    // captured," which stays true forever; refund progress lives on the
+    // Booking (refundStatus) and this document's own refunds[] array instead.
   });
 
   log.info("Refund initiated", { paymentId: payment._id, razorpayRefundId: refund.id, amount });
@@ -634,28 +746,106 @@ export const handleWebhookEvent = async (event, payload) => {
   }
 };
 
+/**
+ * Records one refund webhook event on the Payment's `refunds[]` array,
+ * entirely via atomic updates — never a load-mutate-`.save()` round trip.
+ * That matters here specifically because `refund.created` and
+ * `refund.processed` for the *same* refund are different webhook dedupe
+ * keys (`buildDedupeKey` is `event:entityId`), so they can legitimately be
+ * delivered and processed concurrently; a read-modify-write here would let
+ * one delivery's in-memory copy silently overwrite the other's update
+ * (whichever `.save()` lands second wins, full stop). Every other mutation
+ * in this file already goes through `findOneAndUpdate` for the same reason.
+ */
 const upsertRefundEntry = async (refundEntity, status) => {
-  const payment = await Payment.findOne({ razorpayPaymentId: refundEntity.payment_id });
-  if (!payment) {
+  const processedAt = status === "PROCESSED" ? new Date() : null;
+
+  // Case 1: an entry for this refund id already exists — update it in place
+  // via the positional operator, atomically.
+  const updated = await Payment.findOneAndUpdate(
+    { razorpayPaymentId: refundEntity.payment_id, "refunds.razorpayRefundId": refundEntity.id },
+    {
+      $set: {
+        "refunds.$.status": status,
+        ...(processedAt ? { "refunds.$.processedAt": processedAt } : {}),
+      },
+    },
+    { new: true }
+  );
+  if (updated) return updated;
+
+  // Case 2: no entry yet — atomically push one, guarded so a concurrent
+  // first-sighting of the same refund can't create two entries for it.
+  const pushed = await Payment.findOneAndUpdate(
+    { razorpayPaymentId: refundEntity.payment_id, "refunds.razorpayRefundId": { $ne: refundEntity.id } },
+    {
+      $push: {
+        refunds: {
+          razorpayRefundId: refundEntity.id,
+          amount: toRupees(refundEntity.amount),
+          status,
+          initiatedBy: "SYSTEM",
+          createdAt: new Date(),
+          processedAt,
+        },
+      },
+    },
+    { new: true }
+  );
+  if (pushed) return pushed;
+
+  // Lost the race — a concurrent delivery inserted it between the two
+  // findOneAndUpdate calls above. It exists now; go update it (case 1 again).
+  const existing = await Payment.findOneAndUpdate(
+    { razorpayPaymentId: refundEntity.payment_id, "refunds.razorpayRefundId": refundEntity.id },
+    {
+      $set: {
+        "refunds.$.status": status,
+        ...(processedAt ? { "refunds.$.processedAt": processedAt } : {}),
+      },
+    },
+    { new: true }
+  );
+  if (!existing) {
     log.warn("Refund webhook for unknown payment id", { razorpayPaymentId: refundEntity.payment_id });
-    return null;
   }
-  const idx = payment.refunds.findIndex((r) => r.razorpayRefundId === refundEntity.id);
-  if (idx >= 0) {
-    payment.refunds[idx].status = status;
-    if (status === "PROCESSED") payment.refunds[idx].processedAt = new Date();
-  } else {
-    payment.refunds.push({
-      razorpayRefundId: refundEntity.id,
-      amount: toRupees(refundEntity.amount),
-      status,
-      initiatedBy: "SYSTEM",
-      createdAt: new Date(),
-      processedAt: status === "PROCESSED" ? new Date() : null,
+  return existing;
+};
+
+/**
+ * Applies one refund's consequences to a single booking: marks it refunded,
+ * and voids (or flags CLAWBACK_OWED on) whatever payout state it was in —
+ * a refunded booking never owes the owner anything, and the platform never
+ * actually keeps a commission on money it gave back. If `cancel` is true and
+ * the booking isn't already CANCELLED, it's cancelled and its slot released
+ * too — needed for a refund this app didn't itself initiate (see caller).
+ */
+const applyRefundToBooking = async (booking, payment, refundEntity, refundAmount, { cancel = false } = {}) => {
+  booking.refundStatus = "REFUNDED";
+  booking.refundAmount = (booking.refundAmount || 0) + refundAmount;
+  if (booking.payoutStatus === "PENDING") {
+    booking.payoutStatus = "VOID";
+  } else if (booking.payoutStatus === "PAID") {
+    // CLAWBACK_OWED just flags it for admin (GET /admin/payouts/clawbacks) —
+    // nothing here reverses an already-settled payout automatically.
+    booking.payoutStatus = "CLAWBACK_OWED";
+  }
+  if (cancel && booking.status !== "CANCELLED") {
+    booking.status = "CANCELLED";
+    booking.cancelledBy = "SYSTEM";
+    booking.notes = booking.notes || "Refunded outside the app — booking auto-cancelled to match";
+    await Slot.findByIdAndUpdate(booking.slotId, {
+      status: "AVAILABLE",
+      bookingId: null,
+      lockedBy: null,
+      lockExpiresAt: null,
+      lockedPrice: null,
     });
   }
-  await payment.save();
-  return payment;
+  await booking.save();
+  await emailService.sendRefundCompleted(booking, payment, refundEntity.id).catch((e) =>
+    log.error("Failed to send refund-completed email", { err: e, bookingId: booking._id })
+  );
 };
 
 const finalizeRefundIfComplete = async (payment, refundEntity) => {
@@ -666,23 +856,53 @@ const finalizeRefundIfComplete = async (payment, refundEntity) => {
   );
 
   if (refundedBooking) {
-    refundedBooking.refundStatus = "REFUNDED";
-    refundedBooking.refundAmount = (refundedBooking.refundAmount || 0) + toRupees(refundEntity.amount);
-    // Full clawback: a refunded booking never owes the owner anything, and
-    // the platform never actually keeps a commission on money it gave back.
-    // If the owner had already been paid out for this booking (payoutStatus
-    // PAID), that payout now needs to be recovered from the owner outside
-    // this system — CLAWBACK_OWED just flags it for admin, nothing here
-    // reverses the payout automatically.
-    if (refundedBooking.payoutStatus === "PENDING") {
-      refundedBooking.payoutStatus = "VOID";
-    } else if (refundedBooking.payoutStatus === "PAID") {
-      refundedBooking.payoutStatus = "CLAWBACK_OWED";
-    }
-    await refundedBooking.save();
-    await emailService.sendRefundCompleted(refundedBooking, payment, refundEntity.id).catch((e) =>
-      log.error("Failed to send refund-completed email", { err: e, bookingId: refundedBooking._id })
-    );
+    // Normal path: this refund was initiated by initiateRefundForBooking
+    // (customer/owner/admin cancellation), which already cancelled the
+    // booking and released the slot before requesting the refund — `cancel`
+    // here is just a no-op safety net, not new behavior.
+    await applyRefundToBooking(refundedBooking, payment, refundEntity, toRupees(refundEntity.amount), { cancel: true });
+    log.info("Refund processed", { paymentId: payment._id, totalRefunded, razorpayRefundId: refundEntity.id });
+    return;
+  }
+
+  // No `notes.bookingId` match: this refund wasn't initiated by this
+  // codebase at all — it was issued directly from the Razorpay dashboard,
+  // the normal thing a support person does under pressure. Left unhandled,
+  // the booking stays CONFIRMED, its slot stays BOOKED, and — worst of all —
+  // the owner still gets paid out for a booking the platform just refunded
+  // to the customer. If this refund brings the payment to fully refunded,
+  // reconcile every still-active booking under it the same way a real
+  // cancellation would: cancel, release the slot, void/clawback the payout.
+  // A *partial* unattributed refund can't be safely auto-applied to one
+  // booking out of several in a multi-slot group — that's flagged for a
+  // human instead of guessing which one it covered.
+  const activeBookings = bookings.filter((b) => b.status !== "CANCELLED");
+  if (activeBookings.length === 0) {
+    log.info("Refund processed (no active bookings to reconcile)", {
+      paymentId: payment._id,
+      totalRefunded,
+      razorpayRefundId: refundEntity.id,
+    });
+    return;
+  }
+
+  if (totalRefunded < payment.amount) {
+    log.error("Unattributed partial refund — needs manual admin reconciliation", {
+      paymentId: payment._id,
+      razorpayRefundId: refundEntity.id,
+      totalRefunded,
+      paymentAmount: payment.amount,
+    });
+    return;
+  }
+
+  log.warn("Refund with no matching booking note — treating as externally-initiated and reconciling all active bookings under this payment", {
+    paymentId: payment._id,
+    razorpayRefundId: refundEntity.id,
+    bookingCount: activeBookings.length,
+  });
+  for (const booking of activeBookings) {
+    await applyRefundToBooking(booking, payment, refundEntity, booking.amount, { cancel: true });
   }
 
   log.info("Refund processed", { paymentId: payment._id, totalRefunded, razorpayRefundId: refundEntity.id });

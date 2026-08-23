@@ -181,6 +181,17 @@ export const bookingReminderEmail = (booking, turf, slot) => {
   return { subject: `Reminder: your booking at ${turf.name}`, html };
 };
 
+export const passwordResetEmail = (name, resetUrl) => {
+  const html = layout(
+    "Reset your password",
+    `<p>Hi ${escapeHtml(name)},</p>
+     <p>We received a request to reset your password. This link expires in 1 hour and can only be used once.</p>
+     <p style="margin-top:16px;font-size:13px;color:#6b7280;">If you didn't request this, you can safely ignore this email — your password won't be changed.</p>`,
+    { ctaLabel: "Reset password", ctaUrl: resetUrl }
+  );
+  return { subject: "Reset your password", html };
+};
+
 // ── Owner emails ───────────────────────────────────────────────────────
 
 export const ownerNewBookingEmail = (bookings, turf, customerName) => {

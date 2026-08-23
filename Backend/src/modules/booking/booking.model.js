@@ -26,10 +26,12 @@ const bookingSchema = new mongoose.Schema(
       default: "CONFIRMED",
     },
     // Who cancelled this booking, distinct from just knowing that it's
-    // cancelled — needed for refund policy and reporting once real payments
-    // exist. Only CUSTOMER is reachable today (there is no admin/owner
-    // cancellation endpoint yet); the other values are here so a future
-    // admin-cancel flow doesn't need a schema migration.
+    // cancelled — needed for refund policy and reporting. CUSTOMER is the
+    // self-service cancel path; OWNER/ADMIN is cancelBookingAsOwner
+    // (booking.service.js — a venue emergency or voiding a no-show, with no
+    // 6-hour cutoff); SYSTEM is an automated force-cancel (payment captured
+    // but the slot couldn't be claimed, or a refund issued outside the app
+    // that this codebase reconciles after the fact).
     cancelledBy: {
       type: String,
       enum: ["CUSTOMER", "OWNER", "ADMIN", "SYSTEM"],
@@ -50,11 +52,10 @@ const bookingSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
-    // The owner's own bookkeeping note that they refunded this booking
-    // outside the app (cash handback, UPI transfer, etc). No payment gateway
-    // exists, so nothing here ever moves real money — this is a status label,
-    // not a refund transaction. Only settable once status is CANCELLED.
-    // MARKED_REFUNDED is the pre-existing owner bookkeeping note for CASH/
+    // MARKED_REFUNDED is the owner's own bookkeeping note that they refunded
+    // a CASH/PENDING booking outside the app (cash handback, UPI transfer,
+    // etc) — there's no real payment gateway record for those, so nothing
+    // here moves real money; it's a status label, not a refund transaction.
     // PENDING bookings (no real money ever moved). The rest track a real
     // Razorpay refund lifecycle for ONLINE bookings (payment.service.js):
     // REFUND_PENDING is set the moment a refund is accepted by Razorpay,
@@ -143,6 +144,15 @@ const bookingSchema = new mongoose.Schema(
     timestamps: true, // createdAt serves as booking time
   }
 );
+
+// Matches the hot query shapes in booking.service.js/admin.service.js —
+// every owner/admin/customer booking list filters by one of these two
+// fields and always sorts by createdAt desc. A single-field index still
+// lets Mongo use turfId/userId for the filter, but it then has to
+// in-memory-sort every matching document; these let it walk the index in
+// createdAt order directly.
+bookingSchema.index({ turfId: 1, createdAt: -1 });
+bookingSchema.index({ userId: 1, createdAt: -1 });
 
 const Booking = mongoose.model("Booking", bookingSchema);
 export default Booking;

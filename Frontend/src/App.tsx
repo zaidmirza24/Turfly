@@ -15,7 +15,7 @@ import TurfListingPage from "@/pages/TurfListingPage";
 import TurfDetailPage from "@/pages/TurfDetailPage";
 import BookingFlowPage from "@/pages/BookingFlowPage";
 import UserDashboard from "@/pages/UserDashboard";
-import { LoginPage, SignupPage, ForgotPasswordPage } from "@/pages/AuthPages";
+import { LoginPage, SignupPage, ForgotPasswordPage, ResetPasswordPage } from "@/pages/AuthPages";
 import NotFound from "@/pages/NotFound";
 import AccountSettingsPage from "@/pages/AccountSettingsPage";
 import FavoritesPage from "@/pages/FavoritesPage";
@@ -47,6 +47,7 @@ const AdminBookingsPage = lazy(() => import("@/pages/admin/AdminBookingsPage"));
 const AdminCustomersPage = lazy(() => import("@/pages/admin/AdminCustomersPage"));
 const AdminActivityPage = lazy(() => import("@/pages/admin/AdminActivityPage"));
 const AdminPayoutsPage = lazy(() => import("@/pages/admin/AdminPayoutsPage"));
+const AdminStuckPaymentsPage = lazy(() => import("@/pages/admin/AdminStuckPaymentsPage"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -94,6 +95,7 @@ const App = () => (
                   <Route path="/login" element={<PlayerLayout><LoginPage /></PlayerLayout>} />
                   <Route path="/signup" element={<PlayerLayout><SignupPage /></PlayerLayout>} />
                   <Route path="/forgot-password" element={<PlayerLayout><ForgotPasswordPage /></PlayerLayout>} />
+                  <Route path="/reset-password" element={<PlayerLayout><ResetPasswordPage /></PlayerLayout>} />
                   <Route path="/account" element={<RequireRole><PlayerLayout><AccountSettingsPage /></PlayerLayout></RequireRole>} />
                   <Route path="/favorites" element={<RequireRole roles={["USER"]}><PlayerLayout><FavoritesPage /></PlayerLayout></RequireRole>} />
                   <Route path="/help" element={<PlayerLayout><HelpPage /></PlayerLayout>} />
@@ -121,6 +123,7 @@ const App = () => (
                     <Route path="bookings" element={<AdminBookingsPage />} />
                     <Route path="customers" element={<AdminCustomersPage />} />
                     <Route path="payouts" element={<AdminPayoutsPage />} />
+                    <Route path="payments/stuck" element={<AdminStuckPaymentsPage />} />
                     <Route path="activity" element={<AdminActivityPage />} />
                   </Route>
                   <Route path="*" element={<PlayerLayout><NotFound /></PlayerLayout>} />

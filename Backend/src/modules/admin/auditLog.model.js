@@ -23,12 +23,13 @@ const auditLogSchema = new mongoose.Schema(
         "BOOKING_CANCELLED",
         "BOOKING_REFUNDED",
         "BOOKING_PAID_OUT",
+        "PAYMENT_RECONCILED",
       ],
       required: true,
     },
     targetType: {
       type: String,
-      enum: ["TURF", "USER", "BOOKING"],
+      enum: ["TURF", "USER", "BOOKING", "PAYMENT"],
       required: true,
     },
     targetId: {

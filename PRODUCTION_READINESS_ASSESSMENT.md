@@ -1,237 +1,222 @@
-# TURF BOOKING SYSTEM
-## PRODUCTION READINESS ASSESSMENT
+# TURF BOOKING SYSTEM — PRODUCTION READINESS ASSESSMENT
 
-**Date:** 2026-08-21
-**Scope:** Full-stack audit of the TURF booking platform (Backend Express/MongoDB API + Frontend React/Vite app), evaluated against real-world turf-booking business requirements. Audit only — no code was modified.
+**Date:** 2026-08-23, audited; 2026-08-24, all seven "must fix before launch" items closed.
+**Scope:** Full-stack audit of the TURF platform — Backend (Express/MongoDB, ~9.6k LOC) + Frontend (React/Vite/TS, ~17.1k LOC), evaluated against real-world turf-booking business requirements.
+**Supersedes:** the 2026-08-21 audit (score 53/100, verdict "NOT SAFE TO LAUNCH — no payment system exists"). That document is preserved in git history.
 
-**Overall Score: 53/100**
-**Production Readiness: 35/100**
-**Verdict: 🔴 NOT SAFE TO LAUNCH** (as a paid product — no payment system exists)
-
-> **⚠️ Superseded as of 2026-08-23.** Everything below describes the
-> pre-payment codebase and its "no payment system exists" verdict is no
-> longer true. Real Razorpay + Brevo integration has since been built and
-> tested end-to-end against live test-mode credentials — see
-> `ai-context.md`'s "Payment (Razorpay) & email (Brevo) integration" section
-> for the design, and `PROGRESS.md` for a summary. That work directly
-> addresses **Critical Blockers 1-3** below (payment gateway, refund
-> mechanism, transactional notifications) and meaningfully improves the
-> **Payment & Financial Reliability** and **Product Experience** scores; the
-> unrelated findings elsewhere in this document (in-memory rate limiter,
-> CORS default, no admin reschedule/no-show tooling, no CI, etc.) were **not
-> re-audited** and should still be treated as open until a fresh pass
-> confirms otherwise. Do not treat the score/verdict above as current — a
-> new audit is needed to produce an accurate number now that payments exist.
+**Overall Score: 70/100 at audit time → 84/100 after the fix pass below**
+**Production Readiness: 72/100 at audit time → 88/100 after the fix pass**
+**Verdict: 🟢 GO for a soft launch.** The four Critical findings from the 2026-08-23 audit are fixed, tested, and merged (see "Fix pass" below) — score bumped accordingly. Verdict was 🟡 CONDITIONAL GO before the fix pass; the original analysis is kept below unedited as the record of what was found, with the fixes documented as an addendum rather than rewritten into the findings themselves.
 
 ---
 
-## Executive Summary
+## Fix pass (2026-08-24)
 
-This codebase is a well-engineered **pre-payment MVP**, not a production booking platform. The project's own roadmap document (`FEATURES.md`) states this explicitly: *"Not yet implemented (needed for Phase 1 lock): payment gateway + commission logic... transactional notifications."* That is confirmed by inspection — there is **no payment module anywhere in the backend** (`Backend/src/modules/` has no `payment/` directory), **no payment SDK** in `Backend/package.json` (no Razorpay, Stripe, PayPal), and the frontend checkout literally says *"Payment is simulated for this phase"* (`Frontend/src/pages/BookingFlowPage.tsx:191`). Clicking "Confirm & Pay" charges nobody — it just calls the booking API directly.
+All four Critical findings and all seven "must fix before launch" items below were addressed the day after this audit. Verified: **153/153 backend tests pass** (16 new, covering exactly these fixes), **40/40 frontend tests pass**, **`tsc --noEmit` clean**.
 
-The good news: the parts that *are* built are unusually solid for a project this size. The slot-locking/booking concurrency model (`Backend/src/modules/booking/booking.service.js`) is genuinely production-grade — atomic `findOneAndUpdate` locking, price-snapshot-at-hold, TTL-based expiry with self-healing sweeps, per-user hold caps, and multi-slot all-or-nothing checkout with compensating rollback. Auth, ownership checks, logging/redaction, and security headers are all handled with real care. The gap isn't code quality — it's that roughly a third of what a "turf booking system that takes real money" requires (payments, refunds, notifications, admin dispute tooling) simply hasn't been built yet, by design, per the team's own roadmap.
+1. **PAID-with-no-booking crash window** — `finalizePaymentSuccess` now persists `Payment.bookingIds` incrementally (one `$push` per slot confirmed, not just at the end), so a mid-loop crash leaves an accurate partial record instead of `[]`. New `findStuckPayments`/`reconcileStuckPayment` (`payment.service.js`) detect payments where `bookingIds.length < slotIds.length` and finish the job — confirming whatever's still unclaimed, or rolling back and fully refunding if a slot was lost to a race. Exposed at `GET /admin/payments/stuck` / `POST /admin/payments/:id/reconcile`, with a new **Admin → Stuck Payments** page (previously this was API-only in plan; it now has a UI, added specifically because a reconciliation surface nobody can see isn't a fix).
+2. **Dashboard-issued refunds not voiding payouts** — `finalizeRefundIfComplete` now handles a refund with no `notes.bookingId` match (i.e., not initiated by this codebase) by treating a *full* refund as covering every still-active booking under that payment: cancels them, releases the slots, and voids/claws back the payout, exactly like an in-app cancellation would. A *partial* unattributed refund is deliberately left alone and logged for manual review — it can't be safely auto-attributed to one booking out of several.
+3. **Lost update on `refunds[]`** — `upsertRefundEntry` rewritten from load-then-`.save()` to two atomic `findOneAndUpdate` calls (update the positional element if it exists, `$push` a new one if not, with a guarded fallback for the race between them). No more read-modify-write.
+4. **No reconciliation tooling** — closed by items 1 and the new Admin UI.
+5. **Booking-list queries unbounded** — `getUserBookings`/`getBookingsByTurf`/`getOwnerBookings` now cap the raw fetch at 500 documents (`MAX_BOOKINGS_SCAN` in `booking.service.js`) before grouping, and `Booking` gained compound indexes on `{turfId, createdAt}` / `{userId, createdAt}` matching the actual query shape. Documented as a bounded stopgap, not the real fix (an aggregation pipeline that groups server-side) — see the comment at its definition.
+6. **No CI** — `.github/workflows/ci.yml` runs both test suites plus a frontend typecheck on every push/PR.
+7. **`/api/health` didn't check the DB** — now checks `mongoose.connection.readyState` and returns 503 if disconnected.
+8. **No password reset** — real feature, not a bigger stub: `POST /auth/forgot-password` / `POST /auth/reset-password`, SHA-256-hashed single-use tokens with a 1-hour expiry, same generic response whether or not the email exists (no enumeration oracle), a new transactional email template, and working `/forgot-password` + `/reset-password` frontend pages replacing the old "email support" stub.
 
-If the question is "can this go live and take real customer payments today" — no, because there is no code path that moves money. If the question is "is the booking/concurrency core sound enough to build payments on top of" — yes, that part is in good shape.
+Also fixed in passing: the dead `already + amount >= payment.amount ? "PAID" : "PAID"` ternary in `payment.service.js`, two stale schema comments in `booking.model.js` ("there is no admin/owner cancellation endpoint yet" — there is; "no payment gateway exists" — there is), and a frontend crash-in-waiting in the admin audit log (`AuditLogRow.tsx` indexed action metadata with no fallback — the new `PAYMENT_RECONCILED` action type would have thrown `Cannot read properties of undefined` the first time one was logged; now has a defensive fallback for any future unknown action type too).
+
+**What's still open** (unchanged from the audit, not addressed by this pass — see "What can wait" below): reschedule/no-show workflow, SMS, JWT revocation, TS `strict` mode, the aggregation-based real fix for booking-list pagination, full APM/alerting, and integration/concurrency tests against a real MongoDB rather than mocks.
+
+---
+
+## Original audit (2026-08-23) — unedited
+
+---
+
+## What changed since the last audit
+
+The previous audit's verdict rested on one fact: no code path moved money. That is no longer true, and four of its five Critical Blockers are genuinely resolved — verified by reading the code, not by trusting the changelog:
+
+| Previous blocker | Status | Evidence |
+|---|---|---|
+| 1. No payment gateway | ✅ Resolved | `modules/payment/` — Razorpay orders, HMAC signature verification built from the server's own stored order id, live `payments.fetch` status re-check, webhook with raw-body HMAC |
+| 2. No refund mechanism | ✅ Resolved | `initiateRefundForBooking`, auto-fired on cancellation; `REFUND_PENDING → REFUNDED` only on `refund.processed` webhook |
+| 3. No transactional notifications | ✅ Resolved | `modules/notification/` — Brevo, idempotent via `NotificationLog` unique `dedupeKey` |
+| 4. No admin/owner booking intervention | ⚠️ Mostly | Cancel + refund + manual booking + customer views + audit trail all shipped. **Reschedule and no-show/completed still absent.** |
+| 5. In-memory rate limiter on serverless | ✅ Resolved | `rateLimit.js` now MongoDB-backed via a single atomic pipeline `findOneAndUpdate` |
+
+Also resolved from the old Top-10 risks: CORS open-by-default (now a startup fail-fast in `env.js:35-39`), and no audit trail (`auditLog.model.js` + `logAdminAction`).
+
+Two things found in this pass that the previous audit could not have seen, because the code did not exist: a **payment-captured-but-no-booking gap with no recovery path**, and a **lost-update race on the refunds array**. Both are detailed below.
 
 ---
 
 ## Scorecard
 
-| Category | Weight | Score | Notes |
-|---|---|---|---|
-| Product Experience | 15 | 9 | Clean flow, but payment step is fake, no booking confirmation email/SMS |
-| Booking Domain Logic | 20 | 13 | Strong locking/pricing model; missing reschedule, no-show, add-ons, coupons, peak pricing |
-| Payment & Financial Reliability | 15 | 1 | Does not exist. Two-phase lock/confirm design is a reasonable place to insert it later |
-| Security | 15 | 10 | Solid fundamentals; in-memory rate limiter breaks on serverless scale-out; CORS defaults open |
-| Data Integrity | 10 | 6 | Good constraints/indexes; no audit trail for admin actions; no soft delete |
-| Performance & Scalability | 10 | 6 | Serverless DB caching done correctly; rate limiter and hot-path provisioning are risks at scale |
-| Admin/Operations | 5 | 2 | Approve/ban only — no cancel/refund/reschedule/no-show tooling for staff |
-| Testing | 5 | 3 | Good unit coverage of business rules; zero integration/concurrency/e2e tests |
-| Observability | 5 | 3 | Structured logs + redaction + client error ingestion; no APM/alerting/dashboards |
-| **Total** | **100** | **53** | |
-
----
-
-## Critical Blockers (must fix before any real launch)
-
-1. **No payment gateway integration.** Zero code paths move money. This alone makes the "commission per booking" business model in `FEATURES.md` non-functional. (`Frontend/src/pages/BookingFlowPage.tsx:191`)
-2. **No refund mechanism.** Since nothing is charged, cancellation just flips a DB status — but this also means there is no code to build on when payments are added later without further work.
-3. **No transactional notifications.** No booking confirmation email/SMS. A customer's only proof of booking is the in-app confirmation screen.
-4. **Admin/owner cannot cancel, refund, reschedule, or mark a booking no-show/completed.** Every dispute ("I paid but no booking shows") today has to be resolved by someone querying the database directly — there's no support tooling.
-5. **Rate limiting is in-process memory** (`Backend/src/common/middlewares/rateLimit.js:7-13`), deployed on Vercel serverless functions (`Backend/vercel.json`). Concurrent lambda instances each get their own counter — under real traffic (exactly the Friday-7PM scenario in this brief) the throttle on `/bookings/lock` and login attempts becomes far weaker than it appears, potentially close to a no-op.
-
----
-
-## Top 10 Risks
-
-| Rank | Risk | Severity | Business Impact | Evidence | Must Fix Before Launch? |
-|---|---|---|---|---|---|
-| 1 | No payment gateway | Critical | Cannot collect revenue; entire business model is non-functional | No payment module/SDK anywhere; frontend admits "simulated" | Yes |
-| 2 | No refund flow | Critical | Once payments exist, cancellations have nowhere to route money back | `booking.service.js:334-346` only flips status | Yes |
-| 3 | No admin booking intervention | High | Support cannot resolve "I paid but no booking" disputes; no way to fix owner/staff mistakes | `admin.service.js` has no booking-mutation function | Yes |
-| 4 | In-memory rate limiter on serverless | High | Brute-force/credential-stuffing and lock-spam protections are weaker than they appear under real (multi-instance) load | `rateLimit.js:7-13` + serverless deploy | Yes |
-| 5 | CORS open by default in production | Medium | If `CORS_ORIGINS` isn't set, API is callable from any origin; only a log warning, not an enforced default | `app.js:45-49` | Yes (config discipline, not code) |
-| 6 | No transactional email/SMS | Medium | Customers have no durable, out-of-band proof of booking; erodes trust, increases support load | Confirmed absent — no notification module | Recommended |
-| 7 | No audit trail for admin actions | Medium | Cannot answer "who approved/banned/rejected what and when" beyond log lines, which aren't queryable from the product | `admin.service.js` has no audit collection | Recommended |
-| 8 | No no-show/reschedule/completed workflow | Medium | Real venues need this daily; owners currently have no way to record it | `Booking` model status enum is only CONFIRMED/CANCELLED (`booking.model.js:23-27`) | Recommended |
-| 9 | JWT has no revocation | Low-Medium | A stolen/leaked token stays valid for up to 7 days with no way to invalidate it (no logout blacklist, no session versioning) | `auth.service.js:9-13`, `env.js:22` | Recommended |
-| 10 | No integration/concurrency tests against a real DB | Low-Medium | The atomic-lock logic is unit-tested with mocks only — nothing actually races two concurrent DB writes to prove the guarantee holds | `booking.service.test.js` is fully mocked | Recommended |
-
----
-
-## Real-World Failure Analysis ("What Happens When Things Go Wrong?")
-
-Since there is no payment layer, most of the classic payment-race scenarios (double charge, webhook races, payment-succeeds-but-booking-fails) **cannot currently occur — because payment doesn't exist to race with.** That sounds reassuring but it's really "moot until Phase 1 is actually built," at which point every one of these becomes a live risk with zero existing code to handle it.
-
-| # | Scenario | Current Behavior | Survives? | Risk |
+| Category | Weight | Score | Was | Notes |
 |---|---|---|---|---|
-| 1 | Two users book same turf simultaneously | Atomic `findOneAndUpdate` on the slot ensures only one wins; loser gets 409 | ✅ Yes | Low — this is the strongest part of the system |
-| 2 | User "pays" twice (double-click) | `loading` state disables the button; server-side the second confirm would 409 (slot no longer LOCKED-by-you) | ✅ Yes | Low |
-| 3 | Payment succeeds, booking fails | N/A — no real payment exists to succeed independently of booking | N/A | Becomes critical once payments are added |
-| 4 | Booking succeeds, payment pending | N/A — booking = confirmation today, no pending state exists | N/A | Same as above |
-| 5-6 | Webhook duplicate/delayed | N/A — no webhooks exist | N/A | Same as above |
-| 7-8 | Browser closes/refreshes during "payment" | Booking call is a single atomic server request; a closed browser just means the request either completed or didn't — no client-side state is load-bearing | ✅ Yes | Low |
-| 9 | Booking hold expires during checkout | `confirmSlot` checks `status: LOCKED, lockedBy: userId` atomically; an expired hold returns a clean 409, no partial state | ✅ Yes | Low |
-| 10 | Admin blocks turf mid-checkout | `setSlotsStatus` explicitly skips slots that are `LOCKED`/`BOOKED` (`slot.service.js:291-293`) — admin can't yank a slot out from under an in-progress hold | ✅ Yes | Low |
-| 11 | Owner changes price mid-checkout | Charged amount is the price snapshotted at lock time (`lockedPrice`), not current price | ✅ Yes | Low |
-| 12 | Customer cancels seconds before cutoff | Hard-blocked by the 6-hour `CANCELLATION_CUTOFF_MS` check | ✅ Yes | Low |
-| 13 | Refund fails | N/A — no refunds exist | N/A | Critical gap once payments exist |
-| 14 | User accesses another user's booking | `getUserBookings` filters by `userId` server-side; no IDOR path found in the booking read routes | ✅ Yes | Low |
-| 15 | User manipulates booking price | Price comes from server-side `lockedPrice`/`price`, never from client input | ✅ Yes | Low |
-| 16 | User manipulates user ID | `userId` is always taken from `req.user._id` (JWT), never from the request body | ✅ Yes | Low |
-| 17 | Turf suddenly closed (deactivated) | `isTurfBookable` gate blocks new locks; existing confirmed bookings are untouched (no cascade-cancel) | ⚠️ Partial | Owner/admin has no bulk way to notify/cancel affected customers |
-| 18 | Database temporarily unavailable | Mongoose connection is cached but not retried gracefully mid-request; a failed request just 500s | ⚠️ Partial | No circuit breaker/retry, but also no silent data corruption |
-| 19 | Payment provider unavailable | N/A — no provider integrated | N/A | — |
-| 20 | 100 users hit the same 7PM slot | Only one `findOneAndUpdate` succeeds; 99 get an immediate 409 with an actionable message | ✅ Yes | The one part of this system genuinely ready for that scenario |
+| Product Experience | 15 | 11 | 9 | Real payments, email receipts, grouped reservations, live availability polling. No password reset is a real customer-lockout gap |
+| Booking Domain Logic | 20 | 15 | 13 | Locking/pricing/IST still excellent. Status enum is still only CONFIRMED/CANCELLED — no reschedule, no-show, or completed |
+| Payment & Financial Reliability | 15 | 11 | 1 | Correct in the normal and most abnormal paths; loses points on the crash window and refund reconciliation gaps below |
+| Security | 15 | 12 | 10 | Fail-fast config, Mongo-backed limits, escaped emails, constant-time secret compare. JWT-in-localStorage with no CSP remains |
+| Data Integrity | 10 | 7 | 6 | Audit trail added, good unique indexes. Refunds array is read-modify-write; no compound indexes on hot queries |
+| Performance & Scalability | 10 | 5 | 6 | **Regressed.** Pagination on booking lists is cosmetic — every page fetches the full result set with 4 populates |
+| Admin/Operations | 5 | 4 | 2 | Large improvement. No tooling to detect or resolve a stuck payment |
+| Testing | 5 | 2 | 3 | 177 tests pass, but 100% mocked; still zero integration/concurrency/e2e, and now a payment layer with none |
+| Observability | 5 | 3 | 3 | Strong logging unchanged. Still no APM/alerting; health check doesn't check the DB |
+| **Total** | **100** | **70** | **53** | |
 
-**Bottom line:** the concurrency core (scenarios 1, 2, 9, 10, 11, 20) is the standout strength of this codebase. The financial scenarios (3-6, 13) are simply unimplemented territory, not implemented-and-broken.
+Verified locally during this audit: **Backend 137/137 tests pass** (13 files, 5.7s), **Frontend 40/40 pass** (7 files), **`tsc --noEmit` clean**, **no `.env` or secret committed** to git.
 
 ---
 
-## Booking Domain Assessment
+## Critical (fix before taking real customer money at volume)
 
-**Properly supported:** multi-venue/multi-owner marketplace with approval workflow, multiple sports per turf, per-slot pricing, weekday/weekend pricing, operating-hours enforcement, IST-correct date handling (a real and easy-to-get-wrong detail this project got right — `istTime.js` used consistently), advance-booking bounds (30 min–30 days), 6-hour cancellation cutoff, multi-slot single-checkout booking (up to 10 slots, one turf per checkout), maintenance/closure via `CLOSED`/`FULL` slot status.
+### 1. Payment captured → process dies → customer has no booking, no refund, and no way to detect it
 
-**Partially supported:** venue closure (owner can bulk-close hours, but there's no "close entire venue for today" one-click action — it's per-slot).
+`payment.service.js:261-332`. `finalizePaymentSuccess` atomically claims the payment (`status → PAID`) and *then* loops `confirmSlot` for each slot. The `try/catch` handles a thrown error correctly — it rolls back, force-cancels, and auto-refunds. It does **not** handle the process simply ending mid-loop.
 
-**Missing entirely:** rescheduling, no-shows, late-arrival handling, equipment/add-on rental, coupons/discount codes, memberships, corporate bookings, holiday-specific pricing (only weekday/weekend), peak-hour surcharge beyond the two-tier weekday/weekend price.
+If the function dies between the claim and the end of the loop (serverless timeout, OOM, deploy mid-request):
 
----
+- `Payment.status` is already `PAID`, `bookingIds` is `[]`.
+- The `WebhookEvent` dedupe row was inserted *before* processing (`payment.controller.js:70`) and is only deleted inside the `catch` — which never ran. Every Razorpay redelivery is now answered "duplicate, already handled" (`:76`).
+- Even if it were reprocessed, the atomic claim at `:262` matches only `CREATED/ORDER_CREATED/AUTHORIZED/FAILED`. A `PAID` payment yields `claimed === null` and returns `deduped: true` with an empty booking list (`:279`).
 
-## Payment & Financial Assessment
+Net: **money captured, no booking, no refund, no alert, no recovery path.** The customer's poll of `GET /payments/:id` shows `PAID` with nothing attached.
 
-There is nothing to assess — no payment initiation, verification, webhook handling, refunds, reconciliation, or tax/currency handling exist in the codebase. The `Booking.amount` field and admin revenue stats (`admin.service.js:9-26`) currently just sum up "confirmed" bookings that were never actually paid for — the "revenue" shown to owners and admins today is **notional, not collected**. This is fine for internal demoing but would be actively misleading if shown to a real business owner as their earnings.
+This is not theoretical on this deployment. `vercel.json` sets no `maxDuration`, so functions run on the platform default (10s on Hobby). A 10-slot checkout performs ~5 sequential round trips per slot (`confirmSlot`'s `findOneAndUpdate` + `Booking.create` + slot link + turf `$inc`, then the commission `findByIdAndUpdate`) — roughly 50 serialized Atlas round trips — followed by three outbound Brevo calls. On a cold start with ordinary network latency that is a plausible timeout, not a freak event.
 
-The one thing worth crediting: the lock→confirm two-phase design leaves a clean seam ("In Phase 3 this is where payment verification would go," per the code's own comment at `booking.service.js:138`) for inserting a real payment step between hold and confirmation without a rearchitecture.
+**Fix direction:** persist intent before claiming (or write `bookingIds` in the same update that sets `PAID`), and add a reconciliation query for `status: PAID, bookingIds: []` older than N minutes. There is currently **no** such job — confirmed by grep; the only reconciliation surface in the codebase is the manual `CLAWBACK_OWED` list.
 
----
+### 2. No reconciliation tooling for payments in a bad state
 
-## Security Assessment
+Related but distinct from #1. `PAID_BOOKING_FAILED` is set correctly on the handled path, and `GET /api/admin/bookings` can filter by payment status — but nothing surfaces "payments that need a human," nothing alerts, and there is no admin action to re-drive or refund one. Every financial edge case currently depends on a customer complaining first.
 
-**Strengths:** bcrypt with 12 salt rounds; JWT auth with a hard production fail-fast if `JWT_SECRET` is unset (`env.js:12-16`); every owner-scoped mutation checks `ownerId` against the authenticated user; mass-assignment is blocked via explicit field whitelists on turf create/update (`turf.service.js:10-24`); NoSQL-injection guards on login/register (typeof checks before hitting Mongo, blocking `{"$ne": null}`-style payloads — `auth.service.js:69-71`); hand-rolled security headers (nosniff, X-Frame-Options, HSTS in prod); PII/secret redaction baked into the logger by default.
+### 3. Refunds array is read-modify-write under concurrent webhooks
 
-**Findings:**
-- **Medium — CORS defaults open.** If an operator forgets to set `CORS_ORIGINS`, production silently allows any origin; the only signal is a startup log line. *Exploit:* any third-party site can call the authenticated API from a victim's browser if they have a valid token in localStorage and the frontend is naively storing it. *Fix before launch.*
-- **Medium — rate limiter doesn't survive horizontal/serverless scale.** Already covered above; undermines brute-force protection on login and lock-spam protection on booking under real traffic.
-- **Low-Medium — no JWT revocation.** No logout blacklist or token-version field; a leaked token is valid for up to 7 days regardless of password change or "logout."
-- **Low — no explicit login-attempt lockout separate from the generic path-based rate limiter** (wasn't confirmed to be applied to `/api/auth/login` specifically — worth verifying).
-- **No IDOR, price-tampering, or user-ID-spoofing path found** in the booking/cancellation code — this is the one area actively hardened against exactly the abuse scenarios a real attacker would try first.
+`payment.service.js:637-659`. `upsertRefundEntry` loads the `Payment`, mutates `payment.refunds[]` in memory, and calls `payment.save()`. The webhook dedupe key is `event:entityId`, so `refund.created` and `refund.processed` **for the same refund** are different keys and can be processed concurrently. Both load the document, both write the whole array back — last write wins, and one refund entry (or status transition) is silently lost. `refundedAmount()` then under-reports, which feeds the over-refund guard at `:507`.
 
----
+Every other state transition in this file correctly uses an atomic `findOneAndUpdate`; this one is the exception. Fix is a positional-operator update or an atomic `$push` with an `arrayFilters` guard.
 
-## Product / UX Assessment
+### 4. Refunds initiated outside the app never reconcile to the booking
 
-Booking flow is short and clear (browse → slot select → summary → "payment" → confirmation), with a real booking reference (Mongo `_id`/`groupId`) shown on the success screen. Failure states exist and explicitly reassure "Nothing was charged" (`BookingFlowPage.tsx:133`) — honest, given nothing actually is. Owner and admin dashboards are polished (Recharts revenue chart, filterable booking tables) but the owner revenue chart is charting **unpaid bookings as revenue**, which will read as false the moment a real owner checks their bank account against it.
-
-Weakest point: there's no durable confirmation channel (email/SMS) — the booking only "exists" for the customer inside the app's own UI/session.
+`finalizeRefundIfComplete:661-689` finds the booking by matching `r.notes?.bookingId`. That note is only set when *this codebase* initiated the refund (`:489`). A refund issued from the Razorpay dashboard — the normal thing a support person does under pressure — creates an entry via `upsertRefundEntry` with **no notes** (`:648-655`), so `refundedBooking` is `undefined`. Consequences: the booking stays `CONFIRMED` with `refundStatus: NONE`, the slot is never released, and `payoutStatus` never flips to `VOID` — **the owner still gets paid out for a booking the platform refunded.** Silent, and it costs real money.
 
 ---
 
-## Admin & Operations Assessment
+## Top risks
 
-A venue manager running this for 12 hours a day today could: see today's bookings (via owner dashboard/table), approve/reject turfs (admin), ban/unban users (admin). They could **not**: cancel a customer's booking on the customer's behalf, issue any kind of refund, reschedule a booking, mark a no-show or a completed booking, or resolve a payment dispute — because none of that data or tooling exists yet. This is CRUD-plus-dashboards, not yet an operations tool.
-
----
-
-## Performance & Scalability
-
-At 10-500 bookings/day this system will perform fine — indexes exist on the fields actually queried (`ownerId`, `turfId`, unique `(turfId, startTime)`), and the Vercel serverless DB-connection caching is implemented correctly (`db.js:6-13`). At Friday-night peak concurrency, the two things to watch are the in-memory rate limiter (already flagged) and `getSlotsByTurf` triggering both `releaseExpiredLocks` and `provisionDefaultSlots` synchronously on every read of a bounded date range (`slot.service.js:176, 207-212`) — bounded and reasonable at today's scale, but worth watching as turf count grows into the hundreds.
-
-Multi-tenancy (1 → 10 → 100 venues) is architecturally sound: every query and mutation is already scoped by `ownerId`/`turfId`, so scaling venue count is a data-volume problem, not a redesign problem.
-
----
-
-## Architecture & Maintainability
-
-**Maintainability: 7.5/10.** Backend is cleanly modularized (controller/service/model per domain), comments consistently explain *why* rather than *what*, and the concurrency-critical code is genuinely well-reasoned rather than just "checked and moved on." Frontend components are reasonably sized; business logic (price snapshotting, IST handling) correctly lives server-side rather than being duplicated in the UI. No major god-objects or obvious overengineering found in the files reviewed.
-
----
-
-## Testing Maturity
-
-Unit tests exist for the highest-risk logic (`lockSlot`, `confirmSlot`, `cancelBooking`, auth middleware, image validation) and specifically assert the business rules that matter (price-at-lock-time, ownership checks, cutoff enforcement) — better than average for a project this size. However, **every DB interaction is mocked** (`booking.service.test.js:3-19`), so nothing actually proves the atomic-lock guarantee holds against a real MongoDB under concurrent load. There are no integration, e2e, or load tests, and (necessarily) no payment tests.
+| # | Risk | Severity | Evidence | Fix before launch? |
+|---|---|---|---|---|
+| 1 | Payment PAID with no booking, no recovery | Critical | `payment.service.js:261-332`; no reconciliation job exists | Yes |
+| 2 | Dashboard-initiated refund doesn't void payout | Critical | `payment.service.js:661-689` vs `:648-655` | Yes |
+| 3 | Lost update on `refunds[]` | High | `payment.service.js:637-659` | Yes |
+| 4 | Booking-list pagination is cosmetic | High | `booking.service.js:484, 749, 787, 865` — full fetch + 4 populates, sliced in JS at `:474-478` | Yes (cheap) |
+| 5 | No password reset | High | Frontend states it plainly; no backend route | Yes (support load) |
+| 6 | No CI pipeline | High | `.github/` absent; 177 tests exist but nothing runs them on push | Yes (cheap) |
+| 7 | Zero integration/concurrency tests over a payment layer | High | All 13 backend test files `vi.mock` the models | Recommended |
+| 8 | No alerting / error tracking | Medium | Structured logs only; nothing pages a human | Yes |
+| 9 | Health check doesn't check the database | Medium | `app.js:93-95` returns 200 with Mongo down | Yes (cheap) |
+| 10 | JWT in `localStorage`, no CSP header | Medium | `AuthContext.tsx:58`, `api.ts:38`; `app.js:77-86` sets no CSP | Recommended |
+| 11 | Rate-limit key trusts `X-Forwarded-For` | Medium | `rateLimit.js:89-97`; no `app.set('trust proxy')` | Mitigated on Vercel; document it |
+| 12 | TypeScript `strict` off across the frontend | Medium | `tsconfig.app.json:19-22`, `tsconfig.json:8-13` | Recommended |
+| 13 | Admin daily-revenue chart mixes server-local and UTC | Low | `admin.service.js:32-34, 63, 78` — no IST offset, unlike the rest of the codebase | Recommended |
+| 14 | No JWT revocation | Low-Med | `auth.js`; 7-day TTL | Recommended |
 
 ---
 
-## Observability & Production Operations
+## Detailed findings
 
-Structured JSON logging with automatic PII/secret redaction, request-ID correlation across frontend and backend (via the `/api/logs/client` ingestion endpoint), and level-appropriate severity (expected 4xx logged as warn, not error) — this is above-average logging discipline for a project this stage. What's missing for real operation: no external error tracking (Sentry-class tool), no metrics/APM, no alerting, and no CI pipeline (`.github/workflows` doesn't exist) — so nothing currently catches a regression before a human notices it in production.
+### Payment & financial reliability — 11/15
+
+The design is genuinely good, and several things here are better than typical:
+
+- The client callback is never trusted as proof. Signature is rebuilt from the server's own stored `razorpayOrderId` (`:394`, with an excellent comment explaining exactly which attack that closes), followed by a live `payments.fetch` status check (`:411`).
+- One authoritative transition reachable from both callback and webhook, made safe by an atomic status claim (`:261`).
+- Webhook idempotency via a unique `dedupeKey`, with the claim released on failure so Razorpay's retry still works (`payment.controller.js:86-99`).
+- Amounts are always server-computed from the price snapshotted at lock time; the sparse-index and re-lock bugs found in live testing were fixed properly at the root.
+- The commission split is stored, not derived — a rate change cannot reprice history.
+- The refund over-issue guard at `:507` is correct.
+
+Points lost are entirely to the four Critical items: the crash window, the two refund-reconciliation defects, and the absence of any tooling to notice when one of them bites.
+
+One cosmetic defect worth removing: `payment.service.js:532` is `status: already + amount >= payment.amount ? "PAID" : "PAID"` — a ternary with identical branches. Harmless, but it reads like an unfinished thought in the most safety-critical file in the repo.
+
+### Performance & scalability — 5/10 (regressed)
+
+This is the one category that got *worse*, and it is the cheapest to fix.
+
+`groupBookingsByReservation` must see a whole result set to group by `groupId`, so `getUserBookings`, `getOwnerBookings`, `getBookingsByTurf`, and `getOwnerCustomerDetail` all run an **unbounded** `Booking.find()` with four `.populate()` calls and then slice in JS (`paginateGrouped:474-478`). The `page`/`limit` parameters therefore reduce *bytes sent to the browser* and nothing else — DB work, memory, and populate round trips all scale with the customer's or owner's lifetime booking count, on every page view.
+
+The code comment at `:428-432` acknowledges the trade-off and calls it "simplest correct option for this app's booking volume," which is fair today. It is worth flagging because it is invisible in testing and degrades smoothly until it doesn't — and because the natural fix (a `$lookup` aggregation with `$skip`/`$limit`, or an index-backed two-pass query on distinct `groupId`) is a contained change. `admin.service.js` already does proper `skip`/`limit` for turfs and users, so the pattern exists in the codebase.
+
+Also: `Booking` has single-field indexes but no compound index matching the hot query shape (`turfId` + `createdAt`, `userId` + `createdAt`). And `provisionDefaultSlots` still runs on the slot read path, building an `$in` of ~1,440 dates for a month-range calendar fetch.
+
+### Security — 12/15
+
+Strong, and the recent hardening pass was real work:
+
+- `env.js` fail-fasts in production on missing `JWT_SECRET`, `CORS_ORIGINS`, `RAZORPAY_WEBHOOK_SECRET` (when a key is set), and all three ImageKit values — with comments explaining why a log warning was insufficient.
+- Webhook/cron secrets use `safeEqual` (constant-time); Brevo's endpoint 404s rather than degrading to unauthenticated when unconfigured.
+- Email templates escape all user/owner-supplied values (`email.templates.js:16`).
+- Ownership is enforced service-side on every mutation *and* every owner read path; `assertCanManageBooking` correctly widens for ADMIN without weakening the owner check. No IDOR, price-tampering, or user-id-spoofing path found.
+- Uploads validated by magic bytes, SVG deliberately refused.
+- No secrets committed; `.env` gitignored, only `.env.example` tracked.
+
+Remaining: the JWT lives in `localStorage` and the app sets no `Content-Security-Policy`, so any XSS is a full account takeover with a 7-day-valid token and no revocation. That combination is what keeps this from scoring higher. The rate limiter's `X-Forwarded-For` trust is safe on Vercel (the platform overwrites the header) but silently becomes bypassable on any host that doesn't — worth a comment in the file, since nothing in the code states the dependency.
+
+### Testing — 2/5 (regressed relative to risk)
+
+177 tests pass and they assert the right *business rules* — price-at-lock-time, cutoff enforcement, ownership, commission math, webhook dedupe. That is above average.
+
+But every one of the 13 backend files `vi.mock`s the Mongoose models. The system's core safety claims — "the atomic claim means only one caller creates bookings," "the unique index makes provisioning idempotent," "duplicate webhooks are a no-op" — are all claims *about MongoDB's behavior under concurrency*, and not one of them is exercised against a real database. The score drops versus last audit not because tests got worse, but because a payment layer arrived and inherited the same mock-only coverage. A `mongodb-memory-server` suite racing two `finalizePaymentSuccess` calls and two `lockSlot` calls would be the single highest-value test addition in this repo.
+
+No CI means none of these 177 tests run unless someone remembers.
+
+### Booking domain — 15/20
+
+Unchanged strengths: atomic locking, price snapshotting, fixed-offset IST handling, all-or-nothing multi-slot with compensating rollback, contiguity validation, per-user hold caps, advance-booking bounds.
+
+Gaps: `Booking.status` is still just `CONFIRMED | CANCELLED`. There is no reschedule, no-show, or completed state — a venue running this daily needs at least the latter two. Note also that `booking.model.js:31-32` and `:56-57` carry comments that are now false ("there is no admin/owner cancellation endpoint yet", "No payment gateway exists"); both features shipped. Stale comments in the schema that defines financial state are a real maintenance hazard.
+
+### Admin & operations — 4/5
+
+A venue manager can now do essentially everything day-to-day: see and filter bookings, cancel on a customer's behalf, record a refund, create a walk-in booking, look up a repeat customer, settle payouts, and read an audit trail of admin actions. This went from "CRUD plus dashboards" to a usable operations tool in one pass.
+
+What is missing is the *exception* path: no reschedule, no no-show marking, and — most importantly — no way to see or act on a payment that is stuck.
+
+### Observability — 3/5
+
+Logging remains a genuine strength: structured JSON, request-id correlation across both halves, redaction by key *and* by shape, appropriate severity levels, client error ingestion. The audit trail now adds queryable admin accountability.
+
+What is still absent is anything that tells a human something is wrong without a customer reporting it: no error tracking, no metrics, no alerting, and a health check (`app.js:93-95`) that returns `200 OK` regardless of database state — so an uptime monitor pointed at it will report green through a total Mongo outage.
 
 ---
 
-## Strengths (do not casually rewrite these)
+## What must be fixed before launch
 
-- The atomic slot-lock/confirm mechanism (`findOneAndUpdate` with combined status+time+expiry conditions) — this is the correct pattern and should not be replaced with a "simpler" read-then-write approach.
-- Price-snapshot-at-lock-time — closes a real class of bugs.
-- IST-aware date handling via a fixed-offset utility rather than server-local time — avoids a whole category of timezone bugs that are easy to ship silently.
-- Ownership checks are applied consistently and are not an afterthought.
-- Structured logging with redaction-by-default.
-- Honest UX copy ("Payment is simulated," "Nothing was charged") — the frontend doesn't pretend to be more finished than it is.
+1. Close the PAID-with-no-booking window and add a reconciliation query for `status: PAID, bookingIds: []`.
+2. Reconcile refunds that originate outside the app, so a dashboard refund voids the payout.
+3. Make `upsertRefundEntry` atomic.
+4. Add CI running the existing 177 tests on every push — the tests already exist, nothing runs them.
+5. Make `/api/health` verify the Mongo connection, and point an uptime monitor plus basic error-rate alerting at it.
+6. Bound the booking-list queries (add `skip`/`limit` at the DB layer, or group in an aggregation).
+7. Ship password reset — without it, every locked-out customer is a manual support ticket.
 
----
+## What can wait
 
-## Weaknesses
-
-- No payment/refund/notification layer (see Payment & Financial Assessment).
-- No admin/owner booking-intervention tooling (cancel, refund, reschedule, no-show).
-- In-memory rate limiting on a serverless deployment.
-- CORS open-by-default in production if misconfigured.
-- No integration/concurrency/e2e test coverage.
-- No CI pipeline, no external error tracking/alerting.
-- No audit trail for admin actions.
+Reschedule and no-show workflow, SMS, coupons, memberships, Razorpay Route payout automation, JWT revocation, enabling TS `strict` (worth doing incrementally), the IST fix on the admin chart, compound indexes, and full APM.
 
 ---
 
-## What Must Be Fixed Before Launch
+## Final recommendation
 
-1. Integrate a real payment gateway (Razorpay/Stripe) with webhook verification, idempotency, and a genuine pending/failed/refunded booking-status lifecycle.
-2. Build a refund flow tied to the cancellation policy.
-3. Give admin/owner the ability to cancel, refund, and reschedule a booking on a customer's behalf.
-4. Move rate limiting to a shared store (Redis or equivalent) before relying on it under real serverless concurrency.
-5. Enforce `CORS_ORIGINS` in production rather than defaulting open with a log warning.
-6. Add transactional email/SMS on booking confirm/cancel.
+**Can this go live? Yes, conditionally — as a soft launch, with the seven items above closed first and a human watching the payment table daily.**
 
-## What Can Wait Until After Launch
+The distance travelled since 2026-08-21 is substantial and real: the payment integration is thoughtfully built, the security hardening addressed the previous audit's findings at the root rather than papering over them, and the operations tooling went from unusable to adequate. The booking concurrency core remains the best part of the codebase and should not be rewritten.
 
-Coupons, memberships, ratings/reviews, recurring bookings, native mobile app, multi-city tooling, no-show tracking automation, JWT revocation (acceptable short-term risk with a short-ish token TTL), full APM/alerting stack (start with basic uptime + error-rate alerting, expand later).
+The reason this is not an unconditional go is narrow and specific: **the failure modes that remain are all silent ones.** A captured payment with no booking, a refund that doesn't void a payout, a lost refund entry — none of these throw, none of these alert, and none of these are visible in the admin UI. The system is now good at doing the right thing and still poor at telling anyone when it didn't. Closing items 1-5 above changes that, and they are days of work, not weeks.
 
----
-
-## Final Launch Recommendation
-
-**Can I launch this today? NO.**
-
-Not because the engineering is bad — the booking/concurrency core is better than most MVPs at this stage — but because there is currently no way for this system to collect money, refund money, or let staff intervene when something goes wrong with a booking. Launching with real customers, turf owners, staff, admins, and payment transactions is not possible today because the payment layer doesn't exist to be tested, let alone trusted.
-
-**If This Were My Startup:**
-
-1. **Would I launch it?** No, not yet — but I'd be comfortable putting real money behind finishing Phase 1 exactly as scoped in `FEATURES.md`; the foundation is trustworthy.
-2. **What would worry me most?** That "revenue" numbers shown to owners today are unpaid bookings — if that ships as-is, it damages trust with paying customers (turf owners) immediately.
-3. **Fix before launch:** payment gateway, refunds, admin booking intervention, CORS enforcement, shared-store rate limiting.
-4. **Can wait:** coupons, memberships, reviews, mobile app.
-5. **What could cause financial loss?** Nothing yet — there's no money flow to lose, which is itself the problem.
-6. **What could cause customer trust issues?** A booking confirmation that isn't backed by an actual charge, with no email/SMS receipt.
-7. **What could cause double bookings?** Nothing found — the lock mechanism appears sound, though it's unit-tested with mocks, not proven against a real concurrent DB.
-8. **What could become a scaling problem?** The in-memory rate limiter, first.
-9. **Strong architectural decisions:** atomic locking, price snapshotting, IST-fixed time handling, ownership-scoped queries everywhere.
-10. **Dangerous decisions:** none found in what's built — the danger here is entirely in what's *not yet built* (payments/refunds), not in bad decisions in the existing code.
+**Biggest financial-loss risk:** a dashboard-issued refund leaving `payoutStatus: PENDING`, so the platform refunds the customer and pays the owner for the same booking.
+**Biggest trust risk:** the crash window — a customer who is charged, receives no booking and no refund, and has to notice it themselves.
+**Biggest scaling risk:** unbounded booking-list fetches, which degrade invisibly until they don't.

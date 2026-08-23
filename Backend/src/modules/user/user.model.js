@@ -72,6 +72,22 @@ const userSchema = new mongoose.Schema(
       ref: "User",
       default: null,
     },
+    // Password reset (auth.service.js requestPasswordReset/resetPassword).
+    // Only the SHA-256 hash of the token is stored — same reasoning as never
+    // storing the password itself: this document leaking (backup, injection,
+    // a careless log line) must not hand out a usable reset link. The token
+    // that's actually emailed to the user is only ever compared against this
+    // hash, never stored anywhere in cleartext server-side.
+    resetPasswordTokenHash: {
+      type: String,
+      default: null,
+      select: false,
+    },
+    resetPasswordExpires: {
+      type: Date,
+      default: null,
+      select: false,
+    },
     // Where an admin should send an OWNER's payout (see payout.model.js).
     // Purely informational — nothing in this codebase moves money to it
     // automatically; it exists so the admin settling a payout knows where to

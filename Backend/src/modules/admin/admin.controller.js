@@ -1,4 +1,5 @@
 import * as adminService from "./admin.service.js";
+import * as paymentService from "../payment/payment.service.js";
 import ApiResponse from "../../common/utils/ApiResponse.js";
 
 export const getStats = async (_req, res) => {
@@ -100,6 +101,30 @@ export const getAllCustomers = async (req, res) => {
 export const getCustomerDetail = async (req, res) => {
   const detail = await adminService.getCustomerDetailForAdmin(req.params.userId);
   new ApiResponse(200, "Customer detail fetched successfully", detail).send(res);
+};
+
+/**
+ * Payments captured (real money taken) whose booking creation never
+ * finished — see payment.service.js's findStuckPayments for the crash
+ * window this covers. Not a scheduled job (see ai-context.md's "recurring
+ * work without a scheduler") — this is the human-triggered surface for
+ * something that, unlike everything else in this codebase, genuinely
+ * cannot be derived from a request that's already happening: nobody's
+ * browser is polling for a payment its own tab already thinks is fine.
+ */
+export const getStuckPayments = async (_req, res) => {
+  const payments = await paymentService.findStuckPayments();
+  new ApiResponse(200, "Stuck payments fetched successfully", payments).send(res);
+};
+
+export const reconcileStuckPayment = async (req, res) => {
+  const result = await paymentService.reconcileStuckPayment(req.params.id);
+  await adminService.logAdminAction(req.user._id, "PAYMENT_RECONCILED", "PAYMENT", req.params.id, {
+    recoveredCount: result.recovered?.length ?? 0,
+    bookingFailed: !!result.bookingFailed,
+    alreadyComplete: !!result.alreadyComplete,
+  });
+  new ApiResponse(200, "Payment reconciled", result).send(res);
 };
 
 export const getAuditLog = async (req, res) => {

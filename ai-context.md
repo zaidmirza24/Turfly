@@ -615,14 +615,199 @@ not from unit tests against mocks:
    sparse-index gotcha, worth remembering for any future `unique + sparse`
    field: never pair it with a schema default other than "no default".
 
+## Security/reliability hardening & payment-bypass fix (2026-08-23)
+
+Same day as the Razorpay/Brevo integration, in a follow-up pass once it was
+live:
+
+- **Closed a payment bypass**: `POST /api/bookings`, `/api/bookings/multi`,
+  `/api/bookings/confirm` were still reachable by USER role and would create
+  a CONFIRMED booking with no payment at all — the old simulated-checkout
+  routes, never removed when Razorpay replaced them. Removed for USER; the
+  underlying `bookSlot`/`confirmSlot`/`bookMultipleSlots` functions are
+  untouched and still used internally by `finalizePaymentSuccess` and the
+  owner-only manual/cash booking flow below.
+- **Rate limiting is now MongoDB-backed** (`common/models/rateLimitBucket.model.js`),
+  not in-memory — the in-memory version reset per Vercel cold start, so
+  limits on login/`/bookings/lock` were close to a no-op under real
+  multi-instance serverless traffic. One atomic `findOneAndUpdate` per
+  request, same pattern as slot locking.
+- **`CORS_ORIGINS` is now required in production at startup** (fail-fast,
+  same pattern as `JWT_SECRET`) instead of defaulting to "allow any origin"
+  with just a log warning.
+- User/owner-supplied strings are now escaped before interpolating into
+  transactional HTML emails; cron/Brevo webhook secret comparisons are
+  constant-time, matching the existing Razorpay signature checks.
+
+## Owner/admin booking intervention, manual bookings, customer view (2026-08-23)
+
+Addresses what was previously the biggest real operational gap: owners/admins
+had no way to act on a booking after it was made, and only ever saw one day's
+schedule at a time.
+
+- **Cancel + refund**: `PATCH /api/bookings/:id/cancel` (owner of that turf,
+  or ADMIN) — unlike the customer's own cancel path, there's no 6-hour cutoff
+  or "already started" check, since an owner needs to void a booking for a
+  maintenance emergency or a no-show right up to and past start time
+  (`cancelBookingAsOwner` in `booking.service.js`). For an ONLINE booking, a
+  real Razorpay refund is auto-initiated as part of cancellation (existing
+  payment-module flow); `PATCH /api/bookings/:id/refund`
+  (`markBookingRefunded`) is a separate, narrower action — it only lets an
+  owner record that they refunded a CASH/PENDING booking themselves outside
+  the app, and explicitly refuses to touch a booking that has a real payment
+  record, so it can never be used to paper over the automatic refund's actual
+  state.
+- **Manual/walk-in bookings**: `POST /api/bookings/manual`
+  (`createManualBooking`) — owner books a slot on a customer's behalf (phone
+  or walk-in), with guest-customer quick-create/search on the frontend
+  (`OwnerBookingsPage/ManualBookingModal.tsx`). Reuses `bookMultipleSlots`
+  unchanged; a manual booking is the same booking mechanism, just a
+  different caller identity.
+- **Customer view**: `GET /api/bookings/owner/customers` /
+  `.../customers/:userId` — an aggregated per-customer list (booking counts,
+  lifetime spend) derived entirely from existing `Booking`+`User` data via
+  aggregation pipeline, not a separate collection, so it can never drift out
+  of sync.
+- **Pagination**: `getOwnerBookings`/`getBookingsByTurf`/`getOwnerCustomers`
+  now take `page`/`limit` and return `{ items, total, page, pages }` — this
+  is the one pagination pattern established in the backend so far (other
+  list endpoints still return everything, see "Still not implemented").
+- **Week-at-a-glance occupancy overview** and a **Block Time** gesture
+  (owner blocks a time range, can span midnight in one action) on the slot
+  management page.
+- **Admin panel buildout** (`d784ffe`, same day): admin previously covered
+  only turf approval and user ban/unban. Now reuses the same
+  ADMIN-authorized cancel/refund routes for platform-wide bookings/customers
+  management, adds a turf-detail drawer on the approval queue, server-side
+  pagination+search on turfs/users, a revenue chart, and an **admin action
+  audit trail** (`auditLog.model.js`, `logAdminAction` — every approve/
+  reject/ban/cancel/refund/payout action an admin takes is now logged with
+  actor, action, target, and metadata, closing the "no audit trail" gap).
+
+Deliberately **not** built in this pass: **reschedule** — there's still no
+endpoint that moves a booking to a different slot; cancel-and-rebook (by the
+owner, via manual booking, or by the customer) is the only path today. This
+is now the one real remaining gap in booking-intervention tooling.
+
+## UX polish: grouped reservations, live availability, legacy-image fix (2026-08-23)
+
+Three smaller follow-up commits the same day:
+
+- **Grouped multi-slot reservations**: a multi-slot checkout still creates
+  one `Booking` document per hour internally (shares a `groupId`), but every
+  list/detail view (customer, owner, admin) now collapses those into one
+  logical reservation spanning start→end, instead of showing N separate rows
+  for one checkout (`groupBookingsByReservation` in `booking.service.js`).
+- **Live slot-grid polling**: the slot picker polls every 15s so a slot
+  someone else just locked shows as unavailable without a manual refresh;
+  a 1-minute "summary hold" is applied the instant a customer opens the
+  booking summary screen (extended to the full payment hold on "Pay Now" via
+  a same-user lock-renewal path already built into `lockSlot`), and the
+  "no start times available" empty state now correctly surfaces even when
+  every duration is disabled rather than just looking empty.
+- **Legacy image fix**: images uploaded before the ImageKit migration
+  (`c51081f`) only existed as a raw Mongo `data` Buffer with no `filePath` —
+  `buildDeliveryUrl` was silently redirecting to a broken URL. Added a
+  one-off migration script (`npm run images:migrate-legacy`) plus a guard so
+  any future doc missing `filePath` 404s instead of redirecting to nothing.
+
+## Reliability fix pass, from a fresh production-readiness audit (2026-08-24)
+
+A second audit (`PRODUCTION_READINESS_ASSESSMENT.md`, 2026-08-23) found four
+new Critical issues — all only possible once real payments existed, so the
+first audit couldn't have found them. All four, plus every "must fix before
+launch" item from that audit, were closed the next day:
+
+- **The PAID-with-no-booking crash window** — `finalizePaymentSuccess`
+  (`payment.service.js`) claims a payment `PAID` and then loops confirming
+  each slot; if the process died mid-loop (serverless timeout, deploy), the
+  payment stayed `PAID` with `bookingIds: []` and no way to recover — the
+  webhook dedupe row was already inserted, so redelivery was a no-op, and
+  the atomic claim doesn't re-match an already-`PAID` payment. Fixed two
+  ways: `bookingIds` is now pushed to incrementally (one `$push` per slot,
+  not just once at the end) so a crash leaves an accurate partial record
+  instead of an empty one; and new `findStuckPayments`/
+  `reconcileStuckPayment` detect `bookingIds.length < slotIds.length` and
+  finish the job (or roll back and fully refund if a slot was lost to a
+  race in the meantime) — exposed at `GET /admin/payments/stuck` /
+  `POST /admin/payments/:id/reconcile`, with a real **Admin → Stuck
+  Payments** page, not just an API endpoint nobody would think to poll.
+- **Dashboard-issued refunds didn't void the payout** — `Payment.refunds[]`
+  only gets a `notes.bookingId` tag when *this codebase* initiates the
+  refund (`initiateRefundForBooking`, on cancellation). A refund issued
+  directly from the Razorpay dashboard — the normal thing support does
+  under pressure — had no such tag, so `finalizeRefundIfComplete` silently
+  did nothing: the booking stayed `CONFIRMED`, the slot stayed `BOOKED`,
+  and the owner still got paid out for money the platform had already
+  given back. Fixed: an unmatched refund that covers a payment's *full*
+  amount is now treated as external and reconciles every active booking
+  under it (cancel, release slot, void/clawback payout) the same way an
+  in-app cancellation would. An unmatched *partial* refund is deliberately
+  left alone and logged for manual review — it can't be safely guessed at
+  across a multi-slot group.
+- **Lost update on `refunds[]`** — `upsertRefundEntry` was load-then-
+  `.save()`, and `refund.created`/`refund.processed` for the same refund
+  are different webhook dedupe keys, so they could race and silently drop
+  one delivery's update. Rewritten as two atomic `findOneAndUpdate` calls
+  (update the array element if it exists, `$push` if not), matching the
+  pattern every other mutation in this file already used.
+- **Booking-list queries were effectively unbounded** — `groupBookingsByReservation`
+  needs to see a whole result set to collapse a multi-slot checkout into
+  one reservation, so `page`/`limit` on the owner/admin/customer bookings
+  lists only ever trimmed what was sent to the browser, not what was
+  fetched or populated; cost scaled with lifetime booking count. Capped the
+  raw fetch at 500 documents (`MAX_BOOKINGS_SCAN`) as a bounded stopgap —
+  documented in place as not the real fix, which is an aggregation
+  pipeline that groups server-side — and added compound indexes
+  (`{turfId, createdAt}` / `{userId, createdAt}`) matching the actual query
+  shape.
+- **`/api/health` didn't check the database** — returned `200` regardless
+  of Mongo's connection state, so an uptime monitor would report green
+  through a total outage. Now checks `mongoose.connection.readyState` and
+  returns 503 when disconnected.
+- **No CI** — `.github/workflows/ci.yml` now runs both test suites plus a
+  frontend typecheck on every push/PR. The tests already existed; nothing
+  had been running them.
+- **Password reset**, previously an honest "email support" stub, is now a
+  real flow: `POST /auth/forgot-password` / `POST /auth/reset-password`,
+  a SHA-256-hashed single-use token with a 1-hour expiry (never the raw
+  token stored), the same generic response whether or not the email
+  exists (no account-enumeration oracle), a new transactional email
+  template, and working `/forgot-password` + `/reset-password` pages on
+  the frontend.
+
+Also fixed in passing: a dead `cond ? "PAID" : "PAID"` ternary in
+`payment.service.js`; two stale schema comments in `booking.model.js`
+claiming admin cancellation and payments don't exist (both have for a
+while); and a frontend crash-in-waiting in the admin audit log
+(`AuditLogRow.tsx` indexed action display metadata with no fallback for an
+unrecognized action — the new `PAYMENT_RECONCILED` type would have thrown
+the first time one was logged; now has a defensive fallback for any future
+action type too).
+
+16 new backend tests cover these fixes specifically (stuck-payment
+detection/recovery including the refund-rollback path, external-refund
+reconciliation for both full and partial cases, the atomic refund-entry
+update, and the password-reset flow including its
+account-enumeration-safety property). Full before/after scoring in
+`PRODUCTION_READINESS_ASSESSMENT.md`'s "Fix pass" section.
+
 ## Still not implemented
 
-- ❌ Password reset (the page says so rather than pretending to send a mail)
-- ❌ Pagination on any list endpoint
+- ❌ Booking reschedule (owner/admin/customer can only cancel-and-rebook —
+  see "Owner/admin booking intervention" above)
+- ❌ Pagination on most list endpoints is now bounded (500-doc cap) rather
+  than fully solved — see "Reliability fix pass" above; turf listing,
+  admin turfs/users, and notifications still return everything unpaginated
 - ❌ Owner payout automation (settlement is a ledger + an admin's manual
   "mark paid" action, not a real money transfer — see "Commission split &
   owner payout" above; no Razorpay Route/RazorpayX integration)
 - ❌ SMS notifications (email only)
+- ❌ No-show/completed booking workflow
+- ❌ JWT revocation (no logout blacklist or session versioning)
+- ❌ Integration/concurrency tests against a real MongoDB (all 153 backend
+  tests mock the Mongoose models — the atomic-update guarantees themselves
+  are asserted by inspection, not proven against real concurrent writes)
 
 ## Running the Project
 

@@ -1,6 +1,7 @@
 import "express-async-errors";
 import express from "express";
 import cors from "cors";
+import mongoose from "mongoose";
 
 import env from "./common/config/env.js";
 import errorHandler from "./common/middlewares/errorHandler.js";
@@ -90,8 +91,20 @@ app.get("/", (_req, res) => {
 });
 
 // ── Health Check ──
+// Verifies the actual DB connection rather than just "this process is
+// running" — an uptime monitor pointed at a health check that always
+// returns 200 would report green through a total Mongo outage, which is
+// exactly the kind of silent failure this app otherwise goes out of its way
+// to avoid (see the redaction/logging discipline in logger.js). readyState
+// 1 = connected; anything else (0 disconnected, 2 connecting, 3
+// disconnecting) is reported as unhealthy.
 app.get("/api/health", (_req, res) => {
-  res.json({ success: true, message: "TURF API is running 🏟️" });
+  const dbConnected = mongoose.connection.readyState === 1;
+  res.status(dbConnected ? 200 : 503).json({
+    success: dbConnected,
+    message: dbConnected ? "TURF API is running 🏟️" : "Database connection unavailable",
+    db: dbConnected ? "connected" : "disconnected",
+  });
 });
 
 // ── API Routes ──

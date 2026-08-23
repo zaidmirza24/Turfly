@@ -207,6 +207,24 @@ export interface Payment {
   bookingIds?: string[];
 }
 
+/**
+ * A Payment stuck PAID with fewer bookings than slots it paid for — the
+ * crash-window admin surface (GET /admin/payments/stuck). Real money was
+ * captured; booking creation didn't finish.
+ */
+export interface StuckPayment {
+  _id: string;
+  status: 'PAID';
+  userId: string;
+  turfId: string;
+  slotIds: string[];
+  bookingIds: string[];
+  amount: number;
+  paidAt: string;
+  groupId: string | null;
+  razorpayPaymentId?: string | null;
+}
+
 /** Response of POST /api/payments/create-order — everything Razorpay Checkout needs. */
 export interface CheckoutOrder {
   keyId: string;
@@ -279,14 +297,15 @@ export type AdminAction =
   | 'USER_UNBANNED'
   | 'BOOKING_CANCELLED'
   | 'BOOKING_REFUNDED'
-  | 'BOOKING_PAID_OUT';
+  | 'BOOKING_PAID_OUT'
+  | 'PAYMENT_RECONCILED';
 
 /** One row of the admin action audit trail. */
 export interface AuditLogEntry {
   _id: string;
   adminId: string | Pick<User, '_id' | 'name' | 'email'>;
   action: AdminAction;
-  targetType: 'TURF' | 'USER' | 'BOOKING';
+  targetType: 'TURF' | 'USER' | 'BOOKING' | 'PAYMENT';
   targetId: string;
   meta?: Record<string, unknown>;
   createdAt: string;

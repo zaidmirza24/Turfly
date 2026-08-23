@@ -1,6 +1,63 @@
 # TURF Project Progress Report
 
-## Current Status: Commission split + ledger-based owner payouts
+## Current Status: Production-readiness fix pass — payment reliability, CI, password reset
+**Date:** 2026-08-24
+
+A fresh production-readiness audit (`PRODUCTION_READINESS_ASSESSMENT.md`,
+run 2026-08-23) found four new Critical issues that only became possible
+once real payments existed: a crash window that could leave a payment
+captured with no booking and no recovery path; dashboard-issued refunds
+silently not voiding the owner's payout; a lost-update race on the
+refunds array; and unbounded booking-list queries. All four — plus CI, a
+DB-aware health check, and a real password-reset flow (previously an
+honest "email support" stub) — were fixed the next day. 16 new backend
+tests cover the fixes specifically. Full detail in
+`PRODUCTION_READINESS_ASSESSMENT.md`'s "Fix pass" section and
+`ai-context.md`'s "Reliability fix pass" section. Score went from 70/72
+(audit) to 84/88 (post-fix); verdict moved from 🟡 conditional go to 🟢 go
+for a soft launch.
+
+## Previous milestone: UX polish, live availability, legacy-image fix
+**Date:** 2026-08-23
+
+Grouped multi-slot reservations (one card per checkout instead of one per
+hour) across every booking list; 1-minute summary hold + 15s live polling on
+the slot picker so a slot someone else just locked shows as taken without a
+manual refresh; fixed broken images for turfs uploaded before the ImageKit
+migration (legacy Mongo-blob images had no `filePath` — added a migration
+script and a guard against ever silently redirecting to a dead URL again).
+
+## Previous milestone: Owner/admin booking intervention + admin panel buildout + security hardening
+**Date:** 2026-08-23
+
+Three things landed the same day, closing what the production-readiness
+audit had called the biggest remaining operational gap:
+
+- **Owner/admin can now act on a booking after it's made**: cancel a
+  customer's booking (no cutoff — needed for maintenance/no-shows), an
+  auto-initiated real refund on cancellation for online bookings, manual/
+  walk-in booking creation, an aggregated customer view, pagination+filters
+  on the owner bookings list, and a week-at-a-glance schedule view.
+- **Admin panel** grew from "approve turfs + ban users" into full
+  platform-wide booking/customer management (reusing the same
+  ADMIN-authorized routes), a revenue chart, and an **admin action audit
+  trail** — every approve/reject/ban/cancel/refund/payout is now logged.
+- **Security/reliability hardening**: closed a payment-bypass bug (old
+  simulated-checkout routes were still reachable by USER role and skipped
+  Razorpay entirely), replaced the in-memory rate limiter with a
+  MongoDB-backed one (the old one was close to a no-op across Vercel's
+  serverless instances), and made `CORS_ORIGINS` fail-fast-required in
+  production instead of defaulting open with a warning.
+
+This directly resolves several items the 2026-08-21 production-readiness
+audit flagged as launch blockers: no admin booking intervention, in-memory
+rate limiter, CORS open-by-default, no audit trail. See `ai-context.md`'s
+"Owner/admin booking intervention," "Security/reliability hardening," and
+"UX polish" sections for full detail. Remaining gap in this area:
+**reschedule** — there's still no way to move a booking to a different slot;
+cancel-and-rebook is the only path.
+
+## Previous milestone: Commission split + ledger-based owner payouts
 **Date:** 2026-08-23
 
 Every ONLINE booking now splits into a platform commission (flat 10%,

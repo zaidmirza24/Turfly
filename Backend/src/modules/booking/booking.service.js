@@ -477,6 +477,19 @@ const paginateGrouped = (items, page, limit) => {
   return { items: items.slice(skip, skip + limit), total, page, pages: Math.ceil(total / limit) || 1 };
 };
 
+// groupBookingsByReservation has to see every matching Booking document to
+// collapse a multi-slot checkout into one reservation, so the query behind
+// it can't paginate at the DB level the normal way (see paginateGrouped's
+// own JS slice, above) — page/limit there only trim what's sent to the
+// browser, not what's fetched or populated. This caps the *raw* fetch at a
+// bounded, recent window instead of letting it grow unboundedly with a
+// user's/turf's lifetime booking count: cost is now capped regardless of
+// history, at the price of very old pages (well past a few hundred
+// bookings back) potentially not appearing. A real fix is an aggregation
+// pipeline that groups by groupId with $skip/$limit server-side; this is
+// the safety net until that lands — see PRODUCTION_READINESS_ASSESSMENT.md.
+const MAX_BOOKINGS_SCAN = 500;
+
 /**
  * Get all bookings for the logged-in user.
  */
@@ -485,7 +498,8 @@ export const getUserBookings = async (userId) => {
     .populate("turfId", "name location sportsType")
     .populate("slotId", "startTime endTime price")
     .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt")
-    .sort({ createdAt: -1 });
+    .sort({ createdAt: -1 })
+    .limit(MAX_BOOKINGS_SCAN);
   return groupBookingsByReservation(bookings);
 };
 
@@ -750,7 +764,8 @@ export const getBookingsByTurf = async (ownerId, turfId, { page = 1, limit = 20 
     .populate("userId", "name email phone")
     .populate("slotId", "startTime endTime price")
     .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt")
-    .sort({ createdAt: -1 });
+    .sort({ createdAt: -1 })
+    .limit(MAX_BOOKINGS_SCAN);
 
   return paginateGrouped(groupBookingsByReservation(bookings), page, limit);
 };
@@ -789,7 +804,8 @@ export const getOwnerBookings = async (ownerId, { page = 1, limit = 20, from, to
     .populate("turfId", "name location sportsType")
     .populate("slotId", "startTime endTime price")
     .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt")
-    .sort({ createdAt: -1 });
+    .sort({ createdAt: -1 })
+    .limit(MAX_BOOKINGS_SCAN);
 
   return paginateGrouped(groupBookingsByReservation(bookings), page, limit);
 };

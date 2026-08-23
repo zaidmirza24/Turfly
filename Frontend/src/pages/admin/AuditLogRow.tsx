@@ -1,4 +1,4 @@
-import { CheckCircle2, XCircle, Ban, ShieldCheck, CalendarX, RotateCcw, Wallet } from 'lucide-react';
+import { CheckCircle2, XCircle, Ban, ShieldCheck, CalendarX, RotateCcw, Wallet, Wrench } from 'lucide-react';
 import { AuditLogEntry } from '@/types';
 
 const ACTION_META: Record<AuditLogEntry['action'], { label: string; icon: typeof CheckCircle2; color: string }> = {
@@ -9,6 +9,7 @@ const ACTION_META: Record<AuditLogEntry['action'], { label: string; icon: typeof
   BOOKING_CANCELLED: { label: 'cancelled a booking', icon: CalendarX, color: 'text-destructive bg-destructive/10' },
   BOOKING_REFUNDED: { label: 'marked a booking refunded', icon: RotateCcw, color: 'text-primary bg-primary/10' },
   BOOKING_PAID_OUT: { label: 'settled an owner payout', icon: Wallet, color: 'text-success bg-success/10' },
+  PAYMENT_RECONCILED: { label: 'reconciled a stuck payment', icon: Wrench, color: 'text-primary bg-primary/10' },
 };
 
 function adminName(entry: AuditLogEntry) {
@@ -16,7 +17,10 @@ function adminName(entry: AuditLogEntry) {
 }
 
 export function AuditLogRow({ entry }: { entry: AuditLogEntry }) {
-  const meta = ACTION_META[entry.action];
+  // Defensive fallback: a new action type shipping on the backend before the
+  // frontend knows about it must not crash this feed for every other row —
+  // it's exactly what happened here until PAYMENT_RECONCILED was added above.
+  const meta = ACTION_META[entry.action] ?? { label: entry.action, icon: Wrench, color: 'text-muted-foreground bg-muted' };
   const Icon = meta.icon;
   return (
     <div className="flex items-start gap-3 p-3 rounded-2xl hover:bg-primary/5 transition-colors">

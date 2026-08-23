@@ -472,23 +472,194 @@ export function SignupPage() {
  * asking for help. Until the flow exists, say so.
  */
 export function ForgotPasswordPage() {
+  const [email, setEmail] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [sent, setSent] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email) return;
+    setLoading(true);
+    try {
+      await api.post('/auth/forgot-password', { email });
+    } catch {
+      // Deliberately ignored: the backend always returns the same generic
+      // success response whether or not the email exists (see
+      // auth.controller.js#forgotPassword) — an enumeration oracle here
+      // would be exactly what that's designed to prevent, so the UI shows
+      // the same "check your inbox" state regardless of what happened.
+    } finally {
+      setLoading(false);
+      setSent(true);
+    }
+  };
+
+  if (sent) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center px-4 bg-background">
+        <div className="w-full max-w-sm text-center p-9">
+          <h1 className="font-display text-2xl font-bold tracking-tight mb-1">Check your inbox</h1>
+          <p className="text-sm text-muted-foreground mb-7">
+            If an account exists for <span className="font-semibold text-foreground">{email}</span>, we've sent a
+            link to reset your password. It expires in 1 hour.
+          </p>
+          <div className="bg-muted border text-sm text-left p-5 rounded-xl leading-relaxed mb-6">
+            Didn't get it? Check spam, or contact{' '}
+            <a href="mailto:support@turfly.app" className="font-semibold text-primary underline">
+              support@turfly.app
+            </a>{' '}
+            for help.
+          </div>
+          <Link to="/login">
+            <Button className="w-full h-11 rounded-lg font-semibold">Back to login</Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen w-full flex items-center justify-center px-4 bg-background">
-      <div className="w-full max-w-sm text-center p-9">
-        <h1 className="font-display text-2xl font-bold tracking-tight mb-1">Reset password</h1>
-        <p className="text-sm text-muted-foreground mb-7">
-          Self-service password reset isn't available yet.
+      <div className="w-full max-w-sm p-9">
+        <h1 className="font-display text-2xl font-bold tracking-tight mb-1 text-center">Reset password</h1>
+        <p className="text-sm text-muted-foreground mb-7 text-center">
+          Enter your account email and we'll send you a link to reset your password.
         </p>
-        <div className="bg-muted border text-sm text-left p-5 rounded-xl leading-relaxed mb-6">
-          If you can't get into your account, contact us at{' '}
-          <a href="mailto:support@turfly.app" className="font-semibold text-primary underline">
-            support@turfly.app
-          </a>{' '}
-          and we'll help you back in.
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="reset-email" className="text-xs font-semibold">Email</Label>
+            <Input
+              id="reset-email"
+              type="email"
+              autoComplete="email"
+              placeholder="you@email.com"
+              className="h-11 rounded-lg"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+          <Button type="submit" className="w-full h-11 rounded-lg font-semibold" disabled={loading || !email}>
+            {loading ? <Loader2 className="animate-spin" size={18} /> : 'Send reset link'}
+          </Button>
+        </form>
+        <div className="text-center mt-6 text-sm text-muted-foreground">
+          <Link to="/login" className="text-primary font-semibold">Back to login</Link>
         </div>
-        <Link to="/login">
-          <Button className="w-full h-11 rounded-lg font-semibold">Back to login</Button>
-        </Link>
+      </div>
+    </div>
+  );
+}
+
+export function ResetPasswordPage() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const token = searchParams.get('token') || '';
+  const email = searchParams.get('email') || '';
+
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPass, setShowPass] = useState(false);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const missingLinkParams = !token || !email;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (password.length < 6) { setError('Password must be at least 6 characters'); return; }
+    if (password !== confirmPassword) { setError('Passwords do not match'); return; }
+    setLoading(true);
+    try {
+      await api.post('/auth/reset-password', { email, token, password });
+      setDone(true);
+      toast.success('Password reset — log in with your new password');
+      setTimeout(() => navigate('/login'), 1500);
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      setError(message || 'That reset link is invalid or has expired — request a new one.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (missingLinkParams) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center px-4 bg-background">
+        <div className="w-full max-w-sm text-center p-9">
+          <h1 className="font-display text-2xl font-bold tracking-tight mb-1">Invalid reset link</h1>
+          <p className="text-sm text-muted-foreground mb-7">
+            This link is missing or malformed. Request a new one from the login page.
+          </p>
+          <Link to="/forgot-password">
+            <Button className="w-full h-11 rounded-lg font-semibold">Request a new link</Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (done) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center px-4 bg-background">
+        <div className="w-full max-w-sm text-center p-9">
+          <h1 className="font-display text-2xl font-bold tracking-tight mb-1">Password reset</h1>
+          <p className="text-sm text-muted-foreground mb-7">Taking you to login...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen w-full flex items-center justify-center px-4 bg-background">
+      <div className="w-full max-w-sm p-9">
+        <h1 className="font-display text-2xl font-bold tracking-tight mb-1 text-center">Set a new password</h1>
+        <p className="text-sm text-muted-foreground mb-7 text-center">for {email}</p>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="new-password" className="text-xs font-semibold">New password</Label>
+            <div className="relative">
+              <Input
+                id="new-password"
+                type={showPass ? 'text' : 'password'}
+                autoComplete="new-password"
+                placeholder="••••••••"
+                className="h-11 rounded-lg pr-11"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                aria-label={showPass ? 'Hide password' : 'Show password'}
+                className="absolute right-0 top-0 h-11 w-11 flex items-center justify-center text-muted-foreground hover:text-foreground"
+                onClick={() => setShowPass(!showPass)}
+              >
+                {showPass ? <EyeOff size={17} /> : <Eye size={17} />}
+              </button>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="confirm-password" className="text-xs font-semibold">Confirm new password</Label>
+            <Input
+              id="confirm-password"
+              type={showPass ? 'text' : 'password'}
+              autoComplete="new-password"
+              placeholder="••••••••"
+              className="h-11 rounded-lg"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+            />
+          </div>
+
+          {error && (
+            <div role="alert" className="bg-destructive/10 border border-destructive/20 text-destructive text-xs font-medium p-3 rounded-lg">{error}</div>
+          )}
+
+          <Button type="submit" className="w-full h-11 rounded-lg font-semibold" disabled={loading}>
+            {loading ? <Loader2 className="animate-spin" size={18} /> : 'Reset password'}
+          </Button>
+        </form>
       </div>
     </div>
   );

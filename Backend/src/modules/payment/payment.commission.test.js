@@ -111,19 +111,21 @@ describe("Payout clawback on refund.processed (full clawback policy)", () => {
   // finalizeRefundIfComplete only matches a refund to "its" booking via the
   // notes.bookingId tag set when the refund was created (initiateRefundForBooking) —
   // seeding an existing refunds[] entry with that tag mirrors the real
-  // create -> webhook-confirm sequence (upsertRefundEntry updates status in
-  // place on a match, it never touches notes).
-  const paymentDocWithTaggedRefund = () => ({
+  // create -> webhook-confirm sequence. upsertRefundEntry now does this
+  // atomically (Payment.findOneAndUpdate with the positional operator, see
+  // payment.service.js), not a load-then-.save() round trip — an existing
+  // entry means its "update in place" branch matches on the first call and
+  // returns the already-updated document directly.
+  const paymentDocWithTaggedRefund = (amount = 500) => ({
     _id: "pay_doc_1",
-    refunds: [{ razorpayRefundId: "rfnd_1", amount: 500, status: "CREATED", notes: { bookingId: "b1" } }],
-    refundedAmount: () => 500,
-    save: vi.fn().mockResolvedValue(true),
+    amount: 500,
+    refunds: [{ razorpayRefundId: "rfnd_1", amount, status: "PROCESSED", notes: { bookingId: "b1" } }],
+    refundedAmount: () => amount,
   });
 
   it("voids a still-PENDING payout — nothing was ever actually paid out, so nothing to claw back", async () => {
-    const paymentDoc = paymentDocWithTaggedRefund();
-    Payment.findOne.mockResolvedValue(paymentDoc);
-    const bookingDoc = { _id: "b1", refundStatus: "REFUND_PENDING", payoutStatus: "PENDING", save: vi.fn().mockResolvedValue(true) };
+    Payment.findOneAndUpdate.mockResolvedValue(paymentDocWithTaggedRefund());
+    const bookingDoc = { _id: "b1", status: "CANCELLED", refundStatus: "REFUND_PENDING", payoutStatus: "PENDING", save: vi.fn().mockResolvedValue(true) };
     Booking.find.mockResolvedValue([bookingDoc]);
 
     await handleWebhookEvent("refund.processed", refundWebhook());
@@ -133,9 +135,8 @@ describe("Payout clawback on refund.processed (full clawback policy)", () => {
   });
 
   it("flags an already-PAID payout as CLAWBACK_OWED instead of silently erasing that the owner was paid", async () => {
-    const paymentDoc = paymentDocWithTaggedRefund();
-    Payment.findOne.mockResolvedValue(paymentDoc);
-    const bookingDoc = { _id: "b1", refundStatus: "REFUND_PENDING", payoutStatus: "PAID", save: vi.fn().mockResolvedValue(true) };
+    Payment.findOneAndUpdate.mockResolvedValue(paymentDocWithTaggedRefund());
+    const bookingDoc = { _id: "b1", status: "CANCELLED", refundStatus: "REFUND_PENDING", payoutStatus: "PAID", save: vi.fn().mockResolvedValue(true) };
     Booking.find.mockResolvedValue([bookingDoc]);
 
     await handleWebhookEvent("refund.processed", refundWebhook());
@@ -144,9 +145,8 @@ describe("Payout clawback on refund.processed (full clawback policy)", () => {
   });
 
   it("leaves a NONE/VOID payoutStatus untouched (CASH booking or an already-clawed-back one)", async () => {
-    const paymentDoc = paymentDocWithTaggedRefund();
-    Payment.findOne.mockResolvedValue(paymentDoc);
-    const bookingDoc = { _id: "b1", refundStatus: "REFUND_PENDING", payoutStatus: "NONE", save: vi.fn().mockResolvedValue(true) };
+    Payment.findOneAndUpdate.mockResolvedValue(paymentDocWithTaggedRefund());
+    const bookingDoc = { _id: "b1", status: "CANCELLED", refundStatus: "REFUND_PENDING", payoutStatus: "NONE", save: vi.fn().mockResolvedValue(true) };
     Booking.find.mockResolvedValue([bookingDoc]);
 
     await handleWebhookEvent("refund.processed", refundWebhook());

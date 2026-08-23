@@ -15,6 +15,8 @@ import {
   getPendingPayoutBookingsForOwner,
   getClawbacksOwed,
   getPayoutHistory,
+  getStuckPayments,
+  reconcileStuckPayment,
 } from "./admin.controller.js";
 import { protect, authorize } from "../../common/middlewares/auth.js";
 
@@ -43,5 +45,8 @@ router.get("/payouts/pending", getPendingPayouts);
 router.get("/payouts/pending/:ownerId/bookings", getPendingPayoutBookingsForOwner);
 router.get("/payouts/clawbacks", getClawbacksOwed);
 router.get("/payouts/history", getPayoutHistory);
+
+router.get("/payments/stuck", getStuckPayments);
+router.post("/payments/:id/reconcile", reconcileStuckPayment);
 
 export default router;
