@@ -26,6 +26,16 @@ export const serveImage = async (req, res) => {
   const image = await imageService.getImageForDelivery(req.params.id);
   const deliveryUrl = imageService.buildDeliveryUrl(image.filePath, req.query.size);
 
+  // Overrides the app-wide "same-site" default (app.js): these are public venue
+  // photos whose entire purpose is to be embedded by the frontend, which is a
+  // *different site* in production — `vercel.app` is on the Public Suffix List,
+  // so turfly.vercel.app and turfly-api-chi.vercel.app are cross-site, not just
+  // cross-origin. An <img> is a no-CORS request, so CORS headers don't apply;
+  // Cross-Origin-Resource-Policy is what decides, and "same-site" makes the
+  // browser drop the response (ERR_BLOCKED_BY_RESPONSE.NotSameSite). Locally
+  // both sides are localhost — same-site — which is why this only breaks
+  // deployed.
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
   res.redirect(301, deliveryUrl);
 };
