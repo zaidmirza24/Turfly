@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '@/lib/api';
@@ -8,7 +8,7 @@ import { useSlotAvailability } from '@/hooks/useSlotAvailability';
 import { useBooking } from '@/contexts/BookingContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { MapPin, Wifi, Car, Droplets, Shield, ChevronLeft, Calendar, Loader2, Zap, Phone, Users, Building2, Heart, BadgeCheck, Star } from 'lucide-react';
+import { MapPin, Wifi, Car, Droplets, Shield, ChevronLeft, Calendar, Loader2, Zap, Phone, Users, Building2, BadgeCheck, Star } from 'lucide-react';
 import { useFavorites } from '@/hooks/useFavorites';
 import { cn } from '@/lib/utils';
 import { TimeSlot, Turf } from '@/types';
@@ -23,6 +23,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { ReviewsSection } from '@/components/ReviewsSection';
 import { startingPricePerHour } from '@/lib/turfPricing';
 import { formatDuration } from '@/lib/duration';
+import { TurfGallery } from '@/components/turf/TurfGallery';
 
 const amenityIcons: Record<string, React.ReactNode> = {
   'Parking': <Car size={16} />,
@@ -41,8 +42,6 @@ export default function TurfDetailPage() {
   // an owner or admin browsing the site gets an explanation up front instead
   // of a 403 at the payment step.
   const canBook = !isAuthenticated || user?.role === 'USER';
-  const [selectedImage, setSelectedImage] = useState(0);
-  const touchStartX = useRef<number | null>(null);
   const { favoriteIds, toggleFavorite, isCustomer } = useFavorites();
 
   const today = new Date();
@@ -156,84 +155,14 @@ export default function TurfDetailPage() {
         <ChevronLeft size={16} /> Back to Search
       </Button>
 
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10"
-      >
-        <div
-          className="md:col-span-2 aspect-[16/9] rounded-3xl overflow-hidden shadow-2xl bg-muted relative touch-pan-y"
-          onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; }}
-          onTouchEnd={(e) => {
-            if (touchStartX.current == null || images.length < 2) return;
-            const delta = e.changedTouches[0].clientX - touchStartX.current;
-            // 40px threshold keeps an ordinary vertical scroll (which still
-            // drifts a little horizontally) from being misread as a swipe.
-            if (Math.abs(delta) > 40) {
-              setSelectedImage(prev => {
-                const next = delta < 0 ? prev + 1 : prev - 1;
-                return (next + images.length) % images.length;
-              });
-            }
-            touchStartX.current = null;
-          }}
-        >
-          <img
-            src={images[selectedImage] ?? images[0]}
-            alt={`${turf.name} — photo ${selectedImage + 1} of ${images.length}`}
-            className="w-full h-full object-cover"
-            onError={(e) => {
-              // A stored image URL can 404 (e.g. deleted/pre-migration upload)
-              // independently of the turf having photos — fall back per-image
-              // rather than showing the browser's broken-image icon.
-              if (e.currentTarget.src !== TURF_PLACEHOLDER_IMAGE) e.currentTarget.src = TURF_PLACEHOLDER_IMAGE;
-            }}
-          />
-          {isCustomer && (
-            <button
-              type="button"
-              onClick={() => toggleFavorite(turf._id)}
-              aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-              aria-pressed={isFavorite}
-              className="absolute top-4 right-4 w-11 h-11 rounded-full glass flex items-center justify-center hover:scale-110 transition-transform"
-            >
-              <Heart size={20} className={cn(isFavorite ? 'fill-destructive text-destructive' : 'text-foreground')} />
-            </button>
-          )}
-          {images.length > 1 && (
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 md:hidden">
-              {images.map((_, i) => (
-                <span key={i} className={cn('w-1.5 h-1.5 rounded-full', i === selectedImage ? 'bg-white' : 'bg-white/40')} />
-              ))}
-            </div>
-          )}
-        </div>
-        {/* The thumbnail strip is pointless with a single photo. */}
-        {images.length > 1 && (
-          <div className="grid grid-cols-4 md:grid-cols-1 gap-3">
-            {thumbnails.slice(0, 4).map((thumb, i) => (
-              <button
-                key={thumb}
-                type="button"
-                onClick={() => setSelectedImage(i)}
-                aria-label={`Show photo ${i + 1}`}
-                aria-current={i === selectedImage}
-                className={cn('rounded-2xl overflow-hidden border-4 transition-all aspect-video shadow-md bg-muted',
-                  i === selectedImage ? 'border-primary' : 'border-transparent opacity-60 hover:opacity-100 hover:scale-105')}>
-                <img
-                  src={thumb}
-                  alt=""
-                  className="w-full h-full object-cover"
-                  loading="lazy"
-                  onError={(e) => {
-                    if (e.currentTarget.src !== TURF_PLACEHOLDER_IMAGE) e.currentTarget.src = TURF_PLACEHOLDER_IMAGE;
-                  }}
-                />
-              </button>
-            ))}
-          </div>
-        )}
-      </motion.div>
+      <TurfGallery
+        turfName={turf.name}
+        images={images}
+        thumbnails={thumbnails}
+        isFavorite={isFavorite}
+        onToggleFavorite={() => toggleFavorite(turf._id)}
+        showFavorite={isCustomer}
+      />
 
       <div className="grid lg:grid-cols-3 gap-10">
         <div className="lg:col-span-2 space-y-12">
