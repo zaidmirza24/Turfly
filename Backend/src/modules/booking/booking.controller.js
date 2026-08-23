@@ -27,6 +27,17 @@ export const lockMultipleSlots = async (req, res) => {
 };
 
 /**
+ * POST /api/bookings/hold-summary — short 1-minute hold applied as soon as
+ * the customer opens the booking summary screen, before they've committed to
+ * paying. Distinct from lock-multi's 5-minute payment hold; see
+ * bookingService.holdSlotsForSummary.
+ */
+export const holdSlotsForSummary = async (req, res) => {
+  const result = await bookingService.holdSlotsForSummary(req.user._id, req.body.slotIds);
+  new ApiResponse(200, "Slots held successfully", result).send(res);
+};
+
+/**
  * POST /api/bookings/release — explicit early release of a checkout hold
  * (payment popup dismissed, checkout abandoned) so the slot frees up
  * immediately instead of sitting LOCKED until its TTL expires. Never throws

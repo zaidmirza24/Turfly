@@ -15,7 +15,7 @@ import {
 import { toast } from 'sonner';
 import { Turf, Booking } from '@/types';
 import { downloadIcsFile, googleCalendarUrl, directionsUrl } from '@/lib/calendarExport';
-import { lockSlotsForCheckout, createPaymentOrder, verifyPayment, getPayment, releaseSlotsHold, releaseSlotsHoldOnUnload } from '@/lib/payments';
+import { lockSlotsForCheckout, holdSlotsForSummary, createPaymentOrder, verifyPayment, getPayment, releaseSlotsHold, releaseSlotsHoldOnUnload } from '@/lib/payments';
 import { loadRazorpayScript, openRazorpayCheckout } from '@/lib/razorpay';
 
 type Step = 'summary' | 'payment' | 'verifying' | 'success' | 'failure' | 'unavailable';
@@ -97,6 +97,33 @@ export default function BookingFlowPage() {
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
   }, [holdExpiresAt]);
+
+  // Holds the slots for a short window the instant this screen opens — before
+  // the customer has committed to paying — so a second customer can't grab
+  // the same slot while the first is just reading the summary. "Pay Now"
+  // (handlePayment below) extends this into the full payment hold through
+  // lockSlot's same-user renewal path server-side, rather than re-racing for
+  // the slot from scratch.
+  useEffect(() => {
+    if (slotIds.length === 0) return;
+    let cancelled = false;
+    holdSlotsForSummary(slotIds)
+      .then(() => {
+        if (cancelled) return;
+        holdActiveRef.current = true;
+        setHoldExpiresAt(Date.now() + 60_000);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : 'This slot is no longer available — please pick another.';
+        toast.error(message);
+        queryClient.invalidateQueries({ queryKey: ['slots', id] });
+        queryClient.invalidateQueries({ queryKey: ['slots-month', id] });
+        setStep('unavailable');
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (isLoadingTurf) {
     return (
@@ -484,9 +511,23 @@ export default function BookingFlowPage() {
         </div>
 
         {step === 'summary' && (
-          <Button className="w-full mt-6" size="lg" onClick={() => setStep('payment')}>
-            <CreditCard size={18} className="mr-2" /> Proceed to Payment
-          </Button>
+          <div className="mt-6 space-y-4">
+            {holdRemainingMs != null && (
+              <div className={cn(
+                'flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-medium',
+                holdRemainingMs < 20_000 ? 'border-destructive/30 bg-destructive/10 text-destructive' : 'border-warning/30 bg-warning/10 text-warning'
+              )}>
+                <Clock size={14} className="shrink-0" />
+                <span>
+                  Your slot{sortedSlots.length > 1 ? 's are' : ' is'} held for you — proceed within{' '}
+                  {String(Math.floor(holdRemainingMs / 60000)).padStart(1, '0')}:{String(Math.floor((holdRemainingMs % 60000) / 1000)).padStart(2, '0')}
+                </span>
+              </div>
+            )}
+            <Button className="w-full" size="lg" onClick={() => setStep('payment')}>
+              <CreditCard size={18} className="mr-2" /> Proceed to Payment
+            </Button>
+          </div>
         )}
 
         {step === 'payment' && (

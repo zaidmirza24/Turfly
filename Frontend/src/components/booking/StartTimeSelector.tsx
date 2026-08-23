@@ -16,10 +16,13 @@ const UNAVAILABLE_BADGE: Partial<Record<StartOption['startSlot']['status'], stri
 };
 
 export function StartTimeSelector({ options, selectedStartId, onSelect }: Props) {
-  if (options.every((o) => !o.bookable)) {
+  if (options.length === 0) {
     return (
       <div className="text-center py-10 rounded-2xl border-2 border-dashed border-muted-foreground/10 bg-muted/20">
-        <p className="text-sm font-bold text-muted-foreground">No start times available for this duration today.</p>
+        <span className="inline-block rounded-full bg-muted-foreground/80 text-background text-[10px] font-black uppercase tracking-wide px-2.5 py-1 mb-2">
+          All Booked
+        </span>
+        <p className="text-sm font-bold text-muted-foreground">All slots are booked for the day.</p>
         <p className="text-xs text-muted-foreground mt-1">Try a shorter duration or another date.</p>
       </div>
     );
@@ -34,7 +37,8 @@ export function StartTimeSelector({ options, selectedStartId, onSelect }: Props)
         {options.map((option) => {
           const { startSlot, bookable } = option;
           const isSelected = selectedStartId === startSlot._id;
-          const badge = UNAVAILABLE_BADGE[startSlot.status];
+          const isPast = new Date(startSlot.startTime).getTime() <= Date.now();
+          const badge = isPast ? 'Past' : UNAVAILABLE_BADGE[startSlot.status];
           return (
             <button
               key={startSlot._id}

@@ -51,7 +51,7 @@ describe("lockSlot (Section 6 — atomic single-slot race)", () => {
     await expect(lockSlot("userB", "slot1")).rejects.toMatchObject({ statusCode: 409 });
   });
 
-  it("the atomic filter excludes any slot currently BOOKED or freshly LOCKED by someone else", async () => {
+  it("the atomic filter excludes any slot currently BOOKED or freshly LOCKED by someone else, but still allows the current holder to renew their own lock", async () => {
     Slot.findById.mockReturnValue(withSelect({ turfId: "turf1" }));
     Turf.findById.mockReturnValue(withSelectNoLean({ isActive: true, approvalStatus: "APPROVED" }));
     Slot.countDocuments.mockResolvedValue(0);
@@ -63,7 +63,19 @@ describe("lockSlot (Section 6 — atomic single-slot race)", () => {
     expect(filter.$or).toEqual([
       { status: "AVAILABLE" },
       { status: "LOCKED", lockExpiresAt: { $lt: expect.any(Date) } },
+      { status: "LOCKED", lockedBy: "userA" },
     ]);
+  });
+
+  it("lets the current holder renew/extend their own still-valid lock (e.g. summary hold stepping up to the payment hold)", async () => {
+    Slot.findById.mockReturnValue(withSelect({ turfId: "turf1" }));
+    Turf.findById.mockReturnValue(withSelectNoLean({ isActive: true, approvalStatus: "APPROVED" }));
+    Slot.countDocuments.mockResolvedValue(0);
+    // The mock doesn't evaluate the filter — this simply proves the call
+    // doesn't 409 the way an unmatched findOneAndUpdate would.
+    Slot.findOneAndUpdate.mockResolvedValue({ _id: "slot1", status: "LOCKED", lockedBy: "userA" });
+
+    await expect(lockSlot("userA", "slot1")).resolves.toMatchObject({ _id: "slot1" });
   });
 });
 

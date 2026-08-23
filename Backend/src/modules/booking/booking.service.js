@@ -44,6 +44,13 @@ const assertCanManageBooking = async (actor, turfId) => {
  */
 const LOCK_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+// Short hold applied the moment a customer lands on the booking summary
+// screen, before they've committed to paying — just long enough to stop a
+// second customer from grabbing the same slot while the first is reading the
+// summary. lockSlot's same-user renewal branch lets this be extended to the
+// full LOCK_TTL_MS the moment they actually proceed to payment.
+const SUMMARY_LOCK_TTL_MS = 60 * 1000; // 1 minute
+
 // Ceiling on how many slots one user may hold LOCKED at once, across every
 // turf. Without this, one account can script repeated /lock calls to hold
 // out a large share of near-term inventory in rolling 5-minute windows —
@@ -66,9 +73,9 @@ const MAX_ADVANCE_BOOKING_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
  * and receives a 409. This is the concurrency-safe replacement for the
  * old read-then-write pattern.
  */
-export const lockSlot = async (userId, slotId) => {
+export const lockSlot = async (userId, slotId, ttlMs = LOCK_TTL_MS) => {
   const now = new Date();
-  const lockExpiresAt = new Date(now.getTime() + LOCK_TTL_MS);
+  const lockExpiresAt = new Date(now.getTime() + ttlMs);
   const maxBookableStart = new Date(now.getTime() + MAX_ADVANCE_BOOKING_MS);
 
   // A slot only sells if its turf is actually live. Slot documents exist for
@@ -117,7 +124,15 @@ export const lockSlot = async (userId, slotId) => {
       // the status check below: the slot must not have started yet, and must
       // not be further than MAX_ADVANCE_BOOKING_MS in the future.
       startTime: { $gt: now, $lte: maxBookableStart },
-      $or: [{ status: "AVAILABLE" }, { status: "LOCKED", lockExpiresAt: { $lt: now } }],
+      // The third branch lets a customer who already holds this slot renew
+      // or extend their own hold (e.g. summary's 1-minute hold stepping up to
+      // the full 5-minute payment hold) without waiting for it to expire
+      // first — it can never hand the slot to anyone but its current holder.
+      $or: [
+        { status: "AVAILABLE" },
+        { status: "LOCKED", lockExpiresAt: { $lt: now } },
+        { status: "LOCKED", lockedBy: userId },
+      ],
     },
     [
       {
@@ -234,11 +249,11 @@ const MAX_SLOTS_PER_BOOKING = 10;
  * multi-slot request never leaves some slots silently locked out from under
  * other customers.
  */
-export const lockMultipleSlots = async (userId, slotIds) => {
+export const lockMultipleSlots = async (userId, slotIds, ttlMs = LOCK_TTL_MS) => {
   const lockedSlots = [];
   try {
     for (const slotId of slotIds) {
-      const locked = await lockSlot(userId, slotId);
+      const locked = await lockSlot(userId, slotId, ttlMs);
       lockedSlots.push(locked);
     }
   } catch (err) {
@@ -338,6 +353,20 @@ export const bookMultipleSlots = async (userId, slotIds) => {
 export const lockSlotsForCheckout = async (userId, slotIds) => {
   const { uniqueIds, turfId } = await validateSlotSelection(slotIds);
   const lockedSlots = await lockMultipleSlots(userId, uniqueIds);
+  return { slotIds: uniqueIds, turfId, lockedSlots };
+};
+
+/**
+ * Short 1-minute hold applied the moment a customer opens the booking
+ * summary screen — before they've committed to paying. Reuses lockSlot's
+ * same-user renewal branch so a customer who proceeds to "Pay Now" within
+ * that minute has their hold extended (not re-raced) to the full payment
+ * TTL by the subsequent lockSlotsForCheckout call, instead of having to win
+ * the slot back from scratch.
+ */
+export const holdSlotsForSummary = async (userId, slotIds) => {
+  const { uniqueIds, turfId } = await validateSlotSelection(slotIds);
+  const lockedSlots = await lockMultipleSlots(userId, uniqueIds, SUMMARY_LOCK_TTL_MS);
   return { slotIds: uniqueIds, turfId, lockedSlots };
 };
 

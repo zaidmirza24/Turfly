@@ -54,6 +54,15 @@ export function BookingSlotPicker({ turfId, dateStr, onSelectionChange }: Props)
     [slotsForDay]
   );
 
+  // Every fixed duration is disabled in DurationSelector when this is true,
+  // so nothing the customer clicks would ever reach StartTimeSelector's own
+  // "all booked" message — show it directly instead of leaving them stuck
+  // staring at a row of greyed-out buttons with no explanation.
+  const allDurationsFull = useMemo(
+    () => DURATION_OPTIONS_MINUTES.every((minutes) => !getStartOptions(minutes).some((o) => o.bookable)),
+    [getStartOptions]
+  );
+
   const finalSlots: TimeSlot[] | null = useMemo(() => {
     if (duration === 'custom') {
       if (!customStartId || !customDuration) return null;
@@ -100,7 +109,17 @@ export function BookingSlotPicker({ turfId, dateStr, onSelectionChange }: Props)
         onSelect={handleDurationSelect}
       />
 
-      {typeof duration === 'number' && (
+      {allDurationsFull && (
+        <div className="text-center py-10 rounded-2xl border-2 border-dashed border-muted-foreground/10 bg-muted/20">
+          <span className="inline-block rounded-full bg-muted-foreground/80 text-background text-[10px] font-black uppercase tracking-wide px-2.5 py-1 mb-2">
+            All Booked
+          </span>
+          <p className="text-sm font-bold text-muted-foreground">All slots are booked for the day.</p>
+          <p className="text-xs text-muted-foreground mt-1">Try another date.</p>
+        </div>
+      )}
+
+      {!allDurationsFull && typeof duration === 'number' && (
         <StartTimeSelector
           options={fixedStartOptions}
           selectedStartId={selectedStartId}
@@ -108,7 +127,7 @@ export function BookingSlotPicker({ turfId, dateStr, onSelectionChange }: Props)
         />
       )}
 
-      {duration === 'custom' && (
+      {!allDurationsFull && duration === 'custom' && (
         <CustomTimeSelector
           startCandidates={startCandidates}
           selectedStartId={customStartId}

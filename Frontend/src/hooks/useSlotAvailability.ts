@@ -50,6 +50,11 @@ export function useSlotAvailability(turfId: string | undefined, dateStr: string)
     queryKey: ['slots-range', turfId, dateStr, nextDateStr],
     queryFn: () => apiGet<TimeSlot[]>(`/slots?turfId=${turfId}&startDate=${dateStr}&endDate=${nextDateStr}`),
     enabled: !!turfId,
+    // Someone else can lock/book a slot shown here while this picker is just
+    // sitting open — without polling, a customer could keep staring at a
+    // slot as AVAILABLE well past when another checkout has already claimed
+    // it, only finding out when their own lock attempt gets a 409.
+    refetchInterval: 15_000,
   });
 
   const sortedSlots = useMemo(() => {
@@ -90,19 +95,17 @@ export function useSlotAvailability(turfId: string | undefined, dateStr: string)
   );
 
   /**
-   * Every start time for a booking of `durationMinutes` whose own slot is
-   * still in the future, restricted to starts that fall on `dateStr`. Starts
-   * whose slot is already full/booked/etc. are still included (so the UI can
-   * show them as taken rather than silently omitting them) with `bookable: false`.
+   * Every start time for a booking of `durationMinutes`, restricted to starts
+   * that fall on `dateStr`. Starts that are already past, or whose slot is
+   * full/booked/etc., are still included (so the UI can label them as taken
+   * rather than silently omitting them) with `bookable: false`.
    */
   const getStartOptions = useCallback(
     (durationMinutes: number): StartOption[] => {
-      return slotsForDay
-        .filter((s) => new Date(s.startTime).getTime() > Date.now())
-        .map((startSlot) => {
-          const slots = isBookable(startSlot) ? getSlotsForRange(startSlot._id, durationMinutes) : null;
-          return { startSlot, slots: slots ?? [], bookable: slots !== null };
-        });
+      return slotsForDay.map((startSlot) => {
+        const slots = isBookable(startSlot) ? getSlotsForRange(startSlot._id, durationMinutes) : null;
+        return { startSlot, slots: slots ?? [], bookable: slots !== null };
+      });
     },
     [slotsForDay, isBookable, getSlotsForRange]
   );

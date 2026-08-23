@@ -8,6 +8,15 @@ export const lockSlotsForCheckout = (slotIds: string[]) =>
   apiPost<{ slotIds: string[]; turfId: string; lockedSlots: TimeSlot[] }>('/bookings/lock-multi', { slotIds });
 
 /**
+ * Short 1-minute hold applied the moment the customer opens the booking
+ * summary screen — before they've committed to paying. lockSlotsForCheckout
+ * (called from "Pay Now") extends this to the full payment hold rather than
+ * re-racing for the slot, as long as it's called within that minute.
+ */
+export const holdSlotsForSummary = (slotIds: string[]) =>
+  apiPost<{ slotIds: string[]; turfId: string; lockedSlots: TimeSlot[] }>('/bookings/hold-summary', { slotIds });
+
+/**
  * Gives up a checkout hold early — payment popup dismissed, retry abandoned,
  * customer navigated away — instead of leaving the slot LOCKED until the
  * reservation TTL expires on its own. Best-effort: failures are swallowed by

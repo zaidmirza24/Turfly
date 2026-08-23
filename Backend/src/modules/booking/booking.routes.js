@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   lockSlot,
   lockMultipleSlots,
+  holdSlotsForSummary,
   releaseLock,
   getMyBookings,
   getOwnerBookings,
@@ -47,6 +48,11 @@ router.post("/lock", protect, authorize("USER"), lockLimiter, lockSlot);
 // createManualBooking/cash-booking flow below, just never exposed over HTTP
 // to a USER.)
 router.post("/lock-multi", protect, authorize("USER"), lockLimiter, lockMultipleSlots);
+
+// POST /api/bookings/hold-summary — short 1-minute hold applied the moment
+// the customer opens the booking summary screen, before they've committed to
+// paying. Reuses the same rate limit as /lock-multi.
+router.post("/hold-summary", protect, authorize("USER"), lockLimiter, holdSlotsForSummary);
 
 // POST /api/bookings/release — customer backed out of checkout (payment
 // popup dismissed, tab closed) and wants their hold freed immediately
