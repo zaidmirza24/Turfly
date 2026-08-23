@@ -139,6 +139,12 @@ export const getImageForDelivery = async (imageId) => {
   if (!image) {
     throw new ApiError(404, "Image not found");
   }
+  // A doc from before the ImageKit migration (or any other write that
+  // skipped it) has no filePath — building a delivery URL from `undefined`
+  // would silently redirect to a broken link instead of failing loudly.
+  if (!image.filePath) {
+    throw new ApiError(404, "Image not available");
+  }
   return image;
 };
 

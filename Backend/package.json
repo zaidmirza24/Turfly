@@ -14,7 +14,8 @@
     "seed:test": "node scripts/seedTestData.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "images:prune": "node scripts/pruneImages.js"
+    "images:prune": "node scripts/pruneImages.js",
+    "images:migrate-legacy": "node scripts/migrateLegacyImagesToImageKit.js"
   },
   "keywords": [],
   "author": "",
