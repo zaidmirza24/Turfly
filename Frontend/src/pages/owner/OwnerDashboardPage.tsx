@@ -5,7 +5,7 @@ import { DollarSign, CalendarDays, TrendingUp, MapPin, ChevronRight, Activity } 
 import { Booking, Paginated, Turf } from '@/types';
 import { bookingStartTime, bookingTurf, bookingUser } from '@/lib/booking';
 import { formatSlotDate, formatSlotTime, toISTDateKey } from '@/lib/dateKey';
-import { turfCoverImage } from '@/lib/imageUrl';
+import { turfCoverImage, TURF_PLACEHOLDER_IMAGE } from '@/lib/imageUrl';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
@@ -382,7 +382,15 @@ export default function OwnerDashboard() {
                 className="glass p-5 rounded-[2rem] border-primary/10 flex items-center gap-4 group cursor-pointer hover:border-primary/30 transition-all shadow-xl shadow-black/5"
               >
                 <div className="w-16 h-16 shrink-0 rounded-2xl overflow-hidden shadow-lg shadow-black/10">
-                  <img src={turfCoverImage(t.images)} alt="" className="w-full h-full object-cover bg-muted transition-transform group-hover:scale-110" loading="lazy" />
+                  <img
+                    src={turfCoverImage(t.images)}
+                    alt=""
+                    className="w-full h-full object-cover bg-muted transition-transform group-hover:scale-110"
+                    loading="lazy"
+                    onError={(e) => {
+                      if (e.currentTarget.src !== TURF_PLACEHOLDER_IMAGE) e.currentTarget.src = TURF_PLACEHOLDER_IMAGE;
+                    }}
+                  />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="font-black tracking-tight group-hover:text-primary transition-colors truncate">{t.name}</div>

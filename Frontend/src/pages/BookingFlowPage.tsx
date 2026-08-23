@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiGet } from '@/lib/api';
 import { useBooking } from '@/contexts/BookingContext';
 import { formatSlotDate, formatSlotTime } from '@/lib/dateKey';
-import { turfCoverImage } from '@/lib/imageUrl';
+import { turfCoverImage, TURF_PLACEHOLDER_IMAGE } from '@/lib/imageUrl';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
@@ -478,7 +478,15 @@ export default function BookingFlowPage() {
 
       <div className="bg-card border rounded-2xl p-6 shadow-sm">
         <div className="flex gap-4 mb-6">
-          <img src={image} alt="" className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl object-cover bg-muted shrink-0" loading="lazy" />
+          <img
+            src={image}
+            alt=""
+            className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl object-cover bg-muted shrink-0"
+            loading="lazy"
+            onError={(e) => {
+              if (e.currentTarget.src !== TURF_PLACEHOLDER_IMAGE) e.currentTarget.src = TURF_PLACEHOLDER_IMAGE;
+            }}
+          />
           <div className="min-w-0">
             <h2 className="font-semibold text-lg truncate">{turf?.name}</h2>
             <p className="text-sm text-muted-foreground truncate">{turf?.location}</p>

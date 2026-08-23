@@ -182,6 +182,12 @@ export default function TurfDetailPage() {
             src={images[selectedImage] ?? images[0]}
             alt={`${turf.name} — photo ${selectedImage + 1} of ${images.length}`}
             className="w-full h-full object-cover"
+            onError={(e) => {
+              // A stored image URL can 404 (e.g. deleted/pre-migration upload)
+              // independently of the turf having photos — fall back per-image
+              // rather than showing the browser's broken-image icon.
+              if (e.currentTarget.src !== TURF_PLACEHOLDER_IMAGE) e.currentTarget.src = TURF_PLACEHOLDER_IMAGE;
+            }}
           />
           {isCustomer && (
             <button
@@ -214,7 +220,15 @@ export default function TurfDetailPage() {
                 aria-current={i === selectedImage}
                 className={cn('rounded-2xl overflow-hidden border-4 transition-all aspect-video shadow-md bg-muted',
                   i === selectedImage ? 'border-primary' : 'border-transparent opacity-60 hover:opacity-100 hover:scale-105')}>
-                <img src={thumb} alt="" className="w-full h-full object-cover" loading="lazy" />
+                <img
+                  src={thumb}
+                  alt=""
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                  onError={(e) => {
+                    if (e.currentTarget.src !== TURF_PLACEHOLDER_IMAGE) e.currentTarget.src = TURF_PLACEHOLDER_IMAGE;
+                  }}
+                />
               </button>
             ))}
           </div>

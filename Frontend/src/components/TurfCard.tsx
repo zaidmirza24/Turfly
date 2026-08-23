@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { MapPin, Star, Heart } from 'lucide-react';
 import { Turf } from '@/types';
 import { Badge } from '@/components/ui/badge';
-import { turfCoverImage } from '@/lib/imageUrl';
+import { turfCoverImage, TURF_PLACEHOLDER_IMAGE } from '@/lib/imageUrl';
 import { formatDistance } from '@/lib/geo';
 import { useFavorites } from '@/hooks/useFavorites';
 import { cn } from '@/lib/utils';
@@ -33,6 +33,9 @@ export function TurfCard({ turf }: TurfCardProps) {
             alt=""
             className="w-full h-full object-cover bg-muted group-hover:scale-110 transition-transform duration-500"
             loading="lazy"
+            onError={(e) => {
+              if (e.currentTarget.src !== TURF_PLACEHOLDER_IMAGE) e.currentTarget.src = TURF_PLACEHOLDER_IMAGE;
+            }}
           />
           <div className="absolute top-4 left-4 flex gap-2 flex-wrap">
             {sports.slice(0, 2).map(s => (

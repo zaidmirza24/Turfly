@@ -13,7 +13,7 @@ import { Turf, Sport, VenueType } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ImageUploader, MAX_IMAGES } from '@/components/ImageUploader';
-import { turfCoverImage } from '@/lib/imageUrl';
+import { turfCoverImage, TURF_PLACEHOLDER_IMAGE } from '@/lib/imageUrl';
 
 const allAmenities = ['Floodlights', 'Changing Rooms', 'Parking', 'Drinking Water', 'First Aid', 'Air Conditioning', 'Cafeteria', 'Equipment Rental', 'Coaching', 'Pro Shop'];
 const allSports: Sport[] = ['football', 'cricket', 'badminton', 'tennis', 'basketball', 'volleyball'];
@@ -127,7 +127,7 @@ function TurfForm({
       </div>
       <div>
         <Label htmlFor="price">Price per Hour (₹) *</Label>
-        <Input id="price" type="number" value={formData.pricePerHour} onChange={e => setFormData(p => ({ ...p, pricePerHour: e.target.value }))} placeholder="1500" />
+        <Input id="price" type="number" min={1} value={formData.pricePerHour} onChange={e => setFormData(p => ({ ...p, pricePerHour: e.target.value }))} placeholder="1500" />
       </div>
       <div>
         <label className="flex items-center gap-2 text-sm cursor-pointer">
@@ -143,6 +143,7 @@ function TurfForm({
             <Input
               id="weekendPrice"
               type="number"
+              min={1}
               value={formData.weekendPrice}
               onChange={e => setFormData(p => ({ ...p, weekendPrice: e.target.value }))}
               placeholder="2000"
@@ -385,7 +386,15 @@ export default function ManageTurfsPage() {
             const image = turfCoverImage(turf.images);
             return (
               <div key={turf._id} className="border rounded-xl p-4 bg-card flex gap-4 hover:shadow-sm transition-shadow">
-                <img src={image} alt="" className="w-24 h-24 rounded-lg object-cover hidden sm:block bg-muted" loading="lazy" />
+                <img
+                  src={image}
+                  alt=""
+                  className="w-24 h-24 rounded-lg object-cover hidden sm:block bg-muted"
+                  loading="lazy"
+                  onError={(e) => {
+                    if (e.currentTarget.src !== TURF_PLACEHOLDER_IMAGE) e.currentTarget.src = TURF_PLACEHOLDER_IMAGE;
+                  }}
+                />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
