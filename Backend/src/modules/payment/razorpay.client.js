@@ -2,6 +2,7 @@ import Razorpay from "razorpay";
 import crypto from "crypto";
 import env, { isRazorpayConfigured } from "../../common/config/env.js";
 import ApiError from "../../common/utils/ApiError.js";
+import safeEqual from "../../common/utils/safeEqual.js";
 
 let client = null;
 
@@ -50,11 +51,4 @@ export const verifyWebhookSignature = (rawBody, signatureHeader) => {
     .update(rawBody)
     .digest("hex");
   return safeEqual(expected, signatureHeader);
-};
-
-const safeEqual = (a, b) => {
-  const bufA = Buffer.from(a, "utf8");
-  const bufB = Buffer.from(b, "utf8");
-  if (bufA.length !== bufB.length) return false;
-  return crypto.timingSafeEqual(bufA, bufB);
 };

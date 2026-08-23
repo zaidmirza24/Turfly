@@ -1,18 +1,90 @@
 import ApiError from "../utils/ApiError.js";
+import logger from "../utils/logger.js";
+import RateLimitBucket from "../models/rateLimitBucket.model.js";
+
+const log = logger.child({ module: "rateLimit" });
 
 /**
- * Minimal fixed-window rate limiter.
+ * Fixed-window rate limiter, backed by MongoDB so the count is shared across
+ * every instance of this process — required on Vercel, where concurrent
+ * requests routinely land on different serverless instances that would each
+ * otherwise keep their own empty in-memory counter (the previous
+ * implementation's actual behavior in production: the limit looked real in
+ * dev, but was close to a no-op under real multi-instance traffic).
  *
- * In-process and in-memory on purpose — no extra dependency, no Redis to
- * operate. The trade-off is real and worth stating: the counter lives in one
- * process, so it does not coordinate across multiple instances or across
- * serverless invocations that land on different lambdas. It still removes the
- * cheap, single-connection credential-stuffing case (thousands of guesses a
- * minute down a keep-alive connection), which is what the auth endpoints are
- * exposed to today. If this ever runs behind more than one instance, swap the
- * store for a shared one — the middleware signature stays the same.
+ * One atomic `findOneAndUpdate` per request does all the work: a pipeline
+ * update reads the document's own current `resetAt` in the same operation
+ * that writes it, so two concurrent requests against the same bucket can
+ * never both win a "start a new window" race the way a separate
+ * read-then-write would. This mirrors the same atomic-update pattern already
+ * used for slot locking (see booking.service.js `lockSlot`).
  */
-const buckets = new Map();
+const claimBucket = (key, windowMs, now) =>
+  RateLimitBucket.findOneAndUpdate(
+    { key },
+    [
+      {
+        $set: {
+          count: {
+            $cond: [
+              { $or: [{ $eq: ["$resetAt", null] }, { $lte: ["$resetAt", now] }] },
+              1,
+              { $add: ["$count", 1] },
+            ],
+          },
+          resetAt: {
+            $cond: [
+              { $or: [{ $eq: ["$resetAt", null] }, { $lte: ["$resetAt", now] }] },
+              new Date(now.getTime() + windowMs),
+              "$resetAt",
+            ],
+          },
+        },
+      },
+    ],
+    { upsert: true, new: true }
+  );
+
+export const rateLimit = ({ windowMs, max, message = "Too many requests — please try again later" }) => {
+  return async (req, _res, next) => {
+    const now = new Date();
+    const key = `${req.baseUrl}${req.path}:${clientKey(req)}`;
+
+    let bucket;
+    try {
+      bucket = await claimBucket(key, windowMs, now);
+    } catch (err) {
+      if (err.code === 11000) {
+        // No matching document existed yet, and two concurrent requests both
+        // tried to insert the first one for this window — findOneAndUpdate's
+        // upsert isn't atomic against that specific race. The loser here just
+        // means the winner's insert already exists; retrying now finds it and
+        // increments normally, so the limit still holds under the exact burst
+        // traffic it exists to catch, instead of that burst being the one
+        // case that falls through to fail-open below.
+        try {
+          bucket = await claimBucket(key, windowMs, now);
+        } catch (retryErr) {
+          log.warn("Rate limit check failed open after retry", { err: retryErr, key });
+          return next();
+        }
+      } else {
+        // A rate limiter must never be the reason a legitimate request fails
+        // — if the DB write itself errors (a transient connection hiccup),
+        // fail open and let the request through rather than 500ing on an
+        // infrastructure problem unrelated to the caller.
+        log.warn("Rate limit check failed open", { err, key });
+        return next();
+      }
+    }
+
+    if (bucket.count > max) {
+      throw new ApiError(429, message);
+    }
+
+    next();
+  };
+};
 
 const clientKey = (req) => {
   // Behind Vercel/most proxies the socket address is the proxy's, so prefer
@@ -22,33 +94,6 @@ const clientKey = (req) => {
     return forwarded.split(",")[0].trim();
   }
   return req.ip || req.socket?.remoteAddress || "unknown";
-};
-
-export const rateLimit = ({ windowMs, max, message = "Too many requests — please try again later" }) => {
-  return (req, _res, next) => {
-    const now = Date.now();
-    const key = `${req.baseUrl}${req.path}:${clientKey(req)}`;
-    const entry = buckets.get(key);
-
-    if (!entry || entry.resetAt <= now) {
-      buckets.set(key, { count: 1, resetAt: now + windowMs });
-    } else {
-      entry.count += 1;
-      if (entry.count > max) {
-        throw new ApiError(429, message);
-      }
-    }
-
-    // Opportunistic sweep so the map can't grow without bound across a long
-    // -lived process. Cheap: only runs on ~1 in 100 requests.
-    if (buckets.size > 500 && Math.random() < 0.01) {
-      for (const [k, v] of buckets) {
-        if (v.resetAt <= now) buckets.delete(k);
-      }
-    }
-
-    next();
-  };
 };
 
 export default rateLimit;

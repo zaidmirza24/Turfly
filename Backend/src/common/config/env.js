@@ -27,6 +27,17 @@ if (NODE_ENV === "production" && process.env.RAZORPAY_KEY_ID && !process.env.RAZ
   );
 }
 
+// Left unset, the API would be reachable from any browser origin — a plain
+// log warning was the previous behavior, which meant a forgotten env var
+// silently shipped an open CORS policy. Same reasoning as JWT_SECRET above:
+// a security-relevant default should never depend on someone reading a log
+// line after the fact.
+if (NODE_ENV === "production" && !process.env.CORS_ORIGINS) {
+  throw new Error(
+    "CORS_ORIGINS must be set in production — refusing to start with the API open to any browser origin. Set it to your deployed frontend's URL (comma-separated for more than one)."
+  );
+}
+
 const env = {
   PORT: process.env.PORT || 5000,
   MONGO_URI: process.env.MONGO_URI || "mongodb://127.0.0.1:27017/turf_booking",

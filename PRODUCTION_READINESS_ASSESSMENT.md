@@ -8,6 +8,21 @@
 **Production Readiness: 35/100**
 **Verdict: 🔴 NOT SAFE TO LAUNCH** (as a paid product — no payment system exists)
 
+> **⚠️ Superseded as of 2026-08-23.** Everything below describes the
+> pre-payment codebase and its "no payment system exists" verdict is no
+> longer true. Real Razorpay + Brevo integration has since been built and
+> tested end-to-end against live test-mode credentials — see
+> `ai-context.md`'s "Payment (Razorpay) & email (Brevo) integration" section
+> for the design, and `PROGRESS.md` for a summary. That work directly
+> addresses **Critical Blockers 1-3** below (payment gateway, refund
+> mechanism, transactional notifications) and meaningfully improves the
+> **Payment & Financial Reliability** and **Product Experience** scores; the
+> unrelated findings elsewhere in this document (in-memory rate limiter,
+> CORS default, no admin reschedule/no-show tooling, no CI, etc.) were **not
+> re-audited** and should still be treated as open until a fresh pass
+> confirms otherwise. Do not treat the score/verdict above as current — a
+> new audit is needed to produce an accurate number now that payments exist.
+
 ---
 
 ## Executive Summary

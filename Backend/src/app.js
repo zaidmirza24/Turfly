@@ -5,7 +5,6 @@ import cors from "cors";
 import env from "./common/config/env.js";
 import errorHandler from "./common/middlewares/errorHandler.js";
 import { requestContext, requestLogger } from "./common/middlewares/requestLogger.js";
-import logger from "./common/utils/logger.js";
 
 // Route imports
 import authRoutes from "./modules/auth/auth.routes.js";
@@ -40,18 +39,11 @@ app.use(requestContext);
 app.use(requestLogger);
 
 // Origin allow-list, comma-separated in CORS_ORIGINS (e.g. the deployed
-// frontend's URL). Left unset the API stays open to any origin, which is the
-// behaviour every existing deployment already relies on — so this tightens
-// things only once an operator opts in, rather than breaking them on deploy.
+// frontend's URL). env.js already refuses to start in production if this is
+// unset, so `null` here only ever means "local/dev, deliberately open."
 const allowedOrigins = env.CORS_ORIGINS
   ? env.CORS_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean)
   : null;
-
-if (!allowedOrigins && env.NODE_ENV === "production") {
-  logger.warn(
-    "CORS_ORIGINS is not set in production — the API is reachable from any browser origin. Set CORS_ORIGINS to your deployed frontend's URL to lock this down."
-  );
-}
 
 app.use(
   cors(

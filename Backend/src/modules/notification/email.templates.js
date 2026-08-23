@@ -1,5 +1,27 @@
 import env from "../../common/config/env.js";
 
+/**
+ * Every dynamic string dropped into these templates ultimately traces back
+ * to user input — a customer's own profile name, an owner's turf name/
+ * location, a cancellation reason — none of which is validated for HTML
+ * safety anywhere upstream (it's free-text, correctly so for its own
+ * purpose). Interpolating it unescaped would let e.g. a customer set their
+ * name to markup and have it render in the *owner's* inbox on every new
+ * booking. HTML email clients don't execute <script>, but they do render
+ * links/buttons/images, which is enough for a convincing phishing-style
+ * spoof inside an otherwise-trusted transactional email — so every value
+ * that isn't already a number or a value this module itself formatted goes
+ * through this first.
+ */
+const escapeHtml = (value) =>
+  String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[ch]));
+
 const rupees = (n) => `₹${Number(n).toLocaleString("en-IN")}`;
 
 const fmtDate = (date) =>
@@ -39,8 +61,11 @@ const layout = (title, bodyHtml, { ctaLabel, ctaUrl } = {}) => `
   </body>
 </html>`;
 
+// `label` is always one of this module's own literal strings; `value` is
+// frequently user/owner-supplied (a name, a reason, a venue), so it's the
+// one that needs escaping — see escapeHtml's comment above.
 const row = (label, value) =>
-  `<tr><td style="padding:4px 0;color:#6b7280;font-size:14px;">${label}</td><td style="padding:4px 0;text-align:right;font-weight:600;font-size:14px;">${value}</td></tr>`;
+  `<tr><td style="padding:4px 0;color:#6b7280;font-size:14px;">${label}</td><td style="padding:4px 0;text-align:right;font-weight:600;font-size:14px;">${escapeHtml(value)}</td></tr>`;
 
 const table = (rows) => `<table role="presentation" width="100%" style="margin-top:12px;border-top:1px solid #e5e7eb;padding-top:8px;">${rows.join("")}</table>`;
 
@@ -67,8 +92,8 @@ export const bookingConfirmedEmail = (bookings, payment, turf, slots, customerNa
   ];
   const html = layout(
     "Booking Confirmed 🎉",
-    `<p>Hi ${customerName},</p>
-     <p>Your booking at <strong>${turf.name}</strong> is confirmed.</p>
+    `<p>Hi ${escapeHtml(customerName)},</p>
+     <p>Your booking at <strong>${escapeHtml(turf.name)}</strong> is confirmed.</p>
      ${table(rows)}
      <p style="margin-top:16px;font-size:13px;color:#6b7280;">Cancellation policy: free cancellation up to 6 hours before your slot starts, from My Bookings.</p>`,
     { ctaLabel: "View booking", ctaUrl: viewBookingUrl() }
@@ -161,12 +186,12 @@ export const bookingReminderEmail = (booking, turf, slot) => {
 export const ownerNewBookingEmail = (bookings, turf, customerName) => {
   const total = bookings.reduce((s, b) => s + b.amount, 0);
   const rows = [row("Customer", customerName), row("Slots", bookings.length), row("Amount", rupees(total))];
-  const html = layout("New Confirmed Booking", `<p>You have a new confirmed booking at <strong>${turf.name}</strong>.</p>${table(rows)}`);
+  const html = layout("New Confirmed Booking", `<p>You have a new confirmed booking at <strong>${escapeHtml(turf.name)}</strong>.</p>${table(rows)}`);
   return { subject: `New booking at ${turf.name}`, html };
 };
 
 export const ownerBookingCancelledEmail = (booking, turf) => {
   const rows = [row("Booking reference", `#${bookingRef(booking)}`), row("Amount", rupees(booking.amount))];
-  const html = layout("Booking Cancelled", `<p>A booking at <strong>${turf.name}</strong> was cancelled.</p>${table(rows)}`);
+  const html = layout("Booking Cancelled", `<p>A booking at <strong>${escapeHtml(turf.name)}</strong> was cancelled.</p>${table(rows)}`);
   return { subject: `Booking cancelled at ${turf.name}`, html };
 };

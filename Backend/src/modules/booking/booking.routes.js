@@ -2,9 +2,6 @@ import { Router } from "express";
 import {
   lockSlot,
   lockMultipleSlots,
-  confirmSlot,
-  bookSlot,
-  bookMultipleSlots,
   getMyBookings,
   getOwnerBookings,
   cancelBooking,
@@ -34,19 +31,20 @@ const lockLimiter = rateLimit({
 // POST /api/bookings/lock — Step 1: atomically lock a slot (5 min TTL)
 router.post("/lock", protect, authorize("USER"), lockLimiter, lockSlot);
 
-// POST /api/bookings/confirm — Step 2: confirm lock → create booking
-router.post("/confirm", protect, authorize("USER"), confirmSlot);
-
 // POST /api/bookings/lock-multi — lock 1-10 contiguous slots without
 // confirming (step 1 of the real-payment checkout flow: lock → create
 // Razorpay order against these slots → pay → server-side confirm).
+//
+// There is deliberately no customer-facing route that confirms a booking
+// without a verified payment. Booking confirmation for a paying customer
+// only ever happens server-side, inside payment.service.js's
+// finalizePaymentSuccess, after Razorpay signature/webhook verification —
+// never directly off a client request. (bookSlot/confirmSlot/
+// bookMultipleSlots still exist as plain functions in booking.service.js:
+// they're used internally by finalizePaymentSuccess and by the owner-only
+// createManualBooking/cash-booking flow below, just never exposed over HTTP
+// to a USER.)
 router.post("/lock-multi", protect, authorize("USER"), lockLimiter, lockMultipleSlots);
-
-// POST /api/bookings — instant book (lock + confirm in one call)
-router.post("/", protect, authorize("USER"), lockLimiter, bookSlot);
-
-// POST /api/bookings/multi — instant book multiple slots (all-or-nothing)
-router.post("/multi", protect, authorize("USER"), lockLimiter, bookMultipleSlots);
 
 // GET /api/bookings — dynamic route based on role
 router.get("/", protect, (req, res) => {

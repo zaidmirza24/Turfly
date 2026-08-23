@@ -15,28 +15,15 @@ export const lockSlot = async (req, res) => {
  * POST /api/bookings/lock-multi — locks 1-10 contiguous slots on one turf
  * without confirming them. This is step 1 of the pay-then-confirm flow: the
  * frontend locks the slots here, then calls POST /api/payments/create-order
- * against the same slotIds. (bookMultipleSlots / POST /bookings/multi stays
- * as the lock+confirm-in-one-call path, still used by the owner's manual/
- * cash booking flow.)
+ * against the same slotIds. `bookingService.bookMultipleSlots` (lock+confirm
+ * in one call, no payment) still exists as a plain function — it's used by
+ * the owner-only manual/cash booking flow (createManualBooking below) — but
+ * is deliberately not exposed over HTTP to a USER, since that would let a
+ * customer confirm a booking without ever paying.
  */
 export const lockMultipleSlots = async (req, res) => {
   const result = await bookingService.lockSlotsForCheckout(req.user._id, req.body.slotIds);
   new ApiResponse(200, "Slots locked successfully", result).send(res);
-};
-
-export const confirmSlot = async (req, res) => {
-  const booking = await bookingService.confirmSlot(req.user._id, req.body.slotId);
-  new ApiResponse(201, "Slot confirmed and booked successfully", booking).send(res);
-};
-
-export const bookSlot = async (req, res) => {
-  const booking = await bookingService.bookSlot(req.user._id, req.body.slotId);
-  new ApiResponse(201, "Slot booked successfully", booking).send(res);
-};
-
-export const bookMultipleSlots = async (req, res) => {
-  const bookings = await bookingService.bookMultipleSlots(req.user._id, req.body.slotIds);
-  new ApiResponse(201, "Slots booked successfully", bookings).send(res);
 };
 
 export const getMyBookings = async (req, res) => {

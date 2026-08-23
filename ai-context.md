@@ -527,6 +527,36 @@ shows full payment/refund state on click), SMS notifications, Brevo
 template-based sends (raw HTML is generated server-side instead — see
 `email.templates.js`).
 
+### Two bugs found and fixed during live testing (2026-08-23)
+
+Both were caught the first time a real checkout ran end-to-end against a
+live Razorpay test account and MongoDB Atlas — worth recording since they're
+the kind of thing that only surfaces once real API calls/writes happen,
+not from unit tests against mocks:
+
+1. **`create-order` tried to re-lock already-locked slots.** The intended
+   flow is `POST /bookings/lock-multi` (locks the slots) → `POST
+   /payments/create-order` (uses those locks). The order-creation code
+   originally called the same slot-*locking* helper a second time instead of
+   just reading the existing lock — and `lockSlot`'s atomic filter only
+   matches `AVAILABLE` or expired-`LOCKED` slots, so re-locking a slot this
+   same user had just locked always failed with a 409 ("Slot is not
+   available for booking"), 100% of the time. Fixed by adding
+   `getAlreadyLockedSlots` in `payment.service.js`, which verifies + extends
+   the existing hold instead of attempting a fresh lock.
+2. **`Payment.razorpayOrderId`/`razorpayPaymentId` had `unique: true, sparse:
+   true` *and* `default: null`.** A sparse index only excludes documents
+   where the field is *missing* — not documents where it's present with
+   value `null`. Mongoose's `default: null` explicitly sets the field on
+   every document, so the second `Payment` ever created (by anyone, before
+   its Razorpay order is attached) collided with the first one's
+   `razorpayOrderId: null` under the unique index, failing with a generic
+   "Could not start checkout" 409. Fixed by dropping the `default: null` so
+   the field is genuinely absent until a real order/payment id is assigned —
+   the index definition itself was already correct. This is a classic Mongo
+   sparse-index gotcha, worth remembering for any future `unique + sparse`
+   field: never pair it with a schema default other than "no default".
+
 ## Still not implemented
 
 - ❌ Password reset (the page says so rather than pretending to send a mail)

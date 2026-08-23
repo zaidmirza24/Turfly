@@ -4,6 +4,7 @@ import Booking from "../booking/booking.model.js";
 import Slot from "../slot/slot.model.js";
 import env from "../../common/config/env.js";
 import logger from "../../common/utils/logger.js";
+import safeEqual from "../../common/utils/safeEqual.js";
 import * as emailService from "./email.service.js";
 
 const router = Router();
@@ -37,7 +38,7 @@ const STATUS_MAP = {
  * says nothing about whether the underlying payment succeeded.
  */
 router.post("/webhooks/brevo", async (req, res) => {
-  if (!env.BREVO_WEBHOOK_SECRET || req.query.token !== env.BREVO_WEBHOOK_SECRET) {
+  if (!env.BREVO_WEBHOOK_SECRET || !safeEqual(req.query.token, env.BREVO_WEBHOOK_SECRET)) {
     return res.status(404).end();
   }
 
@@ -72,7 +73,7 @@ router.post("/webhooks/brevo", async (req, res) => {
  * without ever double-sending a reminder for the same booking.
  */
 router.post("/jobs/send-reminders", async (req, res) => {
-  if (!env.CRON_SECRET || req.headers["x-cron-secret"] !== env.CRON_SECRET) {
+  if (!env.CRON_SECRET || !safeEqual(req.headers["x-cron-secret"], env.CRON_SECRET)) {
     return res.status(404).end();
   }
 

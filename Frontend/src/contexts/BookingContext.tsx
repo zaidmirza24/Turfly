@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
 import { TimeSlot, Booking } from '@/types';
-import { apiPost, apiDelete } from '@/lib/api';
+import { apiDelete } from '@/lib/api';
 
 interface BookingContextType {
   /** Slots currently selected, always all belonging to `selectedTurfId`. */
@@ -13,7 +13,6 @@ interface BookingContextType {
   /** Drops the selection unless it already belongs to `turfId`. */
   keepSelectionFor: (turfId: string) => void;
   clearSelection: () => void;
-  createBooking: (slotIds: string[]) => Promise<Booking | Booking[]>;
   cancelBooking: (bookingId: string) => Promise<{ booking: Booking; refund: { refunded: boolean; reason?: string } }>;
 }
 
@@ -70,18 +69,6 @@ export function BookingProvider({ children }: { children: React.ReactNode }) {
 
   const clearSelection = useCallback(() => setSelectedSlots([]), []);
 
-  // Single slot still goes through the plain /bookings endpoint (unchanged
-  // response shape — a single Booking object); more than one goes through
-  // /bookings/multi (all-or-nothing, returns an array of Bookings sharing a
-  // groupId). Callers should normalize the result to an array either way.
-  const createBooking = useCallback(async (slotIds: string[]) => {
-    const res = slotIds.length === 1
-      ? await apiPost<Booking>('/bookings', { slotId: slotIds[0] })
-      : await apiPost<Booking[]>('/bookings/multi', { slotIds });
-    setSelectedSlots([]);
-    return res.data;
-  }, []);
-
   const cancelBooking = useCallback(async (bookingId: string) => {
     const res = await apiDelete<{ booking: Booking; refund: { refunded: boolean; reason?: string } }>(`/bookings/${bookingId}`);
     return res.data;
@@ -90,8 +77,8 @@ export function BookingProvider({ children }: { children: React.ReactNode }) {
   // BookingProvider also wraps the entire app above the router — see the
   // matching note in AuthContext.tsx for why this needs to be memoized.
   const value = useMemo(
-    () => ({ selectedSlots, selectedTurfId, toggleSlot, selectSlots, keepSelectionFor, clearSelection, createBooking, cancelBooking }),
-    [selectedSlots, selectedTurfId, toggleSlot, selectSlots, keepSelectionFor, clearSelection, createBooking, cancelBooking]
+    () => ({ selectedSlots, selectedTurfId, toggleSlot, selectSlots, keepSelectionFor, clearSelection, cancelBooking }),
+    [selectedSlots, selectedTurfId, toggleSlot, selectSlots, keepSelectionFor, clearSelection, cancelBooking]
   );
 
   return (
