@@ -8,7 +8,7 @@ import { useSlotAvailability } from '@/hooks/useSlotAvailability';
 import { useBooking } from '@/contexts/BookingContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { MapPin, Wifi, Car, Droplets, Shield, ChevronLeft, Calendar, Loader2, Zap, Phone, Users, Building2, Heart, BadgeCheck } from 'lucide-react';
+import { MapPin, Wifi, Car, Droplets, Shield, ChevronLeft, Calendar, Loader2, Zap, Phone, Users, Building2, Heart, BadgeCheck, Star } from 'lucide-react';
 import { useFavorites } from '@/hooks/useFavorites';
 import { cn } from '@/lib/utils';
 import { TimeSlot, Turf } from '@/types';
@@ -238,13 +238,24 @@ export default function TurfDetailPage() {
                 </Badge>
               )}
             </div>
-            <h1 className="text-3xl md:text-5xl font-black tracking-tight mb-2">{turf.name}</h1>
+            <h1 className="text-3xl md:text-5xl font-black tracking-tight mb-2 break-words">{turf.name}</h1>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-muted-foreground">
-              <div className="flex items-center gap-2">
-                <MapPin size={18} className="text-primary" />
+              <div className="flex items-center gap-2 min-w-0">
+                <MapPin size={18} className="text-primary shrink-0" />
                 <span className="text-lg">{turf.location}</span>
               </div>
-              {distanceLabel && <span className="text-sm font-bold text-primary">{distanceLabel}</span>}
+              {distanceLabel && <span className="text-sm font-bold text-primary shrink-0">{distanceLabel}</span>}
+              {!!turf.reviewCount && (
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-sm font-bold shrink-0 hover:text-primary"
+                  onClick={() => document.getElementById('reviews')?.scrollIntoView({ behavior: 'smooth' })}
+                >
+                  <Star size={15} className="fill-amber-400 text-amber-400" />
+                  {(turf.avgRating ?? 0).toFixed(1)}
+                  <span className="text-muted-foreground font-normal">({turf.reviewCount})</span>
+                </button>
+              )}
             </div>
             <p className="text-sm text-muted-foreground mt-2">
               {turf.is24x7
@@ -260,69 +271,6 @@ export default function TurfDetailPage() {
               )}
             </p>
           </section>
-
-          {turf.geo?.coordinates && (
-            <section className="rounded-3xl overflow-hidden border h-64">
-              <iframe
-                title={`Map showing ${turf.name}`}
-                className="w-full h-full"
-                loading="lazy"
-                src={`https://www.openstreetmap.org/export/embed.html?bbox=${turf.geo.coordinates[0] - 0.01}%2C${turf.geo.coordinates[1] - 0.01}%2C${turf.geo.coordinates[0] + 0.01}%2C${turf.geo.coordinates[1] + 0.01}&layer=mapnik&marker=${turf.geo.coordinates[1]}%2C${turf.geo.coordinates[0]}`}
-              />
-            </section>
-          )}
-
-          <section className="bg-muted/30 p-8 rounded-3xl">
-            <h2 className="text-xl font-bold mb-4">About the Arena</h2>
-            <p className="text-muted-foreground leading-relaxed text-lg">
-              {turf.description || 'Premium sports facility equipped with professional-grade turf, excellent lighting, and world-class amenities. Perfect for casual matches or tournament play.'}
-            </p>
-          </section>
-
-          <section className={cn((turf.amenities ?? []).length === 0 && 'hidden')}>
-            <h2 className="text-xl font-bold mb-6 flex items-center gap-3">
-              <Shield size={24} className="text-primary" /> Available Amenities
-            </h2>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {(turf.amenities ?? []).map(a => (
-                <div key={a} className="flex flex-col items-center gap-3 p-5 rounded-2xl bg-card border text-center card-hover">
-                  <div className="p-3 rounded-xl bg-primary/10 text-primary">
-                    {amenityIcons[a] || <Shield size={18} />}
-                  </div>
-                  <span className="text-xs font-bold uppercase tracking-wider">{a}</span>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className={cn(!turf.rules && 'hidden')}>
-            <h2 className="text-xl font-bold mb-4">House Rules</h2>
-            <p className="text-muted-foreground leading-relaxed whitespace-pre-line">{turf.rules}</p>
-          </section>
-
-          <section className={cn((turf.faqs ?? []).length === 0 && 'hidden')}>
-            <h2 className="text-xl font-bold mb-4">Frequently Asked Questions</h2>
-            <Accordion type="single" collapsible>
-              {(turf.faqs ?? []).map((f, i) => (
-                <AccordionItem key={i} value={`faq-${i}`}>
-                  <AccordionTrigger className="text-left font-semibold">{f.question}</AccordionTrigger>
-                  <AccordionContent className="text-muted-foreground leading-relaxed">{f.answer}</AccordionContent>
-                </AccordionItem>
-              ))}
-            </Accordion>
-          </section>
-
-          <section>
-            <h2 className="text-xl font-bold mb-4">Cancellation Policy</h2>
-            <p className="text-muted-foreground leading-relaxed">
-              Free cancellation up to 6 hours before your slot starts, from My Bookings. Once inside that window, or after the slot has started, it can no longer be cancelled.
-            </p>
-          </section>
-
-          <ReviewsSection
-            turfId={turf._id}
-            isOwnerOfTurf={user?.role === 'OWNER' && (typeof turf.ownerId === 'object' ? turf.ownerId._id : turf.ownerId) === user._id}
-          />
 
           <section id="booking" className="scroll-mt-24 space-y-6">
             <div className="flex items-center justify-between">
@@ -413,6 +361,69 @@ export default function TurfDetailPage() {
               </div>
             </div>
           </section>
+
+          <section className={cn((turf.amenities ?? []).length === 0 && 'hidden')}>
+            <h2 className="text-xl font-bold mb-6 flex items-center gap-3">
+              <Shield size={24} className="text-primary" /> Available Amenities
+            </h2>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              {(turf.amenities ?? []).map(a => (
+                <div key={a} className="flex flex-col items-center gap-3 p-5 rounded-2xl bg-card border text-center card-hover">
+                  <div className="p-3 rounded-xl bg-primary/10 text-primary">
+                    {amenityIcons[a] || <Shield size={18} />}
+                  </div>
+                  <span className="text-xs font-bold uppercase tracking-wider">{a}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="bg-muted/30 p-8 rounded-3xl">
+            <h2 className="text-xl font-bold mb-4">About the Arena</h2>
+            <p className="text-muted-foreground leading-relaxed text-lg">
+              {turf.description || 'Premium sports facility equipped with professional-grade turf, excellent lighting, and world-class amenities. Perfect for casual matches or tournament play.'}
+            </p>
+          </section>
+
+          {turf.geo?.coordinates && (
+            <section className="rounded-3xl overflow-hidden border h-64">
+              <iframe
+                title={`Map showing ${turf.name}`}
+                className="w-full h-full"
+                loading="lazy"
+                src={`https://www.openstreetmap.org/export/embed.html?bbox=${turf.geo.coordinates[0] - 0.01}%2C${turf.geo.coordinates[1] - 0.01}%2C${turf.geo.coordinates[0] + 0.01}%2C${turf.geo.coordinates[1] + 0.01}&layer=mapnik&marker=${turf.geo.coordinates[1]}%2C${turf.geo.coordinates[0]}`}
+              />
+            </section>
+          )}
+
+          <section className={cn(!turf.rules && 'hidden')}>
+            <h2 className="text-xl font-bold mb-4">House Rules</h2>
+            <p className="text-muted-foreground leading-relaxed whitespace-pre-line">{turf.rules}</p>
+          </section>
+
+          <section className={cn((turf.faqs ?? []).length === 0 && 'hidden')}>
+            <h2 className="text-xl font-bold mb-4">Frequently Asked Questions</h2>
+            <Accordion type="single" collapsible>
+              {(turf.faqs ?? []).map((f, i) => (
+                <AccordionItem key={i} value={`faq-${i}`}>
+                  <AccordionTrigger className="text-left font-semibold">{f.question}</AccordionTrigger>
+                  <AccordionContent className="text-muted-foreground leading-relaxed">{f.answer}</AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-bold mb-4">Cancellation Policy</h2>
+            <p className="text-muted-foreground leading-relaxed">
+              Free cancellation up to 6 hours before your slot starts, from My Bookings. Once inside that window, or after the slot has started, it can no longer be cancelled.
+            </p>
+          </section>
+
+          <ReviewsSection
+            turfId={turf._id}
+            isOwnerOfTurf={user?.role === 'OWNER' && (typeof turf.ownerId === 'object' ? turf.ownerId._id : turf.ownerId) === user._id}
+          />
         </div>
 
         <div className="lg:col-span-1">
