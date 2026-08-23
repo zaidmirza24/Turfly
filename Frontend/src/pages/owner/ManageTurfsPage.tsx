@@ -77,12 +77,22 @@ function TurfForm({
   onSubmit,
   isSaving,
   submitLabel,
+  showImages = true,
 }: {
   formData: TurfFormState;
   setFormData: React.Dispatch<React.SetStateAction<TurfFormState>>;
   onSubmit: (e: React.FormEvent) => void;
   isSaving: boolean;
   submitLabel: string;
+  /**
+   * Photos on an existing turf are edited exclusively through the dedicated
+   * Photos dialog (see photosMutation below) — that dialog and this form used
+   * to carry independent copies of `images`, seeded at different times, so
+   * saving whichever one was opened last silently reverted the other's photo
+   * changes. Hiding this section on the edit form (and dropping `images` from
+   * its payload, see toPayload) makes the Photos dialog the only writer.
+   */
+  showImages?: boolean;
 }) {
   const toggleSport = (sport: string) => {
     setFormData(prev => ({
@@ -214,11 +224,13 @@ function TurfForm({
           ))}
         </div>
       </div>
-      <div>
-        <Label className="mb-2 block">Photos</Label>
-        <ImageUploader value={formData.images} onChange={images => setFormData(prev => ({ ...prev, images }))} disabled={isSaving} />
-        <p className="text-[11px] text-muted-foreground mt-2">The first photo is used as the cover image on search results.</p>
-      </div>
+      {showImages && (
+        <div>
+          <Label className="mb-2 block">Photos</Label>
+          <ImageUploader value={formData.images} onChange={images => setFormData(prev => ({ ...prev, images }))} disabled={isSaving} />
+          <p className="text-[11px] text-muted-foreground mt-2">The first photo is used as the cover image on search results.</p>
+        </div>
+      )}
       {/*
         Sticky rather than a flex-column restructure of DialogContent (which
         is shared by every dialog in the app): a long form — chips, the
@@ -254,12 +266,17 @@ export default function ManageTurfsPage() {
 
   const ownerTurfs = turfsResponse?.data ?? [];
 
-  const toPayload = (data: TurfFormState) => {
+  // `includeImages` is false for edits: photos on an existing turf are only
+  // ever written by the dedicated Photos dialog (photosMutation) — see the
+  // showImages doc comment on TurfForm for why sending `images` here as well
+  // would silently revert whatever that dialog last saved.
+  const toPayload = (data: TurfFormState, includeImages = true) => {
     const weekdayPrice = Number(data.pricePerHour);
     const weekendPrice = data.hasWeekendPricing && data.weekendPrice ? Number(data.weekendPrice) : weekdayPrice;
-    const { hasWeekendPricing: _hasWeekendPricing, weekendPrice: _weekendPrice, ...rest } = data;
+    const { hasWeekendPricing: _hasWeekendPricing, weekendPrice: _weekendPrice, images, ...rest } = data;
     return {
       ...rest,
+      ...(includeImages ? { images } : {}),
       pricePerHour: weekdayPrice,
       defaultWeekdayPrice: weekdayPrice,
       defaultWeekendPrice: weekendPrice,
@@ -280,7 +297,7 @@ export default function ManageTurfsPage() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ turfId, data }: { turfId: string; data: TurfFormState }) => apiPatch<Turf>(`/turfs/${turfId}`, toPayload(data)),
+    mutationFn: ({ turfId, data }: { turfId: string; data: TurfFormState }) => apiPatch<Turf>(`/turfs/${turfId}`, toPayload(data, false)),
     onSuccess: (_res, { turfId }) => {
       toast.success('Turf updated');
       queryClient.invalidateQueries({ queryKey: ['my-turfs'] });
@@ -431,7 +448,7 @@ export default function ManageTurfsPage() {
       <Dialog open={!!editingTurf} onOpenChange={open => !open && setEditingTurf(null)}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Edit — {editingTurf?.name}</DialogTitle></DialogHeader>
-          <TurfForm formData={editFormData} setFormData={setEditFormData} onSubmit={handleUpdate} isSaving={updateMutation.isPending} submitLabel="Save Changes" />
+          <TurfForm formData={editFormData} setFormData={setEditFormData} onSubmit={handleUpdate} isSaving={updateMutation.isPending} submitLabel="Save Changes" showImages={false} />
         </DialogContent>
       </Dialog>
 
