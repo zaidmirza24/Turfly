@@ -23,8 +23,21 @@ export function bookingUser(b: Booking) {
   return typeof b.userId === 'object' ? b.userId : undefined;
 }
 
-/** Start instant of a booking's slot, or null when the slot wasn't populated. */
+/**
+ * Start instant of a booking/reservation. Prefers the merged `startTime` the
+ * grouped list endpoints return (correct even for a multi-hour reservation);
+ * falls back to the single populated slot's startTime for endpoints that
+ * still return one raw per-hour Booking document (e.g. create/cancel).
+ */
 export function bookingStartTime(b: Booking): Date | null {
+  if (b.startTime) return new Date(b.startTime);
   const slot = bookingSlot(b);
   return slot?.startTime ? new Date(slot.startTime) : null;
+}
+
+/** End instant of a booking/reservation — see bookingStartTime. */
+export function bookingEndTime(b: Booking): Date | null {
+  if (b.endTime) return new Date(b.endTime);
+  const slot = bookingSlot(b);
+  return slot?.endTime ? new Date(slot.endTime) : null;
 }

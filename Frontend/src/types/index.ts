@@ -89,6 +89,10 @@ export interface TimeSlot {
   endTime: string; // ISO String from backend
   status: SlotStatus;
   price: number;
+  // Set only on BOOKED slots: the linked Booking's groupId, or (for a 1hr
+  // booking, which has no groupId) that booking's own id. Consecutive slots
+  // sharing this value are the same customer's multi-hour reservation.
+  reservationId?: string | null;
 }
 
 /**
@@ -107,6 +111,16 @@ export interface Booking {
   // Present when this booking was created as part of a multi-slot checkout —
   // shared across every booking made in that same checkout, null otherwise.
   groupId?: string | null;
+  // The list/detail endpoints (getUserBookings, getBookingsByTurf,
+  // getOwnerBookings) collapse the per-hour Booking documents that share a
+  // groupId into one logical reservation before returning them, so `_id`/
+  // `amount` above are already the merged totals and these two carry the
+  // full reservation's time range (a single 1hr booking still has both,
+  // equal to its one slot's own startTime/endTime). `bookingIds` lists every
+  // underlying per-hour Booking document making up the reservation.
+  startTime?: string;
+  endTime?: string;
+  bookingIds?: string[];
   cancelledBy?: 'CUSTOMER' | 'OWNER' | 'ADMIN' | 'SYSTEM' | null;
   // MARKED_REFUNDED is the owner's manual bookkeeping note for CASH/PENDING
   // bookings (no gateway involved). The rest track a real Razorpay refund

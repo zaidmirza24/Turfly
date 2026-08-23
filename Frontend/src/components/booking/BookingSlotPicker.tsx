@@ -96,7 +96,7 @@ export function BookingSlotPicker({ turfId, dateStr, onSelectionChange }: Props)
       <DurationSelector
         options={DURATION_OPTIONS_MINUTES}
         selected={duration}
-        isAvailable={(minutes) => getStartOptions(minutes).length > 0}
+        isAvailable={(minutes) => getStartOptions(minutes).some((o) => o.bookable)}
         onSelect={handleDurationSelect}
       />
 

@@ -42,16 +42,19 @@ function wrapper({ children }: { children: React.ReactNode }) {
 }
 
 describe('useSlotAvailability', () => {
-  it('excludes a start time whose duration would overlap a booked slot', async () => {
+  it('marks a start time whose duration would overlap a booked slot as not bookable, but still lists it', async () => {
     vi.mocked(apiGet).mockResolvedValue({ success: true, message: '', data: FIXTURE });
     const { result } = renderHook(() => useSlotAvailability('turf-1', dateStr), { wrapper });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    // 22:00 + 1h (22:00-23:00) would run into the 22:30 BOOKED slot.
-    const oneHourStarts = result.current.getStartOptions(60).map((o) => o.startSlot._id);
-    expect(oneHourStarts).not.toContain('s2200');
+    // 22:00 + 1h (22:00-23:00) would run into the 22:30 BOOKED slot — still
+    // shown to the customer, just not selectable.
+    const oneHourOptions = result.current.getStartOptions(60);
+    const s2200 = oneHourOptions.find((o) => o.startSlot._id === 's2200');
+    expect(s2200?.bookable).toBe(false);
     // 23:00 + 1h (23:00-00:00) is fully clear.
-    expect(oneHourStarts).toContain('s2300');
+    const s2300 = oneHourOptions.find((o) => o.startSlot._id === 's2300');
+    expect(s2300?.bookable).toBe(true);
   });
 
   it('resolves a booking that crosses midnight into one contiguous run', async () => {

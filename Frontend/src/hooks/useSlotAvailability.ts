@@ -25,8 +25,10 @@ const nextDateKey = (dateStr: string) => {
 export interface StartOption {
   /** The slot a booking of this duration would start on. */
   startSlot: TimeSlot;
-  /** Every contiguous half-hour slot the booking would occupy, in order. */
+  /** Every contiguous half-hour slot the booking would occupy, in order. Empty when `bookable` is false. */
   slots: TimeSlot[];
+  /** Whether every half-hour slot the booking would occupy is actually available. */
+  bookable: boolean;
 }
 
 /**
@@ -87,16 +89,20 @@ export function useSlotAvailability(turfId: string | undefined, dateStr: string)
     [sortedSlots, isBookable]
   );
 
-  /** Every valid start time for a booking of `durationMinutes`, restricted to starts that fall on `dateStr`. */
+  /**
+   * Every start time for a booking of `durationMinutes` whose own slot is
+   * still in the future, restricted to starts that fall on `dateStr`. Starts
+   * whose slot is already full/booked/etc. are still included (so the UI can
+   * show them as taken rather than silently omitting them) with `bookable: false`.
+   */
   const getStartOptions = useCallback(
     (durationMinutes: number): StartOption[] => {
       return slotsForDay
-        .filter(isBookable)
+        .filter((s) => new Date(s.startTime).getTime() > Date.now())
         .map((startSlot) => {
-          const slots = getSlotsForRange(startSlot._id, durationMinutes);
-          return slots ? { startSlot, slots } : null;
-        })
-        .filter((o): o is StartOption => o !== null);
+          const slots = isBookable(startSlot) ? getSlotsForRange(startSlot._id, durationMinutes) : null;
+          return { startSlot, slots: slots ?? [], bookable: slots !== null };
+        });
     },
     [slotsForDay, isBookable, getSlotsForRange]
   );

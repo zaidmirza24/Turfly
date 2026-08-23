@@ -55,9 +55,10 @@ export default function UserDashboard() {
     if (cancelId && !isCancelling) {
       setIsCancelling(true);
       try {
-        const { refund } = await cancelBooking(cancelId);
+        const results = await cancelBooking(cancelTarget?.bookingIds ?? [cancelId]);
+        const anyRefunded = results.some((r) => r.refund.refunded);
         toast.success(
-          refund.refunded
+          anyRefunded
             ? 'Booking cancelled — your refund has been initiated'
             : 'Booking cancelled'
         );

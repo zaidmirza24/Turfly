@@ -13,7 +13,15 @@ interface BookingContextType {
   /** Drops the selection unless it already belongs to `turfId`. */
   keepSelectionFor: (turfId: string) => void;
   clearSelection: () => void;
-  cancelBooking: (bookingId: string) => Promise<{ booking: Booking; refund: { refunded: boolean; reason?: string } }>;
+  /**
+   * Cancels a reservation. `bookingIds` is every underlying per-hour Booking
+   * document in the reservation (a multi-hour booking is still N documents
+   * server-side, sharing a groupId) — each is cancelled individually since
+   * the cancel endpoint only ever accepts one id at a time. Returns the
+   * result for each; callers that only need one summary toast can just look
+   * at whether any entry has `refund.refunded`.
+   */
+  cancelBooking: (bookingIds: string[]) => Promise<Array<{ booking: Booking; refund: { refunded: boolean; reason?: string } }>>;
 }
 
 const BookingContext = createContext<BookingContextType | undefined>(undefined);
@@ -69,9 +77,14 @@ export function BookingProvider({ children }: { children: React.ReactNode }) {
 
   const clearSelection = useCallback(() => setSelectedSlots([]), []);
 
-  const cancelBooking = useCallback(async (bookingId: string) => {
-    const res = await apiDelete<{ booking: Booking; refund: { refunded: boolean; reason?: string } }>(`/bookings/${bookingId}`);
-    return res.data;
+  const cancelBooking = useCallback(async (bookingIds: string[]) => {
+    const results = await Promise.all(
+      bookingIds.map(async (id) => {
+        const res = await apiDelete<{ booking: Booking; refund: { refunded: boolean; reason?: string } }>(`/bookings/${id}`);
+        return res.data;
+      })
+    );
+    return results;
   }, []);
 
   // BookingProvider also wraps the entire app above the router — see the

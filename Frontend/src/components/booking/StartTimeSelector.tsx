@@ -8,8 +8,15 @@ type Props = {
   onSelect: (option: StartOption) => void;
 };
 
+const UNAVAILABLE_BADGE: Partial<Record<StartOption['startSlot']['status'], string>> = {
+  FULL: 'Full',
+  BOOKED: 'Booked',
+  LOCKED: 'Locked',
+  CLOSED: 'Closed',
+};
+
 export function StartTimeSelector({ options, selectedStartId, onSelect }: Props) {
-  if (options.length === 0) {
+  if (options.every((o) => !o.bookable)) {
     return (
       <div className="text-center py-10 rounded-2xl border-2 border-dashed border-muted-foreground/10 bg-muted/20">
         <p className="text-sm font-bold text-muted-foreground">No start times available for this duration today.</p>
@@ -24,21 +31,30 @@ export function StartTimeSelector({ options, selectedStartId, onSelect }: Props)
         Available start times
       </div>
       <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-72 overflow-y-auto custom-scrollbar pr-1">
-        {options.map(({ startSlot }) => {
+        {options.map((option) => {
+          const { startSlot, bookable } = option;
           const isSelected = selectedStartId === startSlot._id;
+          const badge = UNAVAILABLE_BADGE[startSlot.status];
           return (
             <button
               key={startSlot._id}
               type="button"
-              onClick={() => onSelect(options.find((o) => o.startSlot._id === startSlot._id)!)}
+              disabled={!bookable}
+              onClick={() => onSelect(option)}
               aria-pressed={isSelected}
               className={cn(
-                'h-12 rounded-xl border-2 font-bold text-sm transition-all',
+                'relative h-12 rounded-xl border-2 font-bold text-sm transition-all',
+                !bookable ? 'border-muted-foreground/10 text-muted-foreground/40 cursor-not-allowed' :
                 isSelected ? 'gradient-primary border-transparent text-primary-foreground shadow-lg shadow-primary/20' :
                 'border-primary/10 hover:border-primary/40 hover:bg-primary/5'
               )}
             >
               {formatSlotTime(startSlot.startTime)}
+              {!bookable && badge && (
+                <span className="absolute -top-1.5 -right-1.5 rounded-full bg-muted-foreground/80 text-background text-[9px] font-black uppercase tracking-wide px-1.5 py-0.5">
+                  {badge}
+                </span>
+              )}
             </button>
           );
         })}

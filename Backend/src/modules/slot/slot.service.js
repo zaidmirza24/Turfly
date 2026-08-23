@@ -1,4 +1,5 @@
 import Slot from "./slot.model.js";
+import Booking from "../booking/booking.model.js";
 import Turf from "../turf/turf.model.js";
 import ApiError from "../../common/utils/ApiError.js";
 import { releaseExpiredLocks } from "../../common/jobs/releaseExpiredLocks.js";
@@ -282,7 +283,34 @@ export const getSlotsByTurf = async (turfId, { date, status, startDate, endDate 
   }
 
   const slots = await Slot.find(query).sort({ startTime: 1 });
-  return slots;
+
+  // A multi-hour reservation is still N separate Slot/Booking documents (one
+  // per hour), linked only via the Booking's `groupId` — the Slot itself has
+  // no idea it's part of a group. Attach a `reservationId` (the group's id,
+  // or the lone bookingId for a 1hr booking) so the owner's schedule grid can
+  // tell which consecutive BOOKED rows belong to the same customer checkout
+  // and merge them visually, instead of rendering every hour as if it were
+  // an unrelated booking.
+  const bookedBookingIds = slots
+    .filter((s) => s.status === "BOOKED" && s.bookingId)
+    .map((s) => s.bookingId);
+  const groupIdByBookingId = new Map();
+  if (bookedBookingIds.length > 0) {
+    const bookings = await Booking.find({ _id: { $in: bookedBookingIds } }).select("groupId").lean();
+    for (const b of bookings) {
+      groupIdByBookingId.set(b._id.toString(), b.groupId || null);
+    }
+  }
+
+  return slots.map((s) => {
+    const plain = s.toObject();
+    if (plain.status === "BOOKED" && plain.bookingId) {
+      plain.reservationId = groupIdByBookingId.get(plain.bookingId.toString()) || plain.bookingId.toString();
+    } else {
+      plain.reservationId = null;
+    }
+    return plain;
+  });
 };
 
 export const deleteSlots = async (ownerId, turfId, { date }) => {

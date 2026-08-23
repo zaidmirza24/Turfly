@@ -1,6 +1,6 @@
 import { Booking, Payment } from '@/types';
-import { bookingTurf, bookingSlot } from '@/lib/booking';
-import { formatSlotDate, formatSlotTime } from '@/lib/dateKey';
+import { bookingTurf, bookingStartTime, bookingEndTime } from '@/lib/booking';
+import { formatSlotDate, formatSlotTimeRange } from '@/lib/dateKey';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Printer } from 'lucide-react';
@@ -14,7 +14,8 @@ import { Link } from 'react-router-dom';
  */
 export function BookingReceiptDialog({ booking, onClose }: { booking: Booking | null; onClose: () => void }) {
   const turf = booking ? bookingTurf(booking) : undefined;
-  const slot = booking ? bookingSlot(booking) : undefined;
+  const startTime = booking ? bookingStartTime(booking) : null;
+  const endTime = booking ? bookingEndTime(booking) : null;
   const payment = booking && typeof booking.paymentId === 'object' ? (booking.paymentId as Payment) : null;
 
   return (
@@ -26,10 +27,10 @@ export function BookingReceiptDialog({ booking, onClose }: { booking: Booking | 
             <div className="flex justify-between gap-3"><span className="text-muted-foreground shrink-0">Reference</span><span className="font-mono truncate min-w-0">#{booking.groupId || booking._id}</span></div>
             <div className="flex justify-between gap-3"><span className="text-muted-foreground shrink-0">Venue</span><span className="font-medium truncate min-w-0">{turf?.name ?? '—'}</span></div>
             <div className="flex justify-between gap-3"><span className="text-muted-foreground shrink-0">Location</span><span className="truncate min-w-0">{turf?.location ?? '—'}</span></div>
-            {slot && (
+            {startTime && (
               <>
-                <div className="flex justify-between gap-3"><span className="text-muted-foreground">Date</span><span>{formatSlotDate(slot.startTime)}</span></div>
-                <div className="flex justify-between gap-3"><span className="text-muted-foreground shrink-0">Time</span><span className="text-right">{formatSlotTime(slot.startTime)} – {formatSlotTime(slot.endTime)}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-muted-foreground">Date</span><span>{formatSlotDate(startTime)}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-muted-foreground shrink-0">Time</span><span className="text-right">{formatSlotTimeRange(startTime, endTime)}</span></div>
               </>
             )}
             <div className="flex justify-between gap-3"><span className="text-muted-foreground">Status</span><span className="font-medium">{booking.status}</span></div>

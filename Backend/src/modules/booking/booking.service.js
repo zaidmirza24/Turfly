@@ -388,6 +388,67 @@ export const forceCancelForSystem = async (bookingId, reason) => {
 };
 
 /**
+ * Collapses per-hour Booking documents that were created as one multi-slot
+ * checkout (linked by a shared `groupId`) into a single logical reservation
+ * spanning startTime..endTime, for every list/detail view that shows
+ * bookings to a user/owner/admin. Bookings without a groupId (or whose
+ * groupId siblings were cancelled independently, leaving mixed statuses)
+ * are grouped by `${groupId||_id}:${status}` so a partial cancellation never
+ * gets silently merged with the bookings that are still active.
+ *
+ * Runs in JS after a full (unpaginated) fetch rather than as a Mongo
+ * $group, because each item here already carries several populated refs
+ * (turfId/userId/slotId/paymentId) that would otherwise need re-deriving
+ * via $lookup — simplest correct option for this app's booking volume.
+ */
+const groupBookingsByReservation = (bookings) => {
+  const groups = new Map();
+  for (const booking of bookings) {
+    const key = `${booking.groupId || booking._id}:${booking.status}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(booking);
+  }
+
+  const result = [];
+  for (const group of groups.values()) {
+    const sorted = [...group].sort((a, b) => {
+      const aStart = a.slotId?.startTime ?? a.createdAt;
+      const bStart = b.slotId?.startTime ?? b.createdAt;
+      return new Date(aStart) - new Date(bStart);
+    });
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    result.push({
+      _id: first._id,
+      groupId: first.groupId || null,
+      bookingIds: sorted.map((b) => b._id),
+      bookings: sorted,
+      status: first.status,
+      startTime: first.slotId?.startTime ?? null,
+      endTime: last.slotId?.endTime ?? null,
+      amount: sorted.reduce((sum, b) => sum + (b.amount || 0), 0),
+      turfId: first.turfId,
+      userId: first.userId,
+      paymentId: first.paymentId,
+      createdAt: first.createdAt,
+      cancelledBy: first.cancelledBy,
+      refundStatus: first.refundStatus,
+      payoutStatus: first.payoutStatus,
+      notes: first.notes,
+    });
+  }
+
+  result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return result;
+};
+
+const paginateGrouped = (items, page, limit) => {
+  const total = items.length;
+  const skip = (page - 1) * limit;
+  return { items: items.slice(skip, skip + limit), total, page, pages: Math.ceil(total / limit) || 1 };
+};
+
+/**
  * Get all bookings for the logged-in user.
  */
 export const getUserBookings = async (userId) => {
@@ -396,7 +457,7 @@ export const getUserBookings = async (userId) => {
     .populate("slotId", "startTime endTime price")
     .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt")
     .sort({ createdAt: -1 });
-  return bookings;
+  return groupBookingsByReservation(bookings);
 };
 
 // A booking can only be cancelled up to this long before its slot starts.
@@ -656,19 +717,13 @@ export const getBookingsByTurf = async (ownerId, turfId, { page = 1, limit = 20 
   await assertOwnsBookingTurf(ownerId, turfId);
 
   const query = { turfId, status: "CONFIRMED" };
-  const skip = (page - 1) * limit;
-  const [items, total] = await Promise.all([
-    Booking.find(query)
-      .populate("userId", "name email phone")
-      .populate("slotId", "startTime endTime price")
+  const bookings = await Booking.find(query)
+    .populate("userId", "name email phone")
+    .populate("slotId", "startTime endTime price")
     .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt")
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit),
-    Booking.countDocuments(query),
-  ]);
+    .sort({ createdAt: -1 });
 
-  return { items, total, page, pages: Math.ceil(total / limit) || 1 };
+  return paginateGrouped(groupBookingsByReservation(bookings), page, limit);
 };
 
 /**
@@ -700,20 +755,14 @@ export const getOwnerBookings = async (ownerId, { page = 1, limit = 20, from, to
     if (to) query.createdAt.$lte = new Date(to);
   }
 
-  const skip = (page - 1) * limit;
-  const [items, total] = await Promise.all([
-    Booking.find(query)
-      .populate("userId", "name email phone")
-      .populate("turfId", "name location sportsType")
-      .populate("slotId", "startTime endTime price")
+  const bookings = await Booking.find(query)
+    .populate("userId", "name email phone")
+    .populate("turfId", "name location sportsType")
+    .populate("slotId", "startTime endTime price")
     .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt")
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit),
-    Booking.countDocuments(query),
-  ]);
+    .sort({ createdAt: -1 });
 
-  return { items, total, page, pages: Math.ceil(total / limit) || 1 };
+  return paginateGrouped(groupBookingsByReservation(bookings), page, limit);
 };
 
 /**

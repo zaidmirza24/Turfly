@@ -68,6 +68,14 @@ export function formatSlotTime(iso: string | Date): string {
   });
 }
 
+/** "2:00 PM" for a 1hr slot, "2:00 PM - 5:00 PM" for a merged multi-hour reservation. */
+export function formatSlotTimeRange(start: string | Date, end?: string | Date | null): string {
+  if (!end || new Date(end).getTime() === new Date(start).getTime()) {
+    return formatSlotTime(start);
+  }
+  return `${formatSlotTime(start)} - ${formatSlotTime(end)}`;
+}
+
 /** "YYYY-MM-DD" IST calendar day for an instant — the key the API buckets by. */
 export function toISTDateKey(iso: string | Date): string {
   const d = new Date(iso);

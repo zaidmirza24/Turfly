@@ -4,8 +4,8 @@ import { toast } from 'sonner';
 import { Loader2, User, MapPin, CalendarDays, CreditCard, StickyNote, ShieldCheck } from 'lucide-react';
 import { apiPatch } from '@/lib/api';
 import { Booking, Payment } from '@/types';
-import { bookingStartTime, bookingTurf, bookingUser } from '@/lib/booking';
-import { formatSlotDate, formatSlotTime } from '@/lib/dateKey';
+import { bookingEndTime, bookingStartTime, bookingTurf, bookingUser } from '@/lib/booking';
+import { formatSlotDate, formatSlotTimeRange } from '@/lib/dateKey';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -29,11 +29,19 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
 
   const invalidateAll = () => INVALIDATE_KEYS.forEach((key) => queryClient.invalidateQueries({ queryKey: [key] }));
 
+  // A booking shown here may be a merged multi-hour reservation — cancel/refund
+  // apply per underlying per-hour Booking document, so every action here fans
+  // out over `bookingIds` (falling back to the single `_id` for a 1hr booking).
   const cancelMutation = useMutation({
-    mutationFn: (bookingId: string) =>
-      apiPatch<{ booking: Booking; refund: { refunded: boolean } }>(`/bookings/${bookingId}/cancel`, { reason: reason.trim() || undefined }),
-    onSuccess: (res) => {
-      toast.success(res.data.refund.refunded ? 'Booking cancelled — refund initiated' : 'Booking cancelled');
+    mutationFn: (bookingIds: string[]) =>
+      Promise.all(
+        bookingIds.map((id) =>
+          apiPatch<{ booking: Booking; refund: { refunded: boolean } }>(`/bookings/${id}/cancel`, { reason: reason.trim() || undefined })
+        )
+      ),
+    onSuccess: (results) => {
+      const anyRefunded = results.some((res) => res.data.refund.refunded);
+      toast.success(anyRefunded ? 'Booking cancelled — refund initiated' : 'Booking cancelled');
       setConfirmingCancel(false);
       setReason('');
       invalidateAll();
@@ -42,7 +50,7 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
   });
 
   const refundMutation = useMutation({
-    mutationFn: (bookingId: string) => apiPatch<Booking>(`/bookings/${bookingId}/refund`),
+    mutationFn: (bookingIds: string[]) => Promise.all(bookingIds.map((id) => apiPatch<Booking>(`/bookings/${id}/refund`))),
     onSuccess: () => {
       toast.success('Marked as refunded');
       invalidateAll();
@@ -55,6 +63,8 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
   const customer = bookingUser(booking);
   const turf = bookingTurf(booking);
   const startTime = bookingStartTime(booking);
+  const endTime = bookingEndTime(booking);
+  const bookingIds = booking.bookingIds ?? [booking._id];
   const payment = typeof booking.paymentId === 'object' ? (booking.paymentId as Payment) : null;
   const isOnlinePayment = booking.paymentMethod === 'ONLINE' && !!booking.paymentId;
 
@@ -63,7 +73,7 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
       <SheetContent className="w-full sm:max-w-md overflow-y-auto">
         <SheetHeader>
           <SheetTitle className="text-2xl font-black tracking-tighter">Booking Detail</SheetTitle>
-          <SheetDescription>Reference {booking._id.slice(-8).toUpperCase()}</SheetDescription>
+          <SheetDescription>Reference {(booking.groupId ?? booking._id).slice(-8).toUpperCase()}</SheetDescription>
         </SheetHeader>
 
         <div className="mt-6 space-y-6">
@@ -103,7 +113,10 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
               <CalendarDays size={16} className="text-primary mt-0.5 shrink-0" />
               <div>
                 <div className="font-bold">{startTime ? formatSlotDate(startTime, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</div>
-                <div className="text-sm text-muted-foreground">{startTime ? formatSlotTime(startTime) : ''}</div>
+                <div className="text-sm text-muted-foreground">{startTime ? formatSlotTimeRange(startTime, endTime) : ''}</div>
+                {bookingIds.length > 1 && (
+                  <div className="text-xs text-muted-foreground">{bookingIds.length} linked hourly slots</div>
+                )}
               </div>
             </div>
 
@@ -154,7 +167,7 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
                       variant="destructive"
                       className="flex-1"
                       disabled={cancelMutation.isPending}
-                      onClick={() => cancelMutation.mutate(booking._id)}
+                      onClick={() => cancelMutation.mutate(bookingIds)}
                     >
                       {cancelMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : 'Confirm Cancel'}
                     </Button>
@@ -188,7 +201,7 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
                 variant="outline"
                 className="w-full"
                 disabled={refundMutation.isPending}
-                onClick={() => refundMutation.mutate(booking._id)}
+                onClick={() => refundMutation.mutate(bookingIds)}
               >
                 {refundMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : 'Mark as Refunded'}
               </Button>

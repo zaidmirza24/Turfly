@@ -2,8 +2,8 @@ import { Booking } from '@/types';
 import { Button } from '@/components/ui/button';
 import { BookingStatusBadge } from '@/components/BookingStatusBadge';
 import { Calendar, Clock, MapPin, Receipt, RotateCcw, Star } from 'lucide-react';
-import { bookingStartTime, bookingTurf } from '@/lib/booking';
-import { formatSlotDate, formatSlotTime } from '@/lib/dateKey';
+import { bookingEndTime, bookingStartTime, bookingTurf } from '@/lib/booking';
+import { formatSlotDate, formatSlotTimeRange } from '@/lib/dateKey';
 import { useNavigate } from 'react-router-dom';
 
 interface BookingCardProps {
@@ -40,6 +40,7 @@ export function BookingCard({ booking, onCancel, onViewReceipt, showCancel }: Bo
   const navigate = useNavigate();
   const turf = bookingTurf(booking);
   const startTime = bookingStartTime(booking);
+  const endTime = bookingEndTime(booking);
   const isPast = startTime ? startTime < new Date() : false;
   const isCompleted = booking.status === 'CONFIRMED' && isPast;
   const isPastCancellationCutoff = startTime
@@ -67,7 +68,7 @@ export function BookingCard({ booking, onCancel, onViewReceipt, showCancel }: Bo
         </div>
         <div className="flex items-center gap-1.5 text-muted-foreground">
           <Clock size={14} aria-hidden="true" />
-          <span>{startTime ? formatSlotTime(startTime) : 'N/A'}</span>
+          <span>{startTime ? formatSlotTimeRange(startTime, endTime) : 'N/A'}</span>
         </div>
       </div>
 

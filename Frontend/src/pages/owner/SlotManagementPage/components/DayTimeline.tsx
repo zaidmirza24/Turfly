@@ -45,7 +45,7 @@ export function DayTimeline({
         <div className="flex justify-center py-16"><Loader2 className="animate-spin text-primary" /></div>
       ) : (
         <div className={cn('divide-y divide-border transition-opacity', isMutating && 'opacity-70 pointer-events-none')}>
-          {hours.map(h => {
+          {hours.map((h, i) => {
             const slot = getSlotForHour(activeDay, h);
             const status = slot?.status || 'NONE';
             const isLocked = status === 'BOOKED' || status === 'LOCKED';
@@ -60,13 +60,27 @@ export function DayTimeline({
             const isDisabled = isLocked || isPast;
             const timeLabel = `${formatHourMark(h)} – ${formatHourMark(nextHourMark(h) % 24)}`;
 
+            // A multi-hour reservation is still one Slot document per hour —
+            // `reservationId` (same groupId for every hour of one checkout)
+            // is what lets consecutive BOOKED rows here be shown as one
+            // connected block instead of looking like separate, unrelated
+            // bookings that happen to sit next to each other.
+            const prevSlot = i > 0 ? getSlotForHour(activeDay, hours[i - 1]) : undefined;
+            const nextSlot = i < hours.length - 1 ? getSlotForHour(activeDay, hours[i + 1]) : undefined;
+            const connectsToPrev =
+              status === 'BOOKED' && !!slot?.reservationId && prevSlot?.status === 'BOOKED' && prevSlot.reservationId === slot.reservationId;
+            const connectsToNext =
+              status === 'BOOKED' && !!slot?.reservationId && nextSlot?.status === 'BOOKED' && nextSlot.reservationId === slot.reservationId;
+
             return (
               <div
                 key={h}
                 onClick={() => onRowClick(h)}
                 className={cn('flex items-center gap-2 sm:gap-4 px-3 sm:px-6 py-4 transition-colors cursor-pointer',
                   isSelected ? 'bg-primary/10' : 'hover:bg-muted/40',
-                  isDisabled && 'cursor-not-allowed')}
+                  isDisabled && 'cursor-not-allowed',
+                  connectsToPrev && '!border-t-0 !pt-0',
+                  connectsToNext && '!border-b-0 !pb-0')}
               >
                 <Checkbox
                   checked={isSelected}
@@ -81,13 +95,22 @@ export function DayTimeline({
                   {timeLabel}
                 </div>
 
-                <div className={cn('flex-1 h-11 rounded-2xl border-2 flex items-center px-2 sm:px-4 transition-all', meta.barClass)}>
+                <div className={cn('flex-1 h-11 flex items-center px-2 sm:px-4 transition-all border-2',
+                  meta.barClass,
+                  connectsToPrev && connectsToNext ? 'rounded-none border-t-0 border-b-0' :
+                  connectsToPrev ? 'rounded-t-none border-t-0 rounded-b-2xl' :
+                  connectsToNext ? 'rounded-b-none border-b-0 rounded-t-2xl' :
+                  'rounded-2xl')}
+                >
                   <span className={cn('text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-full', meta.badgeClass)}>
                     {meta.label}
                   </span>
-                  {status === 'BOOKED' && (
+                  {status === 'BOOKED' && !connectsToPrev && (
                     <span className="ml-auto text-[10px] font-bold text-destructive flex items-center gap-1" title="Customer booking">
-                      <UserCheck size={12} /> <span className="hidden sm:inline">Customer booking</span>
+                      <UserCheck size={12} />
+                      <span className="hidden sm:inline">
+                        {connectsToNext ? 'Customer booking (multi-hour)' : 'Customer booking'}
+                      </span>
                     </span>
                   )}
                 </div>

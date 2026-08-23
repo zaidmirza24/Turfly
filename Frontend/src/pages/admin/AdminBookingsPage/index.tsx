@@ -6,8 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Search, Filter, CalendarDays, User, MapPin, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Booking, Paginated, Turf } from '@/types';
-import { bookingStartTime, bookingTurf, bookingUser } from '@/lib/booking';
-import { formatSlotDate, formatSlotTime } from '@/lib/dateKey';
+import { bookingEndTime, bookingStartTime, bookingTurf, bookingUser } from '@/lib/booking';
+import { formatSlotDate, formatSlotTimeRange } from '@/lib/dateKey';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { SyncingIndicator } from '@/components/SyncingIndicator';
@@ -134,6 +134,7 @@ export default function AdminBookingsPage() {
                 const customer = bookingUser(b);
                 const turf = bookingTurf(b);
                 const startTime = bookingStartTime(b);
+                const endTime = bookingEndTime(b);
                 return (
                   <div
                     key={b._id}
@@ -168,7 +169,7 @@ export default function AdminBookingsPage() {
                           </span>
                         </div>
                         <div className="text-[10px] font-black text-primary uppercase tracking-[0.2em] ml-6">
-                          {startTime ? formatSlotTime(startTime) : ''}
+                          {startTime ? formatSlotTimeRange(startTime, endTime) : ''}
                         </div>
                       </div>
                       <div className="font-black text-lg tracking-tighter">₹{b.amount}</div>
@@ -204,6 +205,7 @@ export default function AdminBookingsPage() {
                         const customer = bookingUser(b);
                         const turf = bookingTurf(b);
                         const startTime = bookingStartTime(b);
+                        const endTime = bookingEndTime(b);
 
                         return (
                           <motion.tr
@@ -242,7 +244,7 @@ export default function AdminBookingsPage() {
                                 </span>
                               </div>
                               <div className="text-[10px] font-black text-primary uppercase tracking-[0.2em] ml-6">
-                                {startTime ? formatSlotTime(startTime) : ''}
+                                {startTime ? formatSlotTimeRange(startTime, endTime) : ''}
                               </div>
                             </td>
                             <td className="p-6">
