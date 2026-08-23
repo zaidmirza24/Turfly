@@ -93,25 +93,40 @@ export function ImageUploader({ value, onChange, max = MAX_IMAGES, disabled }: P
       setUploading(withinLimit.length);
       setProgress(0);
 
-      const uploaded: string[] = [];
-      const failures: string[] = [];
+      // Uploaded in parallel; the shared bar tracks aggregate bytes rather
+      // than any single file, so it stays honest regardless of how the
+      // browser interleaves the requests.
+      const fileBytesSent = new Array(withinLimit.length).fill(0);
+      const totalBytes = withinLimit.reduce((sum, file) => sum + file.size, 0) || 1;
+      const reportProgress = (index: number, percent: number, file: File) => {
+        fileBytesSent[index] = (percent / 100) * file.size;
+        const sent = fileBytesSent.reduce((sum, bytes) => sum + bytes, 0);
+        setProgress(Math.round((sent / totalBytes) * 100));
+      };
 
-      // Sequential rather than parallel: uploads are rate limited server-side,
-      // and one shared progress bar can only honestly track one file at a time.
-      for (const file of withinLimit) {
-        try {
+      const results = await Promise.allSettled(
+        withinLimit.map(async (file, index) => {
           const form = new FormData();
           form.append('image', file);
           const res = await apiUpload<UploadedImage>('/images', form, {
-            onProgress: setProgress,
+            onProgress: percent => reportProgress(index, percent, file),
           });
-          uploaded.push(res.data.url);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Upload failed';
+          return res.data.url;
+        })
+      );
+
+      const uploaded: string[] = [];
+      const failures: string[] = [];
+      results.forEach((result, index) => {
+        const file = withinLimit[index];
+        if (result.status === 'fulfilled') {
+          uploaded.push(result.value);
+        } else {
+          const message = result.reason instanceof Error ? result.reason.message : 'Upload failed';
           failures.push(`${file.name}: ${message}`);
-          logger.error('Image upload failed', error, { size: file.size, type: file.type });
+          logger.error('Image upload failed', result.reason, { size: file.size, type: file.type });
         }
-      }
+      });
 
       setUploading(0);
       setProgress(0);
@@ -214,9 +229,15 @@ export function ImageUploader({ value, onChange, max = MAX_IMAGES, disabled }: P
             <>
               <Loader2 className="animate-spin text-primary" size={20} aria-hidden="true" />
               <p className="text-xs font-medium" role="status" aria-live="polite">
-                Uploading… {progress}%
+                Uploading {uploading} photo{uploading === 1 ? '' : 's'}… {progress}%
               </p>
-              <div className="w-full max-w-[200px] h-1 bg-muted rounded-full overflow-hidden">
+              <div
+                className="w-full max-w-[200px] h-1 bg-muted rounded-full overflow-hidden"
+                role="progressbar"
+                aria-valuenow={progress}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              >
                 <div className="h-full bg-primary transition-all" style={{ width: `${progress}%` }} />
               </div>
             </>
