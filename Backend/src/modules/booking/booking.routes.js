@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   lockSlot,
   lockMultipleSlots,
+  releaseLock,
   getMyBookings,
   getOwnerBookings,
   cancelBooking,
@@ -45,6 +46,13 @@ router.post("/lock", protect, authorize("USER"), lockLimiter, lockSlot);
 // createManualBooking/cash-booking flow below, just never exposed over HTTP
 // to a USER.)
 router.post("/lock-multi", protect, authorize("USER"), lockLimiter, lockMultipleSlots);
+
+// POST /api/bookings/release — customer backed out of checkout (payment
+// popup dismissed, tab closed) and wants their hold freed immediately
+// instead of waiting out the lock/reservation TTL. Not rate-limited like
+// /lock — this only ever gives up inventory, never claims it, so there's no
+// abuse incentive to throttle.
+router.post("/release", protect, authorize("USER"), releaseLock);
 
 // GET /api/bookings — dynamic route based on role
 router.get("/", protect, (req, res) => {

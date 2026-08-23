@@ -207,6 +207,12 @@ const buildCheckoutPayload = async (payment, user) => {
     description: turf ? `Booking at ${turf.name}` : "Turf booking",
     prefill: { name: user.name, email: user.email, contact: user.phone || undefined },
     notes: { paymentId: String(payment._id) },
+    // So the frontend can show a real "complete payment in Xm" countdown
+    // instead of the reservation window being an invisible implementation
+    // detail — extendReservation() (above) is what actually sets the slots'
+    // lockExpiresAt to now + this many minutes, this just tells the client
+    // what that number is.
+    reservationMinutes: env.PAYMENT_RESERVATION_MINUTES,
   };
 };
 

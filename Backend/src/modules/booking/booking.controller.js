@@ -26,6 +26,20 @@ export const lockMultipleSlots = async (req, res) => {
   new ApiResponse(200, "Slots locked successfully", result).send(res);
 };
 
+/**
+ * POST /api/bookings/release — explicit early release of a checkout hold
+ * (payment popup dismissed, checkout abandoned) so the slot frees up
+ * immediately instead of sitting LOCKED until its TTL expires. Never throws
+ * on a hold that's already gone — releasing something that's already
+ * released/expired/taken is a no-op, not an error, since the frontend fires
+ * this opportunistically (popup dismiss, tab close) without knowing whether
+ * the hold is still live.
+ */
+export const releaseLock = async (req, res) => {
+  await bookingService.releaseCheckoutHold(req.user._id, req.body.slotIds);
+  new ApiResponse(200, "Hold released", null).send(res);
+};
+
 export const getMyBookings = async (req, res) => {
   const bookings = await bookingService.getUserBookings(req.user._id);
   new ApiResponse(200, "Bookings fetched successfully", bookings).send(res);

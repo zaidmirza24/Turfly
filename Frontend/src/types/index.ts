@@ -157,6 +157,7 @@ export interface CheckoutOrder {
   name: string;
   description: string;
   prefill: { name: string; email: string; contact?: string };
+  reservationMinutes: number;
 }
 
 /** The one pagination shape used across the backend's paginated list endpoints. */

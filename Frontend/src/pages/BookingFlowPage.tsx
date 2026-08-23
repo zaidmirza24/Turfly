@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiGet } from '@/lib/api';
@@ -15,7 +15,7 @@ import {
 import { toast } from 'sonner';
 import { Turf, Booking } from '@/types';
 import { downloadIcsFile, googleCalendarUrl, directionsUrl } from '@/lib/calendarExport';
-import { lockSlotsForCheckout, createPaymentOrder, verifyPayment, getPayment } from '@/lib/payments';
+import { lockSlotsForCheckout, createPaymentOrder, verifyPayment, getPayment, releaseSlotsHold, releaseSlotsHoldOnUnload } from '@/lib/payments';
 import { loadRazorpayScript, openRazorpayCheckout } from '@/lib/razorpay';
 
 type Step = 'summary' | 'payment' | 'verifying' | 'success' | 'failure' | 'unavailable';
@@ -38,6 +38,10 @@ export default function BookingFlowPage() {
   // retrying reuses the same Razorpay order instead of creating a new one
   // for every double-click / failed-attempt-then-retry (Phase 9).
   const [checkout, setCheckout] = useState<{ paymentId: string; groupId: string } | null>(null);
+  // When the current hold (lock or payment reservation) expires — drives the
+  // "complete payment in Xm" countdown. Null while no hold is active.
+  const [holdExpiresAt, setHoldExpiresAt] = useState<number | null>(null);
+  const [holdRemainingMs, setHoldRemainingMs] = useState<number | null>(null);
 
   // Fetch Turf Detail
   const { data: turfResponse, isLoading: isLoadingTurf } = useQuery({
@@ -52,6 +56,47 @@ export default function BookingFlowPage() {
   // will clear the selection once the booking succeeds.
   const [localSlots] = useState(selectedSlots);
   const sortedSlots = [...localSlots].sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+  const slotIds = sortedSlots.map((s) => s._id);
+
+  // Tracks whether we're currently holding a lock/reservation on these slots
+  // — true from the first successful lock-multi call until either the
+  // booking is confirmed or the hold is explicitly released. Read from
+  // effect cleanup/unload handlers, which close over stale state otherwise.
+  const holdActiveRef = useRef(false);
+  const slotIdsRef = useRef(slotIds);
+  slotIdsRef.current = slotIds;
+
+  // Best-effort release for every way a customer can leave checkout without
+  // completing it: closing/refreshing the tab (pagehide — fetch keepalive is
+  // the one request shape guaranteed to still be sent mid-unload) and
+  // navigating elsewhere in the SPA (component unmount — a normal awaited
+  // request works fine here since the page itself isn't going away).
+  useEffect(() => {
+    const onPageHide = () => {
+      if (holdActiveRef.current) releaseSlotsHoldOnUnload(slotIdsRef.current);
+    };
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+      if (holdActiveRef.current) {
+        holdActiveRef.current = false;
+        void releaseSlotsHold(slotIdsRef.current);
+      }
+    };
+  }, []);
+
+  // Live countdown against holdExpiresAt, ticking once a second while a hold
+  // is active — this is what the "complete payment in Xm Ys" UI reads.
+  useEffect(() => {
+    if (holdExpiresAt == null) {
+      setHoldRemainingMs(null);
+      return;
+    }
+    const tick = () => setHoldRemainingMs(Math.max(0, holdExpiresAt - Date.now()));
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [holdExpiresAt]);
 
   if (isLoadingTurf) {
     return (
@@ -92,6 +137,9 @@ export default function BookingFlowPage() {
   };
 
   const onCheckoutSuccess = (bookings: Booking[]) => {
+    // Slots are now BOOKED, not just held — there's nothing left to release.
+    holdActiveRef.current = false;
+    setHoldExpiresAt(null);
     setConfirmedBookings(bookings);
     clearSelection();
     queryClient.invalidateQueries({ queryKey: ['all-slots', id] });
@@ -125,6 +173,11 @@ export default function BookingFlowPage() {
     try {
       const res = await verifyPayment({ paymentId, ...response });
       if (res.data.bookingFailed) {
+        // Server already force-cancelled the slot claim on its side — there's
+        // no hold left here to release, and retrying would just recreate the
+        // same conflict.
+        holdActiveRef.current = false;
+        setHoldExpiresAt(null);
         onCheckoutFailure('Payment received, but this slot was taken by another customer at the same moment — a full refund has been automatically initiated. Check your email for details.');
         return;
       }
@@ -164,15 +217,17 @@ export default function BookingFlowPage() {
     if (sortedSlots.length === 0 || loading) return;
     setLoading(true);
     try {
-      const slotIds = sortedSlots.map(s => s._id);
-
       if (!checkout) {
         // First attempt: hold the slots, then open a fresh order.
         await lockSlotsForCheckout(slotIds);
+        holdActiveRef.current = true;
       }
       const orderRes = await createPaymentOrder(slotIds, checkout?.groupId);
       const order = orderRes.data;
       setCheckout({ paymentId: order.paymentId, groupId: order.groupId });
+      // Order creation extends the hold to the (longer) payment reservation
+      // window server-side — mirror that here so the countdown reflects it.
+      setHoldExpiresAt(Date.now() + order.reservationMinutes * 60 * 1000);
 
       await loadRazorpayScript();
       openRazorpayCheckout({
@@ -189,10 +244,19 @@ export default function BookingFlowPage() {
         },
         modal: {
           ondismiss: () => {
-            // Slot hold is still active — this is a cancelled checkout, not
-            // a failed payment. Let the customer retry from the same screen.
+            // A dismissed popup is a cancelled checkout, not a failed
+            // payment — but there's no reason to make the slot (and every
+            // other customer looking at this turf) wait out the reservation
+            // TTL just because this customer closed the popup. Release the
+            // hold immediately and clear checkout state so the next "Pay"
+            // click re-locks fresh, same as a first attempt.
+            holdActiveRef.current = false;
+            setHoldExpiresAt(null);
+            setCheckout(null);
             setLoading(false);
-            toast.info('Payment cancelled — your slot is still held, you can try again');
+            void releaseSlotsHold(slotIdsRef.current);
+            invalidateAvailability();
+            toast.info('Payment cancelled — your slot hold has been released. Select it again to retry whenever you\'re ready.');
           },
         },
       }, (error) => {
@@ -427,6 +491,18 @@ export default function BookingFlowPage() {
 
         {step === 'payment' && (
           <div className="mt-6 space-y-4">
+            {holdRemainingMs != null && (
+              <div className={cn(
+                'flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-medium',
+                holdRemainingMs < 60_000 ? 'border-destructive/30 bg-destructive/10 text-destructive' : 'border-warning/30 bg-warning/10 text-warning'
+              )}>
+                <Clock size={14} className="shrink-0" />
+                <span>
+                  Your slot{sortedSlots.length > 1 ? 's are' : ' is'} held — complete payment within{' '}
+                  {String(Math.floor(holdRemainingMs / 60000)).padStart(1, '0')}:{String(Math.floor((holdRemainingMs % 60000) / 1000)).padStart(2, '0')}
+                </span>
+              </div>
+            )}
             <div className="border rounded-xl p-4 bg-muted/30">
               <div className="flex items-start gap-2 text-xs text-muted-foreground">
                 <ShieldCheck size={14} className="shrink-0 mt-0.5 text-success" />

@@ -341,6 +341,25 @@ export const lockSlotsForCheckout = async (userId, slotIds) => {
 };
 
 /**
+ * Explicit release of a checkout hold — called when the customer backs out
+ * of payment (closed the Razorpay popup, hit back, closed the tab) instead
+ * of letting the lock/reservation sit until its TTL expires on its own.
+ * Only releases slots still LOCKED by this same user; anything already
+ * confirmed, expired, or re-locked by someone else is left untouched, so
+ * this can never be used to knock loose another customer's hold or a real
+ * booking.
+ */
+export const releaseCheckoutHold = async (userId, slotIds) => {
+  if (!Array.isArray(slotIds) || slotIds.length === 0) {
+    throw new ApiError(400, "At least one slot must be specified");
+  }
+  await Slot.updateMany(
+    { _id: { $in: slotIds }, status: "LOCKED", lockedBy: userId },
+    { status: "AVAILABLE", lockedBy: null, lockExpiresAt: null, lockedPrice: null }
+  );
+};
+
+/**
  * System-triggered rollback of a booking that should never have existed —
  * used only when a payment was captured but the slot could not be atomically
  * claimed (lock expired / stolen by another checkout in the race window
