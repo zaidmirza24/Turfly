@@ -1,7 +1,8 @@
 import { Booking } from '@/types';
 import { Button } from '@/components/ui/button';
 import { BookingStatusBadge } from '@/components/BookingStatusBadge';
-import { Calendar, Clock, MapPin, Receipt, RotateCcw, Star } from 'lucide-react';
+import { ComplaintDialog } from '@/components/ComplaintDialog';
+import { Calendar, Clock, Flag, MapPin, Receipt, RotateCcw, Star } from 'lucide-react';
 import { bookingEndTime, bookingStartTime, bookingTurf } from '@/lib/booking';
 import { formatSlotDate, formatSlotTimeRange } from '@/lib/dateKey';
 import { useNavigate } from 'react-router-dom';
@@ -105,6 +106,11 @@ export function BookingCard({ booking, onCancel, onViewReceipt, showCancel }: Bo
               </Button>
             )
           )}
+          <ComplaintDialog
+            bookingId={booking._id}
+            turfId={turf?._id}
+            trigger={<Button variant="ghost" size="sm" className="gap-1.5"><Flag size={14} /> Report</Button>}
+          />
         </div>
       </div>
     </div>

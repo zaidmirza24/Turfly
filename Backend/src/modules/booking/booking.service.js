@@ -9,6 +9,10 @@ import Payout from "../payout/payout.model.js";
 import { isTurfBookable } from "../turf/turf.service.js";
 import { logAdminAction } from "../admin/admin.service.js";
 import ApiError from "../../common/utils/ApiError.js";
+import logger from "../../common/utils/logger.js";
+import { toRupees } from "../../common/utils/money.js";
+
+const log = logger.child({ module: "booking.service" });
 
 // Verifies the caller owns the turf a booking belongs to. Every owner-only
 // mutation/read on a booking goes through this — role alone is never enough,
@@ -140,7 +144,7 @@ export const lockSlot = async (userId, slotId, ttlMs = LOCK_TTL_MS) => {
           status: "LOCKED",
           lockedBy: userId,
           lockExpiresAt,
-          lockedPrice: "$price",
+          lockedPricePaise: "$pricePaise",
         },
       },
     ],
@@ -188,7 +192,7 @@ export const confirmSlot = async (userId, slotId, groupId = null) => {
       status: "BOOKED",
       lockedBy: null,
       lockExpiresAt: null,
-      lockedPrice: null,
+      lockedPricePaise: null,
     }
   );
 
@@ -199,7 +203,26 @@ export const confirmSlot = async (userId, slotId, groupId = null) => {
   // Charge the price snapshotted at lock time, not whatever `price` is now —
   // closes the window where an owner's price change during the 5-minute hold
   // would change what the customer actually pays.
-  const chargedAmount = slotBeforeConfirm.lockedPrice ?? slotBeforeConfirm.price;
+  const chargedAmountPaise = slotBeforeConfirm.lockedPricePaise ?? slotBeforeConfirm.pricePaise;
+
+  // Both price fields missing means the slot document predates (or postdates)
+  // the paise migration relative to this code — the money fields it actually
+  // carries aren't the ones being read here. Caught explicitly because the
+  // alternative is `amountPaise: undefined` reaching Booking.create and
+  // surfacing as a generic "Booking amount is required" ValidationError,
+  // which says nothing about the schema mismatch that really caused it. The
+  // slot is already flipped to BOOKED at this point, so this throw is what
+  // finalizePaymentSuccess's rollback/refund path keys off.
+  if (typeof chargedAmountPaise !== "number" || !Number.isFinite(chargedAmountPaise)) {
+    log.error("Slot has no usable price — cannot price the booking", {
+      slotId: String(slotId),
+      userId: String(userId),
+      lockedPricePaise: slotBeforeConfirm.lockedPricePaise,
+      pricePaise: slotBeforeConfirm.pricePaise,
+      slotFields: Object.keys(slotBeforeConfirm.toObject({ transform: false })),
+    });
+    throw new ApiError(500, "Slot is missing price data — booking cannot be priced");
+  }
 
   // Create the booking record
   const booking = await Booking.create({
@@ -207,7 +230,7 @@ export const confirmSlot = async (userId, slotId, groupId = null) => {
     turfId: slotBeforeConfirm.turfId,
     slotId: slotBeforeConfirm._id,
     status: "CONFIRMED",
-    amount: chargedAmount,
+    amountPaise: chargedAmountPaise,
     groupId,
   });
 
@@ -261,7 +284,7 @@ export const lockMultipleSlots = async (userId, slotIds, ttlMs = LOCK_TTL_MS) =>
       lockedSlots.map((s) =>
         Slot.findOneAndUpdate(
           { _id: s._id, status: "LOCKED", lockedBy: userId },
-          { status: "AVAILABLE", lockedBy: null, lockExpiresAt: null, lockedPrice: null }
+          { status: "AVAILABLE", lockedBy: null, lockExpiresAt: null, lockedPricePaise: null }
         )
       )
     );
@@ -314,7 +337,7 @@ export const validateSlotSelection = async (slotIds) => {
   // context that isn't reset when the customer switches turfs, so a mixed-turf
   // slotIds array is reachable in practice — and it would charge for, and book,
   // a venue other than the one shown on the confirmation screen.
-  const slotDocs = await Slot.find({ _id: { $in: uniqueIds } }).select("turfId startTime endTime price").lean();
+  const slotDocs = await Slot.find({ _id: { $in: uniqueIds } }).select("turfId startTime endTime pricePaise").lean();
   if (slotDocs.length !== uniqueIds.length) {
     throw new ApiError(404, "One or more slots no longer exist");
   }
@@ -385,7 +408,7 @@ export const releaseCheckoutHold = async (userId, slotIds) => {
   }
   await Slot.updateMany(
     { _id: { $in: slotIds }, status: "LOCKED", lockedBy: userId },
-    { status: "AVAILABLE", lockedBy: null, lockExpiresAt: null, lockedPrice: null }
+    { status: "AVAILABLE", lockedBy: null, lockExpiresAt: null, lockedPricePaise: null }
   );
 };
 
@@ -411,7 +434,7 @@ export const forceCancelForSystem = async (bookingId, reason) => {
     bookingId: null,
     lockedBy: null,
     lockExpiresAt: null,
-    lockedPrice: null,
+    lockedPricePaise: null,
   });
   return booking;
 };
@@ -455,7 +478,7 @@ const groupBookingsByReservation = (bookings) => {
       status: first.status,
       startTime: first.slotId?.startTime ?? null,
       endTime: last.slotId?.endTime ?? null,
-      amount: sorted.reduce((sum, b) => sum + (b.amount || 0), 0),
+      amount: toRupees(sorted.reduce((sum, b) => sum + (b.amountPaise || 0), 0)),
       turfId: first.turfId,
       userId: first.userId,
       paymentId: first.paymentId,
@@ -496,8 +519,8 @@ const MAX_BOOKINGS_SCAN = 500;
 export const getUserBookings = async (userId) => {
   const bookings = await Booking.find({ userId })
     .populate("turfId", "name location sportsType")
-    .populate("slotId", "startTime endTime price")
-    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt")
+    .populate("slotId", "startTime endTime pricePaise")
+    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amountPaise currency refunds failureReason paidAt")
     .sort({ createdAt: -1 })
     .limit(MAX_BOOKINGS_SCAN);
   return groupBookingsByReservation(bookings);
@@ -552,7 +575,7 @@ export const cancelBooking = async (userId, bookingId) => {
     bookingId: null,
     lockedBy: null,
     lockExpiresAt: null,
-    lockedPrice: null,
+    lockedPricePaise: null,
   });
 
   return booking;
@@ -584,7 +607,7 @@ export const cancelBookingAsOwner = async (actor, bookingId, reason) => {
     bookingId: null,
     lockedBy: null,
     lockExpiresAt: null,
-    lockedPrice: null,
+    lockedPricePaise: null,
   });
 
   if (actor.role === "ADMIN") {
@@ -663,7 +686,7 @@ export const markBookingPaidOut = async (adminId, bookingId, { method, note }) =
   const payout = await Payout.create({
     ownerId: turf.ownerId,
     bookingIds: [booking._id],
-    amount: booking.ownerAmount,
+    amountPaise: booking.ownerAmountPaise,
     method,
     note: note || null,
     paidBy: adminId,
@@ -683,7 +706,7 @@ export const markBookingPaidOut = async (adminId, bookingId, { method, note }) =
   }
 
   await logAdminAction(adminId, "BOOKING_PAID_OUT", "BOOKING", booking._id, {
-    amount: payout.amount,
+    amountPaise: payout.amountPaise,
     method,
     ownerId: String(turf.ownerId),
   });
@@ -743,8 +766,8 @@ export const createManualBooking = async (ownerId, { turfId, customerId, slotIds
 
   return Booking.find({ _id: { $in: bookingIds } })
     .populate("userId", "name email phone")
-    .populate("slotId", "startTime endTime price")
-    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt");
+    .populate("slotId", "startTime endTime pricePaise")
+    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amountPaise currency refunds failureReason paidAt");
 };
 
 /**
@@ -762,8 +785,8 @@ export const getBookingsByTurf = async (ownerId, turfId, { page = 1, limit = 20 
   const query = { turfId, status: "CONFIRMED" };
   const bookings = await Booking.find(query)
     .populate("userId", "name email phone")
-    .populate("slotId", "startTime endTime price")
-    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt")
+    .populate("slotId", "startTime endTime pricePaise")
+    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amountPaise currency refunds failureReason paidAt")
     .sort({ createdAt: -1 })
     .limit(MAX_BOOKINGS_SCAN);
 
@@ -802,8 +825,8 @@ export const getOwnerBookings = async (ownerId, { page = 1, limit = 20, from, to
   const bookings = await Booking.find(query)
     .populate("userId", "name email phone")
     .populate("turfId", "name location sportsType")
-    .populate("slotId", "startTime endTime price")
-    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt")
+    .populate("slotId", "startTime endTime pricePaise")
+    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amountPaise currency refunds failureReason paidAt")
     .sort({ createdAt: -1 })
     .limit(MAX_BOOKINGS_SCAN);
 
@@ -830,7 +853,7 @@ export const getOwnerCustomers = async (ownerId, { page = 1, limit = 20 } = {}) 
         totalBookings: { $sum: 1 },
         confirmedCount: { $sum: { $cond: [{ $eq: ["$status", "CONFIRMED"] }, 1, 0] } },
         cancelledCount: { $sum: { $cond: [{ $eq: ["$status", "CANCELLED"] }, 1, 0] } },
-        totalSpent: { $sum: { $cond: [{ $eq: ["$status", "CONFIRMED"] }, "$amount", 0] } },
+        totalSpentPaise: { $sum: { $cond: [{ $eq: ["$status", "CONFIRMED"] }, "$amountPaise", 0] } },
         lastBookingAt: { $max: "$createdAt" },
       },
     },
@@ -859,13 +882,18 @@ export const getOwnerCustomers = async (ownerId, { page = 1, limit = 20 } = {}) 
         totalBookings: 1,
         confirmedCount: 1,
         cancelledCount: 1,
-        totalSpent: 1,
+        totalSpentPaise: 1,
         lastBookingAt: 1,
       },
     },
   ]);
 
-  return { items, total, page, pages: Math.ceil(total / limit) || 1 };
+  const itemsWithRupees = items.map(({ totalSpentPaise, ...rest }) => ({
+    ...rest,
+    totalSpent: toRupees(totalSpentPaise),
+  }));
+
+  return { items: itemsWithRupees, total, page, pages: Math.ceil(total / limit) || 1 };
 };
 
 /**
@@ -880,8 +908,8 @@ export const getOwnerCustomerDetail = async (ownerId, customerId) => {
 
   const bookings = await Booking.find({ turfId: { $in: turfIds }, userId: customerId })
     .populate("turfId", "name location sportsType")
-    .populate("slotId", "startTime endTime price")
-    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt")
+    .populate("slotId", "startTime endTime pricePaise")
+    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amountPaise currency refunds failureReason paidAt")
     .sort({ createdAt: -1 });
 
   if (bookings.length === 0) {
@@ -898,7 +926,7 @@ export const getOwnerCustomerDetail = async (ownerId, customerId) => {
     totalBookings: bookings.length,
     confirmedCount: confirmed.length,
     cancelledCount: bookings.length - confirmed.length,
-    totalSpent: confirmed.reduce((sum, b) => sum + b.amount, 0),
+    totalSpent: toRupees(confirmed.reduce((sum, b) => sum + b.amountPaise, 0)),
   };
 
   return { customer, stats, bookings };

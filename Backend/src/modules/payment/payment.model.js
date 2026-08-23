@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { toRupees } from "../../common/utils/money.js";
 
 /**
  * One Payment document per checkout session (one Razorpay Order), covering
@@ -15,7 +16,7 @@ import mongoose from "mongoose";
 const refundSchema = new mongoose.Schema(
   {
     razorpayRefundId: { type: String, required: true },
-    amount: { type: Number, required: true }, // rupees
+    amountPaise: { type: Number, required: true, validate: { validator: Number.isInteger, message: "amountPaise must be an integer" } },
     status: {
       type: String,
       enum: ["CREATED", "PROCESSED", "FAILED"],
@@ -82,12 +83,11 @@ const paymentSchema = new mongoose.Schema(
       type: [{ type: mongoose.Schema.Types.ObjectId, ref: "Booking" }],
       default: [],
     },
-    amount: {
-      // Rupees, matching Booking.amount's unit — converted to paise only at
-      // the Razorpay API boundary (payment.service.js), never stored in paise.
+    amountPaise: {
       type: Number,
       required: true,
       min: [1, "Amount must be positive"],
+      validate: { validator: Number.isInteger, message: "amountPaise must be an integer" },
     },
     currency: { type: String, default: "INR" },
     receipt: { type: String, required: true, unique: true },
@@ -136,10 +136,40 @@ const paymentSchema = new mongoose.Schema(
 
 paymentSchema.index({ userId: 1, createdAt: -1 });
 
-/** Total refunded so far across all PROCESSED refund entries (rupees). */
+/** Total refunded so far across all PROCESSED refund entries (paise). */
 paymentSchema.methods.refundedAmount = function () {
-  return this.refunds.filter((r) => r.status === "PROCESSED").reduce((sum, r) => sum + r.amount, 0);
+  return this.refunds.filter((r) => r.status === "PROCESSED").reduce((sum, r) => sum + r.amountPaise, 0);
 };
+
+// Wire format stays rupees — every consumer of this API (frontend, tests)
+// keeps reading `amount`. Internal storage/arithmetic is paise-only; this is
+// the one place that boundary is crossed for outgoing JSON.
+paymentSchema.set("toJSON", {
+  transform: (_doc, ret) => {
+    ret.amount = toRupees(ret.amountPaise);
+    delete ret.amountPaise;
+    if (Array.isArray(ret.refunds)) {
+      ret.refunds = ret.refunds.map((r) => {
+        const { amountPaise, ...rest } = r;
+        return { ...rest, amount: toRupees(amountPaise) };
+      });
+    }
+    return ret;
+  },
+});
+paymentSchema.set("toObject", {
+  transform: (_doc, ret) => {
+    ret.amount = toRupees(ret.amountPaise);
+    delete ret.amountPaise;
+    if (Array.isArray(ret.refunds)) {
+      ret.refunds = ret.refunds.map((r) => {
+        const { amountPaise, ...rest } = r;
+        return { ...rest, amount: toRupees(amountPaise) };
+      });
+    }
+    return ret;
+  },
+});
 
 const Payment = mongoose.model("Payment", paymentSchema);
 export default Payment;

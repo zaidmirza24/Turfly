@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Loader2, User, MapPin, CalendarDays, CreditCard, StickyNote, ShieldCheck } from 'lucide-react';
+import { Loader2, User, MapPin, CalendarDays, CreditCard, StickyNote, ShieldCheck, Flag } from 'lucide-react';
 import { apiPatch } from '@/lib/api';
 import { Booking, Payment } from '@/types';
 import { bookingEndTime, bookingStartTime, bookingTurf, bookingUser } from '@/lib/booking';
@@ -10,6 +10,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { BookingStatusBadge } from '@/components/BookingStatusBadge';
+import { ComplaintDialog } from '@/components/ComplaintDialog';
 
 type Props = {
   booking: Booking | null;
@@ -149,6 +150,14 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
                 <p className="text-sm text-muted-foreground">Cancelled by {booking.cancelledBy.toLowerCase()}</p>
               </div>
             )}
+          </div>
+
+          <div className="pt-4 border-t">
+            <ComplaintDialog
+              bookingId={booking._id}
+              turfId={turf?._id}
+              trigger={<Button variant="ghost" size="sm" className="gap-1.5 w-full"><Flag size={14} /> Report an issue</Button>}
+            />
           </div>
 
           {booking.status === 'CONFIRMED' && (

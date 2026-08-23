@@ -11,28 +11,33 @@ import {
   confirmSlot,
   forceCancelForSystem,
 } from "../booking/booking.service.js";
-import { getRazorpayClient, toPaise, toRupees, verifyPaymentSignature } from "./razorpay.client.js";
+import { getRazorpayClient, verifyPaymentSignature } from "./razorpay.client.js";
+import { toRupees } from "../../common/utils/money.js";
 import { isRazorpayConfigured } from "../../common/config/env.js";
 import env from "../../common/config/env.js";
 import ApiError from "../../common/utils/ApiError.js";
 import logger from "../../common/utils/logger.js";
 import * as emailService from "../notification/email.service.js";
+import { getCommissionRate } from "../settings/settings.service.js";
 
 const RESERVATION_MS = env.PAYMENT_RESERVATION_MINUTES * 60 * 1000;
 
 const log = logger.child({ module: "payment" });
 
 /**
- * Commission split for one ONLINE booking's `amount`, computed once at
+ * Commission split for one ONLINE booking's `amountPaise`, computed once at
  * booking-confirmation time (below) and stored on the Booking rather than
- * derived later, so a future PLATFORM_COMMISSION_RATE change never silently
- * reprices an already-confirmed booking. Rounded to paise (2dp) since amount
- * is rupees throughout this codebase.
+ * derived later, so a future commission-rate change (admin-editable via
+ * settings.service.js, seeded from PLATFORM_COMMISSION_RATE) never silently
+ * reprices an already-confirmed booking. Single rounding, in integer paise:
+ * ownerAmountPaise is the exact remainder, so the two halves always sum back
+ * to amountPaise with no risk of a second rounding disagreeing by a paise.
  */
-const computeCommissionSplit = (amount) => {
-  const commissionAmount = Math.round(amount * env.PLATFORM_COMMISSION_RATE * 100) / 100;
-  const ownerAmount = Math.round((amount - commissionAmount) * 100) / 100;
-  return { commissionAmount, ownerAmount };
+const computeCommissionSplit = async (amountPaise) => {
+  const commissionRate = await getCommissionRate();
+  const commissionAmountPaise = Math.round(amountPaise * commissionRate);
+  const ownerAmountPaise = amountPaise - commissionAmountPaise;
+  return { commissionAmountPaise, ownerAmountPaise };
 };
 
 /**
@@ -71,7 +76,7 @@ const getAlreadyLockedSlots = async (userId, slotIds) => {
     _id: { $in: uniqueIds },
     status: "LOCKED",
     lockedBy: userId,
-  }).select("price lockedPrice");
+  }).select("pricePaise lockedPricePaise");
 
   if (lockedSlots.length !== uniqueIds.length) {
     throw new ApiError(
@@ -112,8 +117,8 @@ export const createOrGetOrder = async (user, { slotIds, groupId }) => {
 
   // Charge the price snapshotted at lock time (server truth), never a
   // client-supplied amount — Phase 4, rule 6.
-  const amount = lockedSlots.reduce((sum, s) => sum + (s.lockedPrice ?? s.price), 0);
-  if (amount <= 0) {
+  const amountPaise = lockedSlots.reduce((sum, s) => sum + (s.lockedPricePaise ?? s.pricePaise), 0);
+  if (amountPaise <= 0) {
     throw new ApiError(400, "Invalid booking amount");
   }
 
@@ -127,7 +132,7 @@ export const createOrGetOrder = async (user, { slotIds, groupId }) => {
       turfId,
       slotIds: uniqueIds,
       groupId: newGroupId,
-      amount,
+      amountPaise,
       currency: "INR",
       receipt,
       status: "CREATED",
@@ -145,7 +150,7 @@ export const createOrGetOrder = async (user, { slotIds, groupId }) => {
   let order;
   try {
     order = await razorpay.orders.create({
-      amount: toPaise(amount),
+      amount: amountPaise,
       currency: "INR",
       receipt,
       notes: { paymentId: String(payment._id), groupId: newGroupId, userId: String(user._id) },
@@ -165,7 +170,7 @@ export const createOrGetOrder = async (user, { slotIds, groupId }) => {
   log.info("Payment order created", {
     paymentId: payment._id,
     razorpayOrderId: order.id,
-    amount,
+    amountPaise,
     slotCount: uniqueIds.length,
   });
 
@@ -194,7 +199,7 @@ const resumeExistingOrder = async (user, payment) => {
     // CREATED but the Razorpay call never completed last time — create it now.
     const razorpay = getRazorpayClient();
     const order = await razorpay.orders.create({
-      amount: toPaise(payment.amount),
+      amount: payment.amountPaise,
       currency: "INR",
       receipt: payment.receipt,
       notes: { paymentId: String(payment._id), groupId: payment.groupId, userId: String(user._id) },
@@ -214,7 +219,7 @@ const buildCheckoutPayload = async (payment, user) => {
     paymentId: payment._id,
     groupId: payment.groupId,
     orderId: payment.razorpayOrderId,
-    amount: toPaise(payment.amount),
+    amount: payment.amountPaise,
     currency: payment.currency,
     name: "Turf Booking",
     description: turf ? `Booking at ${turf.name}` : "Turf booking",
@@ -276,6 +281,17 @@ export const finalizePaymentSuccess = async ({ paymentDoc, razorpayOrderId, razo
     // (a genuine concurrent race), the other caller will finish momentarily —
     // the customer-facing poll (GET /payments/:id) will pick it up.
     const current = await Payment.findById(paymentDoc._id);
+    // Logged because this branch is otherwise completely silent: it returns a
+    // 200 with no state change, so a verify that lands here looks identical
+    // in the access log to one that created bookings. `status` is the useful
+    // bit — a terminal status (PAID_BOOKING_FAILED/REFUNDED) means the other
+    // caller already failed, not that it's still in flight.
+    log.info("Payment finalize skipped — already claimed by another caller", {
+      paymentId: current?._id,
+      status: current?.status,
+      bookingCount: current?.bookingIds?.length ?? 0,
+      source,
+    });
     return { payment: current, bookings: await Booking.find({ _id: { $in: current.bookingIds } }), deduped: true };
   }
 
@@ -298,15 +314,21 @@ export const finalizePaymentSuccess = async ({ paymentDoc, razorpayOrderId, razo
   try {
     for (const slotId of claimed.slotIds) {
       const booking = await confirmSlot(claimed.userId, slotId, groupId);
-      const { commissionAmount, ownerAmount } = computeCommissionSplit(booking.amount);
+      // Tracked the instant confirmSlot commits it, before the enrichment
+      // below — everything after this point can still throw (a commission
+      // lookup, a write), and the catch's rollback can only cancel bookings
+      // it knows about. Pushing later would leave an already-CONFIRMED
+      // booking, holding a BOOKED slot, attached to a payment this same
+      // handler goes on to refund in full.
+      createdBookings.push(booking);
+      const { commissionAmountPaise, ownerAmountPaise } = await computeCommissionSplit(booking.amountPaise);
       await Booking.findByIdAndUpdate(booking._id, {
         paymentId: claimed._id,
         paymentMethod: "ONLINE",
-        commissionAmount,
-        ownerAmount,
+        commissionAmountPaise,
+        ownerAmountPaise,
         payoutStatus: "PENDING",
       });
-      createdBookings.push(booking);
       // Persisted after *every* booking, not just once the whole loop
       // finishes: if this function is killed mid-loop (serverless timeout,
       // crash, deploy), Payment.bookingIds still reflects exactly how far it
@@ -322,10 +344,23 @@ export const finalizePaymentSuccess = async ({ paymentDoc, razorpayOrderId, razo
     // the customer must never be left having paid for nothing.
     await Promise.all(createdBookings.map((b) => forceCancelForSystem(b._id, "Slot lost after payment — auto-refunded")));
     await Payment.findByIdAndUpdate(claimed._id, { status: "PAID_BOOKING_FAILED" });
-    log.error("Payment captured but slot claim failed — refunding", { paymentId: claimed._id, err });
+    // `err` alone serializes to `{}` for a Mongoose ValidationError (its
+    // detail hangs off non-enumerable props), which is what made this failure
+    // mode unreadable in the first place — pull the useful fields out by hand.
+    log.error("Payment captured but slot claim failed — refunding", {
+      paymentId: claimed._id,
+      slotIds: claimed.slotIds.map(String),
+      bookingsCreatedBeforeFailure: createdBookings.length,
+      errName: err?.name,
+      errMessage: err?.message,
+      validationErrors: err?.errors
+        ? Object.fromEntries(Object.entries(err.errors).map(([k, v]) => [k, v.message]))
+        : undefined,
+      stack: err?.stack,
+    });
 
     const refunded = await refundPaymentInternal(claimed, {
-      amount: claimed.amount,
+      amountPaise: claimed.amountPaise,
       initiatedBy: "SYSTEM",
       reason: "Slot no longer available after payment",
     });
@@ -377,10 +412,12 @@ const STUCK_PAYMENT_MINUTES = 15;
 export const findStuckPayments = async () => {
   const cutoff = new Date(Date.now() - STUCK_PAYMENT_MINUTES * 60 * 1000);
   const candidates = await Payment.find({ status: "PAID", paidAt: { $lt: cutoff } })
-    .select("status userId turfId slotIds bookingIds amount paidAt groupId razorpayPaymentId")
+    .select("status userId turfId slotIds bookingIds amountPaise paidAt groupId razorpayPaymentId")
     .sort({ paidAt: 1 })
     .lean();
-  return candidates.filter((p) => (p.bookingIds?.length || 0) < p.slotIds.length);
+  return candidates
+    .filter((p) => (p.bookingIds?.length || 0) < p.slotIds.length)
+    .map(({ amountPaise, ...rest }) => ({ ...rest, amount: toRupees(amountPaise) }));
 };
 
 /**
@@ -416,12 +453,12 @@ export const reconcileStuckPayment = async (paymentId) => {
   try {
     for (const slotId of missingSlotIds) {
       const booking = await confirmSlot(payment.userId, slotId, groupId);
-      const { commissionAmount, ownerAmount } = computeCommissionSplit(booking.amount);
+      const { commissionAmountPaise, ownerAmountPaise } = await computeCommissionSplit(booking.amountPaise);
       await Booking.findByIdAndUpdate(booking._id, {
         paymentId: payment._id,
         paymentMethod: "ONLINE",
-        commissionAmount,
-        ownerAmount,
+        commissionAmountPaise,
+        ownerAmountPaise,
         payoutStatus: "PENDING",
       });
       recovered.push(booking);
@@ -441,7 +478,7 @@ export const reconcileStuckPayment = async (paymentId) => {
     log.error("Stuck-payment reconciliation failed — refunding", { paymentId: payment._id, err });
 
     const refunded = await refundPaymentInternal(payment, {
-      amount: payment.amount,
+      amountPaise: payment.amountPaise,
       initiatedBy: "SYSTEM",
       reason: "Slot no longer available during stuck-payment reconciliation",
     });
@@ -593,7 +630,7 @@ export const initiateRefundForBooking = async (booking, { initiatedBy }) => {
 
   try {
     const result = await refundPaymentInternal(payment, {
-      amount: booking.amount,
+      amountPaise: booking.amountPaise,
       initiatedBy,
       notes: { bookingId: String(booking._id) },
     });
@@ -608,18 +645,18 @@ export const initiateRefundForBooking = async (booking, { initiatedBy }) => {
   }
 };
 
-const refundPaymentInternal = async (payment, { amount, initiatedBy, notes, reason }) => {
+const refundPaymentInternal = async (payment, { amountPaise, initiatedBy, notes, reason }) => {
   if (!payment.razorpayPaymentId) {
     throw new ApiError(400, "REFUND_FAILED: no captured payment to refund");
   }
   const already = payment.refundedAmount();
-  if (already + amount > payment.amount) {
+  if (already + amountPaise > payment.amountPaise) {
     throw new ApiError(400, "REFUND_FAILED: refund amount exceeds what was paid");
   }
 
   const razorpay = getRazorpayClient();
   const refund = await razorpay.payments.refund(payment.razorpayPaymentId, {
-    amount: toPaise(amount),
+    amount: amountPaise,
     speed: "normal",
     notes: notes || {},
   });
@@ -628,7 +665,7 @@ const refundPaymentInternal = async (payment, { amount, initiatedBy, notes, reas
     $push: {
       refunds: {
         razorpayRefundId: refund.id,
-        amount,
+        amountPaise,
         status: refund.status === "processed" ? "PROCESSED" : "CREATED",
         speed: refund.speed_processed || refund.speed_requested || null,
         notes: notes || null,
@@ -644,7 +681,7 @@ const refundPaymentInternal = async (payment, { amount, initiatedBy, notes, reas
     // Booking (refundStatus) and this document's own refunds[] array instead.
   });
 
-  log.info("Refund initiated", { paymentId: payment._id, razorpayRefundId: refund.id, amount });
+  log.info("Refund initiated", { paymentId: payment._id, razorpayRefundId: refund.id, amountPaise });
   return { razorpayRefundId: refund.id };
 };
 
@@ -782,7 +819,8 @@ const upsertRefundEntry = async (refundEntity, status) => {
       $push: {
         refunds: {
           razorpayRefundId: refundEntity.id,
-          amount: toRupees(refundEntity.amount),
+          // Razorpay's webhook payload is natively paise — no conversion needed.
+          amountPaise: refundEntity.amount,
           status,
           initiatedBy: "SYSTEM",
           createdAt: new Date(),
@@ -820,9 +858,9 @@ const upsertRefundEntry = async (refundEntity, status) => {
  * the booking isn't already CANCELLED, it's cancelled and its slot released
  * too — needed for a refund this app didn't itself initiate (see caller).
  */
-const applyRefundToBooking = async (booking, payment, refundEntity, refundAmount, { cancel = false } = {}) => {
+const applyRefundToBooking = async (booking, payment, refundEntity, refundAmountPaise, { cancel = false } = {}) => {
   booking.refundStatus = "REFUNDED";
-  booking.refundAmount = (booking.refundAmount || 0) + refundAmount;
+  booking.refundAmountPaise = (booking.refundAmountPaise || 0) + refundAmountPaise;
   if (booking.payoutStatus === "PENDING") {
     booking.payoutStatus = "VOID";
   } else if (booking.payoutStatus === "PAID") {
@@ -839,7 +877,7 @@ const applyRefundToBooking = async (booking, payment, refundEntity, refundAmount
       bookingId: null,
       lockedBy: null,
       lockExpiresAt: null,
-      lockedPrice: null,
+      lockedPricePaise: null,
     });
   }
   await booking.save();
@@ -860,7 +898,7 @@ const finalizeRefundIfComplete = async (payment, refundEntity) => {
     // (customer/owner/admin cancellation), which already cancelled the
     // booking and released the slot before requesting the refund — `cancel`
     // here is just a no-op safety net, not new behavior.
-    await applyRefundToBooking(refundedBooking, payment, refundEntity, toRupees(refundEntity.amount), { cancel: true });
+    await applyRefundToBooking(refundedBooking, payment, refundEntity, refundEntity.amount, { cancel: true });
     log.info("Refund processed", { paymentId: payment._id, totalRefunded, razorpayRefundId: refundEntity.id });
     return;
   }
@@ -886,12 +924,12 @@ const finalizeRefundIfComplete = async (payment, refundEntity) => {
     return;
   }
 
-  if (totalRefunded < payment.amount) {
+  if (totalRefunded < payment.amountPaise) {
     log.error("Unattributed partial refund — needs manual admin reconciliation", {
       paymentId: payment._id,
       razorpayRefundId: refundEntity.id,
       totalRefunded,
-      paymentAmount: payment.amount,
+      paymentAmountPaise: payment.amountPaise,
     });
     return;
   }
@@ -902,7 +940,7 @@ const finalizeRefundIfComplete = async (payment, refundEntity) => {
     bookingCount: activeBookings.length,
   });
   for (const booking of activeBookings) {
-    await applyRefundToBooking(booking, payment, refundEntity, booking.amount, { cancel: true });
+    await applyRefundToBooking(booking, payment, refundEntity, booking.amountPaise, { cancel: true });
   }
 
   log.info("Refund processed", { paymentId: payment._id, totalRefunded, razorpayRefundId: refundEntity.id });

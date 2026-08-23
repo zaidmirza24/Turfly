@@ -17,8 +17,6 @@ vi.mock("../booking/booking.service.js", () => ({
 }));
 vi.mock("./razorpay.client.js", () => ({
   getRazorpayClient: vi.fn(),
-  toPaise: (r) => Math.round(r * 100),
-  toRupees: (p) => Math.round(p) / 100,
   verifyPaymentSignature: vi.fn(),
 }));
 vi.mock("../../common/config/env.js", () => ({
@@ -110,9 +108,9 @@ describe("handleWebhookEvent (Section 4/8 — one already-deduped event)", () =>
     // updated document — see payment.service.js.
     const pushedDoc = {
       _id: "pay_doc_1",
-      amount: 500,
-      refunds: [{ razorpayRefundId: "rfnd_1", status: "PROCESSED", amount: 500, notes: { bookingId: "b1" } }],
-      refundedAmount: () => 500,
+      amountPaise: 50000,
+      refunds: [{ razorpayRefundId: "rfnd_1", status: "PROCESSED", amountPaise: 50000, notes: { bookingId: "b1" } }],
+      refundedAmount: () => 50000,
     };
     Payment.findOneAndUpdate.mockResolvedValueOnce(null).mockResolvedValueOnce(pushedDoc);
     const bookingDoc = { _id: "b1", status: "CANCELLED", refundStatus: "REFUND_PENDING", payoutStatus: "PENDING", save: vi.fn().mockResolvedValue(true) };
@@ -127,7 +125,7 @@ describe("handleWebhookEvent (Section 4/8 — one already-deduped event)", () =>
     expect(Payment.findOneAndUpdate).toHaveBeenNthCalledWith(
       2,
       { razorpayPaymentId: "pay_real", "refunds.razorpayRefundId": { $ne: "rfnd_1" } },
-      expect.objectContaining({ $push: { refunds: expect.objectContaining({ razorpayRefundId: "rfnd_1", amount: 500, status: "PROCESSED" }) } }),
+      expect.objectContaining({ $push: { refunds: expect.objectContaining({ razorpayRefundId: "rfnd_1", amountPaise: 50000, status: "PROCESSED" }) } }),
       { new: true }
     );
     expect(bookingDoc.refundStatus).toBe("REFUNDED");
@@ -139,9 +137,9 @@ describe("handleWebhookEvent (Section 4/8 — one already-deduped event)", () =>
     // already exists, so there's never a $push, and never a second entry.
     const updatedDoc = {
       _id: "pay_doc_1",
-      amount: 500,
-      refunds: [{ razorpayRefundId: "rfnd_1", amount: 500, status: "PROCESSED", processedAt: new Date(), notes: { bookingId: "b1" } }],
-      refundedAmount: () => 500,
+      amountPaise: 50000,
+      refunds: [{ razorpayRefundId: "rfnd_1", amountPaise: 50000, status: "PROCESSED", processedAt: new Date(), notes: { bookingId: "b1" } }],
+      refundedAmount: () => 50000,
     };
     Payment.findOneAndUpdate.mockResolvedValue(updatedDoc);
     const bookingDoc = { _id: "b1", status: "CANCELLED", refundStatus: "REFUND_PENDING", payoutStatus: "PENDING", save: vi.fn().mockResolvedValue(true) };
@@ -170,7 +168,7 @@ describe("handleWebhookEvent (Section 4/8 — one already-deduped event)", () =>
   it("refund.failed records the failure without throwing, for manual follow-up", async () => {
     Payment.findOneAndUpdate.mockResolvedValueOnce(null).mockResolvedValueOnce({
       _id: "pay_doc_1",
-      refunds: [{ razorpayRefundId: "rfnd_1", status: "FAILED", amount: 500 }],
+      refunds: [{ razorpayRefundId: "rfnd_1", status: "FAILED", amountPaise: 50000 }],
     });
 
     await handleWebhookEvent(
@@ -181,7 +179,7 @@ describe("handleWebhookEvent (Section 4/8 — one already-deduped event)", () =>
     expect(Payment.findOneAndUpdate).toHaveBeenNthCalledWith(
       2,
       { razorpayPaymentId: "pay_real", "refunds.razorpayRefundId": { $ne: "rfnd_1" } },
-      expect.objectContaining({ $push: { refunds: expect.objectContaining({ razorpayRefundId: "rfnd_1", status: "FAILED", amount: 500 }) } }),
+      expect.objectContaining({ $push: { refunds: expect.objectContaining({ razorpayRefundId: "rfnd_1", status: "FAILED", amountPaise: 50000 }) } }),
       { new: true }
     );
   });
@@ -199,7 +197,7 @@ describe("initiateRefundForBooking (Section 8/9 — cancellation-triggered refun
   const booking = (overrides = {}) => ({
     _id: "b1",
     paymentId: "pay_1",
-    amount: 500,
+    amountPaise: 50000,
     refundStatus: "NONE",
     ...overrides,
   });
@@ -243,7 +241,7 @@ describe("initiateRefundForBooking (Section 8/9 — cancellation-triggered refun
     Payment.findById.mockResolvedValue({
       _id: "pay_1",
       status: "PAID",
-      amount: 500,
+      amountPaise: 50000,
       razorpayPaymentId: "pay_real",
       refunds: [],
       refundedAmount: () => 0,
@@ -262,7 +260,7 @@ describe("initiateRefundForBooking (Section 8/9 — cancellation-triggered refun
     Payment.findById.mockResolvedValue({
       _id: "pay_1",
       status: "PAID",
-      amount: 500,
+      amountPaise: 50000,
       razorpayPaymentId: "pay_real",
       refunds: [],
       refundedAmount: () => 0,
@@ -291,7 +289,7 @@ describe("initiateRefundForBooking (Section 8/9 — cancellation-triggered refun
     Payment.findById.mockResolvedValue({
       _id: "pay_1",
       status: "PAID",
-      amount: 500,
+      amountPaise: 50000,
       razorpayPaymentId: "pay_real",
       refunds: [],
       refundedAmount: () => 0,
@@ -312,15 +310,15 @@ describe("initiateRefundForBooking (Section 8/9 — cancellation-triggered refun
     Payment.findById.mockResolvedValue({
       _id: "pay_1",
       status: "PAID",
-      amount: 500,
+      amountPaise: 50000,
       razorpayPaymentId: "pay_real",
       refunds: [],
-      refundedAmount: () => 400, // already refunded 400 of 500
+      refundedAmount: () => 40000, // already refunded 400 of 500
     });
     Booking.findOneAndUpdate.mockResolvedValue({ _id: "b1", refundStatus: "REFUND_PENDING" });
     Booking.findByIdAndUpdate.mockResolvedValue({});
 
-    const result = await initiateRefundForBooking(booking({ amount: 200 }), { initiatedBy: "SYSTEM" }); // 400 + 200 > 500
+    const result = await initiateRefundForBooking(booking({ amountPaise: 20000 }), { initiatedBy: "SYSTEM" }); // 400 + 200 > 500
 
     expect(result.refunded).toBe(false);
     expect(result.reason).toBe("REFUND_FAILED");

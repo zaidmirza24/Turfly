@@ -47,7 +47,7 @@ export function TurfCard({ turf }: TurfCardProps) {
           {isCustomer && (
             <button
               type="button"
-              onClick={(e) => { e.preventDefault(); toggleFavorite(turf._id); }}
+              onClick={(e) => { e.preventDefault(); toggleFavorite(turf); }}
               aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
               aria-pressed={isFavorite}
               className="absolute top-3 right-3 w-11 h-11 rounded-full glass flex items-center justify-center hover:scale-110 transition-transform"

@@ -48,6 +48,8 @@ const AdminCustomersPage = lazy(() => import("@/pages/admin/AdminCustomersPage")
 const AdminActivityPage = lazy(() => import("@/pages/admin/AdminActivityPage"));
 const AdminPayoutsPage = lazy(() => import("@/pages/admin/AdminPayoutsPage"));
 const AdminStuckPaymentsPage = lazy(() => import("@/pages/admin/AdminStuckPaymentsPage"));
+const AdminSettingsPage = lazy(() => import("@/pages/admin/AdminSettingsPage"));
+const AdminComplaintsPage = lazy(() => import("@/pages/admin/AdminComplaintsPage"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -124,6 +126,8 @@ const App = () => (
                     <Route path="customers" element={<AdminCustomersPage />} />
                     <Route path="payouts" element={<AdminPayoutsPage />} />
                     <Route path="payments/stuck" element={<AdminStuckPaymentsPage />} />
+                    <Route path="complaints" element={<AdminComplaintsPage />} />
+                    <Route path="settings" element={<AdminSettingsPage />} />
                     <Route path="activity" element={<AdminActivityPage />} />
                   </Route>
                   <Route path="*" element={<PlayerLayout><NotFound /></PlayerLayout>} />

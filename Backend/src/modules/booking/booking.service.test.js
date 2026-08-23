@@ -118,25 +118,25 @@ describe("confirmSlot", () => {
     Slot.findOneAndUpdate.mockResolvedValue({
       _id: "slot1",
       turfId: "turf1",
-      price: 1200, // price changed by the owner after the hold was created
-      lockedPrice: 800, // what the customer actually saw and agreed to
+      pricePaise: 120000, // price changed by the owner after the hold was created
+      lockedPricePaise: 80000, // what the customer actually saw and agreed to
     });
-    Booking.create.mockResolvedValue({ _id: "booking1", amount: 800 });
+    Booking.create.mockResolvedValue({ _id: "booking1", amountPaise: 80000 });
     Slot.findByIdAndUpdate.mockResolvedValue({});
 
     await confirmSlot("user1", "slot1");
 
-    expect(Booking.create).toHaveBeenCalledWith(expect.objectContaining({ amount: 800 }));
+    expect(Booking.create).toHaveBeenCalledWith(expect.objectContaining({ amountPaise: 80000 }));
   });
 
   it("falls back to the slot's current price if no lockedPrice was captured", async () => {
-    Slot.findOneAndUpdate.mockResolvedValue({ _id: "slot1", turfId: "turf1", price: 900, lockedPrice: null });
-    Booking.create.mockResolvedValue({ _id: "booking1", amount: 900 });
+    Slot.findOneAndUpdate.mockResolvedValue({ _id: "slot1", turfId: "turf1", pricePaise: 90000, lockedPricePaise: null });
+    Booking.create.mockResolvedValue({ _id: "booking1", amountPaise: 90000 });
     Slot.findByIdAndUpdate.mockResolvedValue({});
 
     await confirmSlot("user1", "slot1");
 
-    expect(Booking.create).toHaveBeenCalledWith(expect.objectContaining({ amount: 900 }));
+    expect(Booking.create).toHaveBeenCalledWith(expect.objectContaining({ amountPaise: 90000 }));
   });
 
   it("rejects when the slot isn't locked by this user (lock expired or stolen)", async () => {
@@ -368,16 +368,16 @@ describe("markBookingPaidOut (admin settles an owner's pending commission-split 
       _id: "booking1",
       turfId: "turf1",
       payoutStatus: "PENDING",
-      ownerAmount: 450,
+      ownerAmountPaise: 45000,
     });
     Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: "owner1" }));
-    Payout.create.mockResolvedValue({ _id: "payout1", amount: 450, ownerId: "owner1" });
+    Payout.create.mockResolvedValue({ _id: "payout1", amountPaise: 45000, ownerId: "owner1" });
     Booking.findOneAndUpdate.mockResolvedValue({ _id: "booking1", payoutStatus: "PAID", payoutId: "payout1" });
 
     const result = await markBookingPaidOut("admin1", "booking1", { method: "UPI", note: "utr-123" });
 
     expect(Payout.create).toHaveBeenCalledWith(
-      expect.objectContaining({ ownerId: "owner1", bookingIds: ["booking1"], amount: 450, method: "UPI", note: "utr-123", paidBy: "admin1" })
+      expect.objectContaining({ ownerId: "owner1", bookingIds: ["booking1"], amountPaise: 45000, method: "UPI", note: "utr-123", paidBy: "admin1" })
     );
     expect(Booking.findOneAndUpdate).toHaveBeenCalledWith(
       { _id: "booking1", payoutStatus: "PENDING" },
@@ -392,10 +392,10 @@ describe("markBookingPaidOut (admin settles an owner's pending commission-split 
       _id: "booking1",
       turfId: "turf1",
       payoutStatus: "PENDING",
-      ownerAmount: 450,
+      ownerAmountPaise: 45000,
     });
     Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: "owner1" }));
-    Payout.create.mockResolvedValue({ _id: "payout1", amount: 450, ownerId: "owner1" });
+    Payout.create.mockResolvedValue({ _id: "payout1", amountPaise: 45000, ownerId: "owner1" });
     Booking.findOneAndUpdate.mockResolvedValue(null); // lost the race
 
     await expect(

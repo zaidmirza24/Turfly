@@ -72,7 +72,7 @@ const sendOnce = async ({ type, recipientEmail, bookingId, paymentId, dedupeKeyS
 };
 
 const customerOf = async (userId) => User.findById(userId).select("name email");
-const turfOf = async (turfId) => Turf.findById(turfId).select("name location");
+const turfOf = async (turfId) => Turf.findById(turfId).select("name location rules");
 const slotsOf = async (slotIds) => Slot.find({ _id: { $in: slotIds } }).select("startTime endTime").sort({ startTime: 1 });
 
 export const sendBookingConfirmed = async (bookings, payment) => {
@@ -211,6 +211,20 @@ export const sendPasswordReset = async (user, resetUrl) => {
     type: "PASSWORD_RESET",
     recipientEmail: user.email,
     dedupeKeySuffix: resetUrl,
+    subject,
+    html,
+  });
+};
+
+export const sendOtpEmail = async (user, otp) => {
+  const { subject, html } = tpl.otpEmail(user.name, otp);
+  // Deduped per-code (embedded in the key) rather than per-user, so
+  // resendOtp issuing a second, different code still actually sends it
+  // instead of being swallowed as a duplicate of the first.
+  return sendOnce({
+    type: "OTP_VERIFICATION",
+    recipientEmail: user.email,
+    dedupeKeySuffix: `${user._id}:${otp}`,
     subject,
     html,
   });

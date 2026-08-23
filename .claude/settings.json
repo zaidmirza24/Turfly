@@ -56,7 +56,17 @@
       "Bash(npx --no-install chromium-cli --version)",
       "Read(//c/Users/mirza/AppData/Roaming/npm/**)",
       "Bash(node verify_admin.cjs)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(mkdir -p \"/c/Users/mirza/AppData/Local/Temp/claude/c--Users-mirza-Downloads-TURF/745594bd-be1f-4110-840f-2e9e6865e7ee/scratchpad\")",
+      "Bash(node --check scripts/backfillMoneyToPaise.js)",
+      "Bash(node --check src/common/utils/money.js)",
+      "Bash(tasklist //FI \"IMAGENAME eq node.exe\" //FO CSV)",
+      "Bash(taskkill //F //PID 9240)",
+      "Bash(tasklist //FI \"IMAGENAME eq node.exe\")",
+      "Bash(node diag_bookings.mjs)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\mirza\\AppData\\Local\\Temp\\claude\\c--Users-mirza-Downloads-TURF\\745594bd-be1f-4110-840f-2e9e6865e7ee\\scratchpad"
     ]
   }
 }

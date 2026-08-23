@@ -19,6 +19,9 @@ export interface User {
   role: UserRole;
   avatar?: string | null;
   isBanned?: boolean;
+  // Only meaningful for role: OWNER — USER/ADMIN accounts are never vetted
+  // and always come back APPROVED (see Backend user.model.js).
+  approvalStatus?: TurfApprovalStatus;
   favorites?: (string | Turf)[];
   createdAt: string;
   // Set only on a customer an owner created from the panel (phone/walk-in
@@ -66,6 +69,24 @@ export interface Turf {
   avgRating?: number;
   reviewCount?: number;
   distanceMeters?: number; // present only on $geoNear ("near") results
+}
+
+export type ComplaintCategory = 'PAYMENT' | 'BOOKING' | 'TURF_QUALITY' | 'BEHAVIOR' | 'OTHER';
+export type ComplaintStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'DISMISSED';
+
+export interface Complaint {
+  _id: string;
+  raisedBy: string | Pick<User, '_id' | 'name' | 'email' | 'phone'>;
+  raisedByRole: 'USER' | 'OWNER';
+  bookingId?: (string | Pick<Booking, '_id' | 'amount' | 'createdAt'>) | null;
+  turfId?: (string | Pick<Turf, '_id' | 'name' | 'location'>) | null;
+  category: ComplaintCategory;
+  description: string;
+  status: ComplaintStatus;
+  resolutionNote?: string | null;
+  resolvedBy?: string | Pick<User, '_id' | 'name' | 'email'> | null;
+  resolvedAt?: string | null;
+  createdAt: string;
 }
 
 export interface Review {

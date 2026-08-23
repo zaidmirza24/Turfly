@@ -1,5 +1,7 @@
 import * as turfService from "./turf.service.js";
 import ApiResponse from "../../common/utils/ApiResponse.js";
+import ApiError from "../../common/utils/ApiError.js";
+import { toPaise } from "../../common/utils/money.js";
 
 /**
  * Build a Mongo filter from user-supplied query params.
@@ -38,9 +40,9 @@ const buildPublicTurfFilter = (query) => {
   const minPrice = Number(query.minPrice);
   const maxPrice = Number(query.maxPrice);
   if (Number.isFinite(minPrice) || Number.isFinite(maxPrice)) {
-    filter.pricePerHour = {};
-    if (Number.isFinite(minPrice)) filter.pricePerHour.$gte = minPrice;
-    if (Number.isFinite(maxPrice)) filter.pricePerHour.$lte = maxPrice;
+    filter.pricePerHourPaise = {};
+    if (Number.isFinite(minPrice)) filter.pricePerHourPaise.$gte = toPaise(minPrice);
+    if (Number.isFinite(maxPrice)) filter.pricePerHourPaise.$lte = toPaise(maxPrice);
   }
 
   if (query.amenities !== undefined) {
@@ -82,6 +84,14 @@ const buildPublicTurfOptions = (query) => {
 };
 
 export const createTurf = async (req, res) => {
+  if (req.user.approvalStatus !== "APPROVED") {
+    throw new ApiError(
+      403,
+      req.user.approvalStatus === "REJECTED"
+        ? "Your owner account was rejected — contact support to list a turf."
+        : "Your owner account is pending admin approval — you can't list a turf yet."
+    );
+  }
   const turf = await turfService.createTurf(req.user._id, req.body);
   new ApiResponse(201, "Turf created successfully", turf).send(res);
 };

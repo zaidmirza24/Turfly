@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { register, login, forgotPassword, resetPassword } from "./auth.controller.js";
+import { register, login, forgotPassword, resetPassword, verifyOtp, resendOtp } from "./auth.controller.js";
 import { rateLimit } from "../../common/middlewares/rateLimit.js";
 
 const router = Router();
@@ -34,11 +34,33 @@ const resetPasswordLimiter = rateLimit({
   message: "Too many attempts — please try again in a few minutes",
 });
 
+// verifyOtp already caps wrong-code guesses server-side (MAX_OTP_ATTEMPTS in
+// auth.service.js), but this bounds request volume too — the same "online
+// guessing oracle" reasoning as loginLimiter, just against a 6-digit code
+// instead of a password.
+const otpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  message: "Too many attempts — please try again in a few minutes",
+});
+
+const resendOtpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: "Too many resend requests — please try again in a few minutes",
+});
+
 // POST /api/auth/register
 router.post("/register", registerLimiter, register);
 
 // POST /api/auth/login
 router.post("/login", loginLimiter, login);
+
+// POST /api/auth/verify-otp
+router.post("/verify-otp", otpLimiter, verifyOtp);
+
+// POST /api/auth/resend-otp
+router.post("/resend-otp", resendOtpLimiter, resendOtp);
 
 // POST /api/auth/forgot-password
 router.post("/forgot-password", forgotPasswordLimiter, forgotPassword);

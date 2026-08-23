@@ -19,9 +19,10 @@ export const getRazorpayClient = () => {
   return client;
 };
 
-/** Rupees → paise, the only unit Razorpay's API accepts. */
-export const toPaise = (rupees) => Math.round(rupees * 100);
-export const toRupees = (paise) => Math.round(paise) / 100;
+/** Rupees → paise, the only unit Razorpay's API accepts. Re-exported from the
+ * shared money util so non-payment modules don't need to import something
+ * named "razorpay" for basic conversion. */
+export { toPaise, toRupees } from "../../common/utils/money.js";
 
 /**
  * Server-side Razorpay Standard Checkout signature check (Phase 6):

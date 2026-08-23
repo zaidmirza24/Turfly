@@ -17,13 +17,14 @@ vi.mock("../booking/booking.service.js", () => ({
 }));
 vi.mock("./razorpay.client.js", () => ({
   getRazorpayClient: vi.fn(),
-  toPaise: (r) => Math.round(r * 100),
-  toRupees: (p) => Math.round(p) / 100,
   verifyPaymentSignature: vi.fn(),
 }));
 vi.mock("../../common/config/env.js", () => ({
   default: { RAZORPAY_KEY_ID: "key", PAYMENT_RESERVATION_MINUTES: 10, PLATFORM_COMMISSION_RATE: 0.1 },
   isRazorpayConfigured: () => true,
+}));
+vi.mock("../settings/settings.service.js", () => ({
+  getCommissionRate: vi.fn().mockResolvedValue(0.1),
 }));
 vi.mock("../notification/email.service.js", () => ({
   sendBookingConfirmed: vi.fn().mockResolvedValue(null),
@@ -107,11 +108,11 @@ describe("reconcileStuckPayment", () => {
       slotIds: ["s1", "s2"],
       bookingIds: ["b1"],
       groupId: "grp_1",
-      amount: 1000,
+      amountPaise: 100000,
     };
     Payment.findById.mockResolvedValueOnce(payment).mockResolvedValueOnce({ ...payment, bookingIds: ["b1", "b2"] });
     Booking.find.mockReturnValue({ select: vi.fn().mockResolvedValue([{ _id: "b1", slotId: "s1" }]) });
-    confirmSlot.mockResolvedValue({ _id: "b2", amount: 500 });
+    confirmSlot.mockResolvedValue({ _id: "b2", amountPaise: 50000 });
     Booking.findByIdAndUpdate.mockResolvedValue({});
     Payment.findByIdAndUpdate.mockResolvedValue({});
 
@@ -124,7 +125,7 @@ describe("reconcileStuckPayment", () => {
   });
 
   it("is a safe no-op when bookingIds was just behind reality — no re-booking, no refund", async () => {
-    const payment = { _id: "pay_1", status: "PAID", userId: "user_1", slotIds: ["s1"], bookingIds: [], groupId: null, amount: 500 };
+    const payment = { _id: "pay_1", status: "PAID", userId: "user_1", slotIds: ["s1"], bookingIds: [], groupId: null, amountPaise: 50000 };
     Payment.findById.mockResolvedValueOnce(payment).mockResolvedValueOnce(payment);
     Booking.find.mockReturnValue({ select: vi.fn().mockResolvedValue([{ _id: "b1", slotId: "s1" }]) }); // already exists, bookingIds just hadn't caught up
     Payment.findByIdAndUpdate.mockResolvedValue({});
@@ -148,7 +149,7 @@ describe("reconcileStuckPayment", () => {
       slotIds: ["s1"],
       bookingIds: [],
       groupId: null,
-      amount: 500,
+      amountPaise: 50000,
       razorpayPaymentId: "pay_real",
       refundedAmount: () => 0,
     };
@@ -196,9 +197,9 @@ describe("finalizeRefundIfComplete — refund with no matching booking note", ()
   it("a full external refund cancels the booking, releases the slot, and voids the payout", async () => {
     const paymentDoc = {
       _id: "pay_1",
-      amount: 500,
-      refunds: [{ razorpayRefundId: "rfnd_1", amount: 500, status: "PROCESSED" }], // no notes.bookingId
-      refundedAmount: () => 500,
+      amountPaise: 50000,
+      refunds: [{ razorpayRefundId: "rfnd_1", amountPaise: 50000, status: "PROCESSED" }], // no notes.bookingId
+      refundedAmount: () => 50000,
     };
     Payment.findOneAndUpdate.mockResolvedValue(paymentDoc); // case 1: entry already existed (created earlier)
     const bookingDoc = {
@@ -226,9 +227,9 @@ describe("finalizeRefundIfComplete — refund with no matching booking note", ()
   it("a partial external refund with no note match is left for manual reconciliation, not guessed at", async () => {
     const paymentDoc = {
       _id: "pay_1",
-      amount: 1000,
-      refunds: [{ razorpayRefundId: "rfnd_1", amount: 300, status: "PROCESSED" }],
-      refundedAmount: () => 300, // less than payment.amount — not a full refund
+      amountPaise: 100000,
+      refunds: [{ razorpayRefundId: "rfnd_1", amountPaise: 30000, status: "PROCESSED" }],
+      refundedAmount: () => 30000, // less than payment.amountPaise — not a full refund
     };
     Payment.findOneAndUpdate.mockResolvedValue(paymentDoc);
     const bookingDoc = {
@@ -252,9 +253,9 @@ describe("finalizeRefundIfComplete — refund with no matching booking note", ()
   it("no active bookings left under the payment is a safe no-op", async () => {
     const paymentDoc = {
       _id: "pay_1",
-      amount: 500,
-      refunds: [{ razorpayRefundId: "rfnd_1", amount: 500, status: "PROCESSED" }],
-      refundedAmount: () => 500,
+      amountPaise: 50000,
+      refunds: [{ razorpayRefundId: "rfnd_1", amountPaise: 50000, status: "PROCESSED" }],
+      refundedAmount: () => 50000,
     };
     Payment.findOneAndUpdate.mockResolvedValue(paymentDoc);
     Booking.find.mockResolvedValue([{ _id: "b1", status: "CANCELLED", save: vi.fn() }]);

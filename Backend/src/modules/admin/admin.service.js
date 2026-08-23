@@ -7,6 +7,7 @@ import Payout from "../payout/payout.model.js";
 import AuditLog from "./auditLog.model.js";
 import ApiError from "../../common/utils/ApiError.js";
 import logger from "../../common/utils/logger.js";
+import { toRupees } from "../../common/utils/money.js";
 
 /**
  * Record an admin-triggered mutation for the audit trail. Never lets a
@@ -39,22 +40,22 @@ export const getStats = async () => {
     Booking.countDocuments(),
     Booking.aggregate([
       { $match: { status: "CONFIRMED" } },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
+      { $group: { _id: null, total: { $sum: "$amountPaise" } } },
     ]),
     // Commission actually earned by the platform — ONLINE bookings only,
     // since CASH/PENDING bookings never had the platform holding the money
     // (see booking.model.js's payoutStatus doc comment).
     Booking.aggregate([
       { $match: { status: "CONFIRMED", paymentMethod: "ONLINE" } },
-      { $group: { _id: null, total: { $sum: "$commissionAmount" } } },
+      { $group: { _id: null, total: { $sum: "$commissionAmountPaise" } } },
     ]),
     Booking.aggregate([
       { $match: { payoutStatus: "PENDING" } },
-      { $group: { _id: null, total: { $sum: "$ownerAmount" } } },
+      { $group: { _id: null, total: { $sum: "$ownerAmountPaise" } } },
     ]),
     Booking.aggregate([
       { $match: { payoutStatus: "PAID" } },
-      { $group: { _id: null, total: { $sum: "$ownerAmount" } } },
+      { $group: { _id: null, total: { $sum: "$ownerAmountPaise" } } },
     ]),
     Booking.aggregate([
       { $match: { createdAt: { $gte: seriesStart } } },
@@ -62,7 +63,7 @@ export const getStats = async () => {
         $group: {
           _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
           bookings: { $sum: 1 },
-          revenue: { $sum: { $cond: [{ $eq: ["$status", "CONFIRMED"] }, "$amount", 0] } },
+          revenuePaise: { $sum: { $cond: [{ $eq: ["$status", "CONFIRMED"] }, "$amountPaise", 0] } },
         },
       },
       { $sort: { _id: 1 } },
@@ -77,17 +78,17 @@ export const getStats = async () => {
     date.setDate(date.getDate() + i);
     const key = date.toISOString().slice(0, 10);
     const entry = byDate.get(key);
-    dailySeries.push({ date: key, bookings: entry?.bookings ?? 0, revenue: entry?.revenue ?? 0 });
+    dailySeries.push({ date: key, bookings: entry?.bookings ?? 0, revenue: toRupees(entry?.revenuePaise ?? 0) });
   }
 
   return {
     totalUsers,
     totalTurfs,
     totalBookings,
-    totalRevenue: revenueAgg[0]?.total || 0,
-    totalCommissionEarned: commissionAgg[0]?.total || 0,
-    totalOwedToOwners: payableAgg[0]?.total || 0,
-    totalPaidToOwners: paidOutAgg[0]?.total || 0,
+    totalRevenue: toRupees(revenueAgg[0]?.total || 0),
+    totalCommissionEarned: toRupees(commissionAgg[0]?.total || 0),
+    totalOwedToOwners: toRupees(payableAgg[0]?.total || 0),
+    totalPaidToOwners: toRupees(paidOutAgg[0]?.total || 0),
     dailySeries,
   };
 };
@@ -155,9 +156,10 @@ export const setTurfApproval = async (adminId, turfId, approvalStatus) => {
 /**
  * All users (admin view), paginated with optional search/role filters.
  */
-export const getAllUsers = async ({ page = 1, limit = 20, search, role } = {}) => {
+export const getAllUsers = async ({ page = 1, limit = 20, search, role, approvalStatus } = {}) => {
   const query = {};
   if (role) query.role = role;
+  if (approvalStatus) query.approvalStatus = approvalStatus;
   if (search) {
     const regex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
     query.$or = [{ name: regex }, { email: regex }];
@@ -196,6 +198,31 @@ export const setUserBanned = async (adminId, userId, isBanned) => {
 };
 
 /**
+ * Approve or reject a pending OWNER account. Only meaningful for role:
+ * OWNER — USER/ADMIN accounts are never vetted (see user.model.js's
+ * approvalStatus default), so applying this to one would be a no-op the
+ * caller almost certainly didn't intend.
+ */
+export const setOwnerApproval = async (adminId, userId, approvalStatus) => {
+  const target = await User.findById(userId).select("role");
+  if (!target) {
+    throw new ApiError(404, "User not found");
+  }
+  if (target.role !== "OWNER") {
+    throw new ApiError(400, "Only OWNER accounts can be approved/rejected");
+  }
+
+  const user = await User.findByIdAndUpdate(userId, { approvalStatus }, { new: true }).select("-password");
+  await logAdminAction(
+    adminId,
+    approvalStatus === "APPROVED" ? "OWNER_APPROVED" : "OWNER_REJECTED",
+    "USER",
+    userId
+  );
+  return user;
+};
+
+/**
  * All bookings platform-wide (admin view) — same query/pagination shape as
  * the owner's getOwnerBookings, but with no owner/turf-ownership scoping.
  */
@@ -228,8 +255,8 @@ export const getAllBookingsForAdmin = async ({ page = 1, limit = 20, from, to, t
     Booking.find(query)
       .populate("userId", "name email phone")
       .populate("turfId", "name location sportsType")
-      .populate("slotId", "startTime endTime price")
-      .populate("paymentId", "status razorpayOrderId razorpayPaymentId amount currency refunds failureReason paidAt")
+      .populate("slotId", "startTime endTime pricePaise")
+      .populate("paymentId", "status razorpayOrderId razorpayPaymentId amountPaise currency refunds failureReason paidAt")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit),
@@ -253,7 +280,7 @@ export const getAllCustomersForAdmin = async ({ page = 1, limit = 20 } = {}) => 
         totalBookings: { $sum: 1 },
         confirmedCount: { $sum: { $cond: [{ $eq: ["$status", "CONFIRMED"] }, 1, 0] } },
         cancelledCount: { $sum: { $cond: [{ $eq: ["$status", "CANCELLED"] }, 1, 0] } },
-        totalSpent: { $sum: { $cond: [{ $eq: ["$status", "CONFIRMED"] }, "$amount", 0] } },
+        totalSpentPaise: { $sum: { $cond: [{ $eq: ["$status", "CONFIRMED"] }, "$amountPaise", 0] } },
         lastBookingAt: { $max: "$createdAt" },
       },
     },
@@ -280,13 +307,18 @@ export const getAllCustomersForAdmin = async ({ page = 1, limit = 20 } = {}) => 
         totalBookings: 1,
         confirmedCount: 1,
         cancelledCount: 1,
-        totalSpent: 1,
+        totalSpentPaise: 1,
         lastBookingAt: 1,
       },
     },
   ]);
 
-  return { items, total, page, pages: Math.ceil(total / limit) || 1 };
+  const itemsWithRupees = items.map(({ totalSpentPaise, ...rest }) => ({
+    ...rest,
+    totalSpent: toRupees(totalSpentPaise),
+  }));
+
+  return { items: itemsWithRupees, total, page, pages: Math.ceil(total / limit) || 1 };
 };
 
 /**
@@ -296,7 +328,7 @@ export const getAllCustomersForAdmin = async ({ page = 1, limit = 20 } = {}) => 
 export const getCustomerDetailForAdmin = async (customerId) => {
   const bookings = await Booking.find({ userId: customerId })
     .populate("turfId", "name location sportsType")
-    .populate("slotId", "startTime endTime price")
+    .populate("slotId", "startTime endTime pricePaise")
     .sort({ createdAt: -1 });
 
   const customer = await User.findById(customerId).select("name email phone isGuest");
@@ -309,7 +341,7 @@ export const getCustomerDetailForAdmin = async (customerId) => {
     totalBookings: bookings.length,
     confirmedCount: confirmed.length,
     cancelledCount: bookings.length - confirmed.length,
-    totalSpent: confirmed.reduce((sum, b) => sum + b.amount, 0),
+    totalSpent: toRupees(confirmed.reduce((sum, b) => sum + b.amountPaise, 0)),
   };
 
   return { customer, stats, bookings };
@@ -331,12 +363,12 @@ export const getPendingPayoutsSummary = async () => {
     {
       $group: {
         _id: "$turf.ownerId",
-        pendingAmount: { $sum: "$ownerAmount" },
+        pendingAmountPaise: { $sum: "$ownerAmountPaise" },
         pendingCount: { $sum: 1 },
         oldestPendingAt: { $min: "$createdAt" },
       },
     },
-    { $sort: { pendingAmount: -1 } },
+    { $sort: { pendingAmountPaise: -1 } },
     { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "owner" } },
     { $unwind: "$owner" },
     {
@@ -346,13 +378,13 @@ export const getPendingPayoutsSummary = async () => {
         ownerName: "$owner.name",
         ownerEmail: "$owner.email",
         payoutDetails: "$owner.payoutDetails",
-        pendingAmount: 1,
+        pendingAmountPaise: 1,
         pendingCount: 1,
         oldestPendingAt: 1,
       },
     },
   ]);
-  return rows;
+  return rows.map(({ pendingAmountPaise, ...rest }) => ({ ...rest, pendingAmount: toRupees(pendingAmountPaise) }));
 };
 
 /**

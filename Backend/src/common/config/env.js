@@ -118,6 +118,16 @@ const env = {
   // Shared secret the external scheduler must present (header
   // X-Cron-Secret) to trigger the reminder job. Required in production.
   CRON_SECRET: process.env.CRON_SECRET || "",
+
+  // ── Onboarding email OTP ──
+  // Minutes an OTP stays valid after being issued (registerUser/resendOtp).
+  OTP_EXPIRY_MINUTES: Number(process.env.OTP_EXPIRY_MINUTES || 10),
+  // Testing-only backdoor: a fixed code that verifies ANY email's OTP,
+  // instead of requiring the real emailed code. Only ever consulted when
+  // NODE_ENV !== "production" (see auth.service.js verifyOtp) — that check is
+  // hardcoded, not just gated by this var being unset, so setting this in a
+  // production .env by mistake still can't open the backdoor there.
+  OTP_MASTER_CODE: process.env.OTP_MASTER_CODE || "",
 };
 
 if (NODE_ENV === "production" && !env.CRON_SECRET) {

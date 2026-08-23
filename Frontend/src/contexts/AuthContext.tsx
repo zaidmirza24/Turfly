@@ -2,16 +2,23 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import { User, UserRole } from '@/types';
 import { apiPost, clearStoredSession } from '@/lib/api';
 
+/** Outcome of a login attempt — distinguishes "wrong password" from "right
+ * password, but this account still needs to verify its email" so the UI can
+ * route to the OTP screen instead of showing a generic error. */
+export type LoginResult = 'success' | 'invalid' | 'unverified';
+
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<LoginResult>;
   signup: (input: SignupInput) => Promise<boolean>;
+  verifyOtp: (email: string, otp: string) => Promise<boolean>;
+  resendOtp: (email: string) => Promise<void>;
   logout: () => void;
 }
 
-/** What /auth/login and /auth/register return in their `data` field. */
+/** What /auth/login and /auth/verify-otp return in their `data` field. */
 interface AuthPayload {
   user: User;
   token: string;
@@ -49,11 +56,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(false);
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
     try {
       const res = await apiPost<AuthPayload>('/auth/login', { email, password });
       const { user, token } = res.data;
-      
+
+      setUser(user);
+      localStorage.setItem('token', token);
+      localStorage.setItem('user', JSON.stringify(user));
+      return 'success';
+    } catch (error) {
+      // Sentinel set by the backend (auth.service.js loginUser) for a correct
+      // password on an account that hasn't verified its email yet — every
+      // other rejection reason (wrong password, banned, deleted) uses a
+      // normal human-readable message instead.
+      if (error instanceof Error && error.message === 'EMAIL_NOT_VERIFIED') {
+        return 'unverified';
+      }
+      return 'invalid';
+    }
+  }, []);
+
+  const signup = useCallback(async (input: SignupInput) => {
+    try {
+      // Registration no longer logs the caller in directly — the backend
+      // creates the account unverified and emails an OTP; onboarding only
+      // finishes once verifyOtp succeeds, making verification a mandatory
+      // step rather than one a user could skip.
+      await apiPost<{ email: string }>('/auth/register', input);
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }, []);
+
+  const verifyOtp = useCallback(async (email: string, otp: string) => {
+    try {
+      const res = await apiPost<AuthPayload>('/auth/verify-otp', { email, otp });
+      const { user, token } = res.data;
+
       setUser(user);
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(user));
@@ -63,18 +104,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const signup = useCallback(async (input: SignupInput) => {
-    try {
-      const res = await apiPost<AuthPayload>('/auth/register', input);
-      const { user, token } = res.data;
-      
-      setUser(user);
-      localStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify(user));
-      return true;
-    } catch (error) {
-      return false;
-    }
+  const resendOtp = useCallback(async (email: string) => {
+    // Errors (rate limit, network) are surfaced to the caller as a rejected
+    // promise — the page decides how to show that; there's nothing generic
+    // to swallow here the way login/signup swallow theirs.
+    await apiPost('/auth/resend-otp', { email });
   }, []);
 
   const logout = useCallback(() => {
@@ -87,8 +121,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // re-render on every provider render, not just when the auth state itself
   // changes.
   const value = useMemo(
-    () => ({ user, isAuthenticated: !!user, isLoading, login, signup, logout }),
-    [user, isLoading, login, signup, logout]
+    () => ({ user, isAuthenticated: !!user, isLoading, login, signup, verifyOtp, resendOtp, logout }),
+    [user, isLoading, login, signup, verifyOtp, resendOtp, logout]
   );
 
   return (

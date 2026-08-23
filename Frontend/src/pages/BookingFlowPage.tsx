@@ -365,6 +365,17 @@ export default function BookingFlowPage() {
             <div className="flex justify-between gap-3 text-[10px] text-muted-foreground mt-2"><span className="shrink-0">Booking Reference</span><span className="truncate min-w-0">#{reference}</span></div>
           </div>
 
+          <div className="bg-muted/30 border rounded-lg p-4 mt-4 text-sm text-left space-y-1.5">
+            <p className="font-medium">Before you arrive</p>
+            <ul className="list-disc pl-4 text-muted-foreground space-y-1">
+              <li>Arrive about 10 minutes early to check in and get ready without cutting into your slot.</li>
+              <li>Keep this booking reference handy — some venues ask for it on arrival.</li>
+              <li>Bring appropriate sports footwear and equipment for the venue.</li>
+              <li>Play ends at your booked end time; extra time isn't guaranteed and depends on venue availability.</li>
+              {turf?.rules && <li>{turf.rules}</li>}
+            </ul>
+          </div>
+
           <div className="grid grid-cols-2 gap-2 mt-4">
             <Button variant="outline" size="sm" className="gap-1.5 h-auto py-2 whitespace-normal text-center" asChild>
               <a href={directionsUrl(turf?.location ?? '', turf?.geo)} target="_blank" rel="noopener noreferrer">

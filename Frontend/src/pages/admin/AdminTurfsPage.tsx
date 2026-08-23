@@ -1,15 +1,15 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiPatch } from '@/lib/api';
+import { useQuery } from '@tanstack/react-query';
+import { apiGet } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Search, MapPin, Activity, ChevronLeft, ChevronRight, Filter } from 'lucide-react';
-import { toast } from 'sonner';
 import { Paginated, Turf } from '@/types';
 import { SyncingIndicator } from '@/components/SyncingIndicator';
 import { QueryErrorState } from '@/components/QueryErrorState';
 import { AdminTurfDetailDrawer } from './AdminTurfDetailDrawer';
+import { useAdminTurfApproval } from './useAdminTurfApproval';
 
 const LIMIT = 20;
 
@@ -18,7 +18,6 @@ export default function AdminTurfsPage() {
   const [status, setStatus] = useState('all');
   const [page, setPage] = useState(1);
   const [selectedTurf, setSelectedTurf] = useState<Turf | null>(null);
-  const queryClient = useQueryClient();
 
   const filters = { search, status, page };
   const { data, isLoading, isError, refetch } = useQuery({
@@ -35,25 +34,7 @@ export default function AdminTurfsPage() {
   const total = data?.data?.total ?? 0;
   const pages = data?.data?.pages ?? 1;
 
-  const approveMutation = useMutation({
-    mutationFn: (id: string) => apiPatch<Turf>(`/admin/turfs/${id}/approve`),
-    onSuccess: () => {
-      toast.success('Turf approved');
-      queryClient.invalidateQueries({ queryKey: ['admin-turfs'] });
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to approve turf'),
-  });
-
-  const rejectMutation = useMutation({
-    mutationFn: (id: string) => apiPatch<Turf>(`/admin/turfs/${id}/reject`),
-    onSuccess: () => {
-      toast.success('Turf is no longer listed publicly');
-      queryClient.invalidateQueries({ queryKey: ['admin-turfs'] });
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to reject turf'),
-  });
-
-  const isMutating = approveMutation.isPending || rejectMutation.isPending;
+  const { approveMutation, rejectMutation, isMutating } = useAdminTurfApproval();
   const resetToPage1 = <T,>(setter: (v: T) => void) => (v: T) => { setter(v); setPage(1); };
 
   if (isLoading) {

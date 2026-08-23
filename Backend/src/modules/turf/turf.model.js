@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { toRupees } from "../../common/utils/money.js";
 
 const turfSchema = new mongoose.Schema(
   {
@@ -52,16 +53,17 @@ const turfSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
-    pricePerHour: {
+    pricePerHourPaise: {
       type: Number,
       required: [true, "Price per hour is required"],
       min: [0, "Price cannot be negative"],
+      validate: { validator: Number.isInteger, message: "pricePerHourPaise must be an integer" },
     },
-    defaultWeekdayPrice: {
+    defaultWeekdayPricePaise: {
       type: Number,
       min: [0, "Price cannot be negative"],
     },
-    defaultWeekendPrice: {
+    defaultWeekendPricePaise: {
       type: Number,
       min: [0, "Price cannot be negative"],
     },
@@ -152,6 +154,18 @@ const turfSchema = new mongoose.Schema(
 );
 
 turfSchema.index({ geo: "2dsphere" });
+
+const moneyToJSON = (_doc, ret) => {
+  ret.pricePerHour = toRupees(ret.pricePerHourPaise);
+  delete ret.pricePerHourPaise;
+  ret.defaultWeekdayPrice = ret.defaultWeekdayPricePaise != null ? toRupees(ret.defaultWeekdayPricePaise) : undefined;
+  delete ret.defaultWeekdayPricePaise;
+  ret.defaultWeekendPrice = ret.defaultWeekendPricePaise != null ? toRupees(ret.defaultWeekendPricePaise) : undefined;
+  delete ret.defaultWeekendPricePaise;
+  return ret;
+};
+turfSchema.set("toJSON", { transform: moneyToJSON });
+turfSchema.set("toObject", { transform: moneyToJSON });
 
 const Turf = mongoose.model("Turf", turfSchema);
 export default Turf;

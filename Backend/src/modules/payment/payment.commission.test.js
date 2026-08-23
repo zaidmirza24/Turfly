@@ -17,13 +17,14 @@ vi.mock("../booking/booking.service.js", () => ({
 }));
 vi.mock("./razorpay.client.js", () => ({
   getRazorpayClient: vi.fn(),
-  toPaise: (r) => Math.round(r * 100),
-  toRupees: (p) => Math.round(p) / 100,
   verifyPaymentSignature: vi.fn(),
 }));
 vi.mock("../../common/config/env.js", () => ({
   default: { RAZORPAY_KEY_ID: "key", PAYMENT_RESERVATION_MINUTES: 10, PLATFORM_COMMISSION_RATE: 0.1 },
   isRazorpayConfigured: () => true,
+}));
+vi.mock("../settings/settings.service.js", () => ({
+  getCommissionRate: vi.fn().mockResolvedValue(0.1),
 }));
 vi.mock("../notification/email.service.js", () => ({
   sendBookingConfirmed: vi.fn().mockResolvedValue(null),
@@ -50,7 +51,7 @@ describe("Commission split on booking confirmation (finalizePaymentSuccess)", ()
       groupId: null,
       userId: "user_1",
     });
-    confirmSlot.mockResolvedValue({ _id: "booking_1", amount: 500 });
+    confirmSlot.mockResolvedValue({ _id: "booking_1", amountPaise: 50000 });
     Booking.findByIdAndUpdate.mockResolvedValue({});
     Payment.findByIdAndUpdate.mockResolvedValue({});
     Payment.findById.mockResolvedValue({ _id: "pay_doc_1", bookingIds: ["booking_1"] });
@@ -67,20 +68,20 @@ describe("Commission split on booking confirmation (finalizePaymentSuccess)", ()
     expect(Booking.findByIdAndUpdate).toHaveBeenCalledWith("booking_1", {
       paymentId: "pay_doc_1",
       paymentMethod: "ONLINE",
-      commissionAmount: 50,
-      ownerAmount: 450,
+      commissionAmountPaise: 5000,
+      ownerAmountPaise: 45000,
       payoutStatus: "PENDING",
     });
   });
 
-  it("rounds to paise rather than leaving floating-point remainders", async () => {
+  it("splits in exact integer paise with no floating-point remainder", async () => {
     Payment.findOneAndUpdate.mockResolvedValue({
       _id: "pay_doc_1",
       slotIds: ["slot_1"],
       groupId: null,
       userId: "user_1",
     });
-    confirmSlot.mockResolvedValue({ _id: "booking_1", amount: 333 });
+    confirmSlot.mockResolvedValue({ _id: "booking_1", amountPaise: 33300 });
     Booking.findByIdAndUpdate.mockResolvedValue({});
     Payment.findByIdAndUpdate.mockResolvedValue({});
     Payment.findById.mockResolvedValue({ _id: "pay_doc_1", bookingIds: ["booking_1"] });
@@ -95,8 +96,8 @@ describe("Commission split on booking confirmation (finalizePaymentSuccess)", ()
     });
 
     const call = Booking.findByIdAndUpdate.mock.calls[0][1];
-    expect(call.commissionAmount + call.ownerAmount).toBeCloseTo(333, 5);
-    expect(call.commissionAmount).toBeCloseTo(33.3, 5);
+    expect(call.commissionAmountPaise + call.ownerAmountPaise).toBe(33300);
+    expect(call.commissionAmountPaise).toBe(3330);
   });
 });
 
@@ -116,11 +117,11 @@ describe("Payout clawback on refund.processed (full clawback policy)", () => {
   // payment.service.js), not a load-then-.save() round trip — an existing
   // entry means its "update in place" branch matches on the first call and
   // returns the already-updated document directly.
-  const paymentDocWithTaggedRefund = (amount = 500) => ({
+  const paymentDocWithTaggedRefund = (amountPaise = 50000) => ({
     _id: "pay_doc_1",
-    amount: 500,
-    refunds: [{ razorpayRefundId: "rfnd_1", amount, status: "PROCESSED", notes: { bookingId: "b1" } }],
-    refundedAmount: () => amount,
+    amountPaise: 50000,
+    refunds: [{ razorpayRefundId: "rfnd_1", amountPaise, status: "PROCESSED", notes: { bookingId: "b1" } }],
+    refundedAmount: () => amountPaise,
   });
 
   it("voids a still-PENDING payout — nothing was ever actually paid out, so nothing to claw back", async () => {

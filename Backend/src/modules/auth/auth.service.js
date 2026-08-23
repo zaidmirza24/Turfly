@@ -22,8 +22,42 @@ const generateToken = (userId) => {
 // caller could hand themselves platform-admin access via this endpoint.
 const PUBLIC_REGISTRATION_ROLES = ["USER", "OWNER"];
 
+const publicUser = (user) => ({
+  _id: user._id,
+  name: user.name,
+  email: user.email,
+  phone: user.phone,
+  role: user.role,
+  avatar: user.avatar,
+});
+
+const OTP_TTL_MS = env.OTP_EXPIRY_MINUTES * 60 * 1000;
+const MAX_OTP_ATTEMPTS = 5;
+
+const generateOtp = () => String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
+const hashOtp = (otp) => crypto.createHash("sha256").update(otp).digest("hex");
+
 /**
- * Register a new user.
+ * (Re)issues an OTP for a not-yet-verified user: stores its hash, resets the
+ * attempt counter, and emails the plaintext code. Shared by registerUser and
+ * resendOtp so both go through the exact same generation/storage path.
+ */
+const issueOtp = async (user) => {
+  const otp = generateOtp();
+  user.otpHash = hashOtp(otp);
+  user.otpExpires = new Date(Date.now() + OTP_TTL_MS);
+  user.otpAttempts = 0;
+  await user.save();
+  await emailService.sendOtpEmail(user, otp).catch((err) =>
+    log.error("Failed to send OTP email", { err, userId: user._id })
+  );
+};
+
+/**
+ * Register a new user. The account is created but left unverified — no JWT
+ * is issued here. Onboarding only finishes (and the caller gets logged in)
+ * once verifyOtp succeeds, so email verification is a mandatory step rather
+ * than an optional follow-up a user could skip.
  */
 export const registerUser = async ({ name, email, phone, password, role }) => {
   // Explicit checks before touching the DB. Without them a missing password
@@ -49,20 +83,81 @@ export const registerUser = async ({ name, email, phone, password, role }) => {
   }
 
   const safeRole = PUBLIC_REGISTRATION_ROLES.includes(role) ? role : "USER";
-  const user = await User.create({ name, email, phone, password, role: safeRole });
-  const token = generateToken(user._id);
+  const user = await User.create({ name, email, phone, password, role: safeRole, isEmailVerified: false });
+  await issueOtp(user);
 
-  return {
-    user: {
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      phone: user.phone,
-      role: user.role,
-      avatar: user.avatar,
-    },
-    token,
-  };
+  return { email: user.email };
+};
+
+/**
+ * Step 2 of onboarding — spends the OTP emailed by registerUser (or a fresh
+ * one from resendOtp) and, on success, logs the now-verified user in exactly
+ * like loginUser does.
+ *
+ * `OTP_MASTER_CODE` is a testing-only bypass: a single fixed code that
+ * verifies ANY email, so QA/automation doesn't need to read real inboxes.
+ * The `NODE_ENV !== "production"` check is hardcoded rather than left to the
+ * env var alone — a master code left set in a production .env by accident
+ * must still never work there.
+ */
+export const verifyOtp = async ({ email, otp }) => {
+  if (typeof email !== "string" || typeof otp !== "string" || !otp) {
+    throw new ApiError(400, "Email and verification code are required");
+  }
+
+  const user = await User.findOne({ email: email.toLowerCase() }).select("+otpHash +otpExpires +otpAttempts");
+  if (!user) {
+    throw new ApiError(400, "Invalid or expired code");
+  }
+
+  if (user.isEmailVerified) {
+    // Already verified (e.g. a double submit, or a stale tab resubmitting) —
+    // just log them in rather than erroring on an OTP that's already spent.
+    const token = generateToken(user._id);
+    return { user: publicUser(user), token };
+  }
+
+  const isMasterOtp = env.NODE_ENV !== "production" && env.OTP_MASTER_CODE && otp === env.OTP_MASTER_CODE;
+
+  if (!isMasterOtp) {
+    if (!user.otpHash || !user.otpExpires || user.otpExpires < new Date()) {
+      throw new ApiError(400, "Code expired — request a new one");
+    }
+    if (user.otpAttempts >= MAX_OTP_ATTEMPTS) {
+      throw new ApiError(429, "Too many incorrect attempts — request a new code");
+    }
+    if (hashOtp(otp) !== user.otpHash) {
+      user.otpAttempts += 1;
+      await user.save();
+      throw new ApiError(400, "Incorrect code");
+    }
+  }
+
+  user.isEmailVerified = true;
+  user.otpHash = null;
+  user.otpExpires = null;
+  user.otpAttempts = 0;
+  await user.save();
+
+  log.info("Email verified", { userId: user._id });
+
+  const token = generateToken(user._id);
+  return { user: publicUser(user), token };
+};
+
+/**
+ * Re-sends a fresh OTP. Same enumeration-safety shape as
+ * requestPasswordReset — a silent no-op for a missing/deleted/already-
+ * verified account, so the controller can send one generic response
+ * regardless of which case it was.
+ */
+export const resendOtp = async (email) => {
+  if (typeof email !== "string" || !email) return;
+
+  const user = await User.findOne({ email: email.toLowerCase(), isDeleted: false });
+  if (!user || user.isEmailVerified) return;
+
+  await issueOtp(user);
 };
 
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -158,18 +253,18 @@ export const loginUser = async ({ email, password }) => {
   if (user.isBanned) {
     throw new ApiError(403, "Account suspended");
   }
+  // Checked after the password match too, for the same enumeration reason —
+  // and this exact message is a sentinel the frontend matches on to route
+  // the visitor to the OTP screen instead of showing a plain login error, so
+  // don't reword it without updating AuthContext.login().
+  if (!user.isEmailVerified) {
+    throw new ApiError(403, "EMAIL_NOT_VERIFIED");
+  }
 
   const token = generateToken(user._id);
 
   return {
-    user: {
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      phone: user.phone,
-      role: user.role,
-      avatar: user.avatar,
-    },
+    user: publicUser(user),
     token,
   };
 };

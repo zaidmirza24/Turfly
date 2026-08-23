@@ -12,7 +12,7 @@ const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const PROFILE_EDITABLE_FIELDS = ["name", "phone"];
 
 export const getMe = async (userId) => {
-  const user = await User.findById(userId).populate("favorites", "name location images pricePerHour avgRating reviewCount");
+  const user = await User.findById(userId).populate("favorites", "name location images pricePerHourPaise avgRating reviewCount");
   if (!user) throw new ApiError(404, "User not found");
   return user;
 };

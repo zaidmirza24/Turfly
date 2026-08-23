@@ -23,27 +23,56 @@ export function useFavorites() {
   const favorites = favoritesResponse?.data ?? [];
   const favoriteIds = new Set(favorites.map(t => t._id));
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['favorites'] });
+  const settle = () => queryClient.invalidateQueries({ queryKey: ['favorites'] });
 
+  // Optimistic: the star/heart flips instantly, then quietly reconciles with
+  // the server. On failure we roll the cache back to its pre-click snapshot
+  // rather than just refetching, so the icon doesn't flicker back and forth.
   const addMutation = useMutation({
-    mutationFn: (turfId: string) => apiPost(`/users/me/favorites/${turfId}`),
-    onSuccess: invalidate,
-    onError: (error: Error) => toast.error(error.message || 'Failed to save favorite'),
+    mutationFn: (turf: Turf) => apiPost(`/users/me/favorites/${turf._id}`),
+    onMutate: async (turf: Turf) => {
+      await queryClient.cancelQueries({ queryKey: ['favorites'] });
+      const previous = queryClient.getQueryData<{ data: Turf[] }>(['favorites']);
+      queryClient.setQueryData<{ data: Turf[] } | undefined>(['favorites'], (old) => {
+        const list = old?.data ?? [];
+        if (list.some(t => t._id === turf._id)) return old;
+        return { ...old, data: [turf, ...list] };
+      });
+      return { previous };
+    },
+    onError: (error: Error, _turf, context) => {
+      if (context?.previous) queryClient.setQueryData(['favorites'], context.previous);
+      toast.error(error.message || 'Failed to save favorite');
+    },
+    onSettled: settle,
   });
 
   const removeMutation = useMutation({
     mutationFn: (turfId: string) => apiDelete(`/users/me/favorites/${turfId}`),
-    onSuccess: invalidate,
-    onError: (error: Error) => toast.error(error.message || 'Failed to remove favorite'),
+    onMutate: async (turfId: string) => {
+      await queryClient.cancelQueries({ queryKey: ['favorites'] });
+      const previous = queryClient.getQueryData<{ data: Turf[] }>(['favorites']);
+      queryClient.setQueryData<{ data: Turf[] } | undefined>(['favorites'], (old) =>
+        old ? { ...old, data: old.data.filter(t => t._id !== turfId) } : old
+      );
+      return { previous };
+    },
+    onError: (error: Error, _turfId, context) => {
+      if (context?.previous) queryClient.setQueryData(['favorites'], context.previous);
+      toast.error(error.message || 'Failed to remove favorite');
+    },
+    onSettled: settle,
   });
 
-  const toggleFavorite = (turfId: string) => {
+  // Takes the full turf, not just an id, so an optimistic "add" has
+  // something real to push into the favorites list cache.
+  const toggleFavorite = (turf: Turf) => {
     if (!isCustomer) {
       toast.info('Log in as a player to save favorites');
       return;
     }
-    if (favoriteIds.has(turfId)) removeMutation.mutate(turfId);
-    else addMutation.mutate(turfId);
+    if (favoriteIds.has(turf._id)) removeMutation.mutate(turf._id);
+    else addMutation.mutate(turf);
   };
 
   return { favorites, favoriteIds, toggleFavorite, isCustomer };

@@ -1,6 +1,7 @@
 import * as slotService from "./slot.service.js";
 import ApiResponse from "../../common/utils/ApiResponse.js";
 import ApiError from "../../common/utils/ApiError.js";
+import { toPaise } from "../../common/utils/money.js";
 
 export const createSlots = async (req, res) => {
   const { turfId, slots } = req.body;
@@ -35,7 +36,12 @@ export const deleteSlots = async (req, res) => {
 
 export const updateSlots = async (req, res) => {
   const { turfId, date, price, weekdayPrice, weekendPrice } = req.body;
-  await slotService.updateSlots(req.user._id, turfId, { date, price, weekdayPrice, weekendPrice });
+  await slotService.updateSlots(req.user._id, turfId, {
+    date,
+    pricePaise: price != null ? toPaise(price) : undefined,
+    weekdayPricePaise: weekdayPrice != null ? toPaise(weekdayPrice) : undefined,
+    weekendPricePaise: weekendPrice != null ? toPaise(weekendPrice) : undefined,
+  });
   new ApiResponse(200, "Slots updated successfully").send(res);
 };
 

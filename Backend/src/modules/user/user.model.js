@@ -37,6 +37,19 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Soft gate on OWNER accounts: a new owner can register/log in
+    // immediately, but createTurf (turf.controller.js) refuses until an
+    // admin approves them. USER/ADMIN accounts are never vetted, so they
+    // default straight to APPROVED — only a fresh OWNER signup starts
+    // PENDING (see the default function below, evaluated against `this.role`
+    // at document creation).
+    approvalStatus: {
+      type: String,
+      enum: ["PENDING", "APPROVED", "REJECTED"],
+      default: function () {
+        return this.role === "OWNER" ? "PENDING" : "APPROVED";
+      },
+    },
     // Always one of our own `/api/images/:id` paths (see user.service.js) —
     // never an arbitrary URL, for the same reason turf.images is validated.
     avatar: {
@@ -86,6 +99,37 @@ const userSchema = new mongoose.Schema(
     resetPasswordExpires: {
       type: Date,
       default: null,
+      select: false,
+    },
+    // Onboarding email OTP (auth.service.js registerUser/verifyOtp/resendOtp).
+    // Defaults to true so this only gates *new* self-service signups — an
+    // admin provisioned via seedAdmin.js, an owner-created guest customer, or
+    // any account that existed before this feature shipped must never be
+    // retroactively locked out of login. registerUser is the one place that
+    // explicitly sets this false.
+    isEmailVerified: {
+      type: Boolean,
+      default: true,
+    },
+    // Same reasoning as resetPasswordTokenHash: only the SHA-256 hash of the
+    // OTP is stored, never the code itself, so this document leaking doesn't
+    // hand out a working verification code.
+    otpHash: {
+      type: String,
+      default: null,
+      select: false,
+    },
+    otpExpires: {
+      type: Date,
+      default: null,
+      select: false,
+    },
+    // Wrong-code attempts against the current otpHash. Reset to 0 whenever a
+    // fresh code is issued; caps brute-forcing a 6-digit code before the
+    // caller has to request a new one (and hit resendOtp's rate limit).
+    otpAttempts: {
+      type: Number,
+      default: 0,
       select: false,
     },
     // Where an admin should send an OWNER's payout (see payout.model.js).

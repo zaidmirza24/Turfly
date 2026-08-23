@@ -35,7 +35,7 @@ export const releaseExpiredLocks = async ({ turfId } = {}) => {
     status: "AVAILABLE",
     lockedBy: null,
     lockExpiresAt: null,
-    lockedPrice: null,
+    lockedPricePaise: null,
   });
 
   return result.modifiedCount;

@@ -134,23 +134,68 @@ export function ReviewsSection({ turfId, isOwnerOfTurf }: { turfId: string; isOw
     onError: (error: Error) => toast.error(error.message || 'Failed to submit review'),
   });
 
+  // Patches one review in the ['reviews', turfId] cache and returns a
+  // snapshot for rollback — shared by edit/report/respond below since all
+  // three know exactly what they're changing and can show it immediately.
+  const patchReview = (reviewId: string, patch: Partial<Review>) => {
+    const previous = queryClient.getQueryData<{ data: Review[] }>(['reviews', turfId]);
+    queryClient.setQueryData<{ data: Review[] } | undefined>(['reviews', turfId], (old) =>
+      old ? { ...old, data: old.data.map(r => r._id === reviewId ? { ...r, ...patch } : r) } : old
+    );
+    return previous;
+  };
+  const rollbackReviews = (previous?: { data: Review[] }) => {
+    if (previous) queryClient.setQueryData(['reviews', turfId], previous);
+  };
+
   const editMutation = useMutation({
     mutationFn: (data: { rating: number; comment: string; facilityRatings: FacilityRatings; images: string[] }) =>
       apiPatch(`/reviews/id/${editingId}`, data),
-    onSuccess: () => { toast.success('Review updated'); setEditingId(null); invalidateAll(); },
-    onError: (error: Error) => toast.error(error.message || 'Failed to update review'),
+    onMutate: async (data) => {
+      if (!editingId) return;
+      await queryClient.cancelQueries({ queryKey: ['reviews', turfId] });
+      const previous = patchReview(editingId, data);
+      setEditingId(null);
+      return { previous };
+    },
+    onSuccess: () => { toast.success('Review updated'); invalidateAll(); },
+    onError: (error: Error, _data, context) => {
+      rollbackReviews(context?.previous);
+      toast.error(error.message || 'Failed to update review');
+    },
   });
 
   const reportMutation = useMutation({
     mutationFn: (reviewId: string) => apiPost(`/reviews/id/${reviewId}/report`),
+    onMutate: async (reviewId: string) => {
+      await queryClient.cancelQueries({ queryKey: ['reviews', turfId] });
+      const review = queryClient.getQueryData<{ data: Review[] }>(['reviews', turfId])?.data.find(r => r._id === reviewId);
+      const previous = user
+        ? patchReview(reviewId, { reportedBy: [...(review?.reportedBy ?? []), user._id] })
+        : undefined;
+      return { previous };
+    },
     onSuccess: () => toast.success("Reported — our team will take a look"),
-    onError: (error: Error) => toast.error(error.message || 'Failed to report review'),
+    onError: (error: Error, _reviewId, context) => {
+      rollbackReviews(context?.previous);
+      toast.error(error.message || 'Failed to report review');
+    },
   });
 
   const respondMutation = useMutation({
     mutationFn: (reviewId: string) => apiPost(`/reviews/id/${reviewId}/response`, { text: responseText }),
-    onSuccess: () => { toast.success('Response posted'); setRespondingId(null); setResponseText(''); invalidateAll(); },
-    onError: (error: Error) => toast.error(error.message || 'Failed to post response'),
+    onMutate: async (reviewId: string) => {
+      await queryClient.cancelQueries({ queryKey: ['reviews', turfId] });
+      const previous = patchReview(reviewId, { ownerResponse: { text: responseText, respondedAt: new Date().toISOString() } });
+      setRespondingId(null);
+      setResponseText('');
+      return { previous };
+    },
+    onSuccess: () => toast.success('Response posted'),
+    onError: (error: Error, _reviewId, context) => {
+      rollbackReviews(context?.previous);
+      toast.error(error.message || 'Failed to post response');
+    },
   });
 
   const avgRating = reviews.length

@@ -20,8 +20,6 @@ vi.mock("../booking/booking.service.js", () => ({
 }));
 vi.mock("./razorpay.client.js", () => ({
   getRazorpayClient: vi.fn(),
-  toPaise: (r) => Math.round(r * 100),
-  toRupees: (p) => Math.round(p) / 100,
   verifyPaymentSignature: vi.fn(),
 }));
 vi.mock("../../common/config/env.js", () => ({
@@ -55,14 +53,14 @@ describe("createOrGetOrder (Section 7 — server-computed amount, never client-s
     validateSlotSelection.mockResolvedValue({ uniqueIds: ["slot1", "slot2"], turfId: "turf1" });
     Slot.find.mockReturnValue(
       withSelect([
-        { _id: "slot1", price: 1000, lockedPrice: 400 },
-        { _id: "slot2", price: 1000, lockedPrice: 400 },
+        { _id: "slot1", pricePaise: 100000, lockedPricePaise: 40000 },
+        { _id: "slot2", pricePaise: 100000, lockedPricePaise: 40000 },
       ])
     );
     Slot.updateMany.mockResolvedValue({ modifiedCount: 2 });
     Payment.create.mockResolvedValue({
       _id: "pay_1",
-      amount: 800,
+      amountPaise: 80000,
       save: vi.fn().mockResolvedValue(true),
     });
     getRazorpayClient.mockReturnValue({
@@ -80,16 +78,16 @@ describe("createOrGetOrder (Section 7 — server-computed amount, never client-s
     );
 
     expect(Payment.create).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 800 }) // 400 + 400 from lockedPrice, not the injected `1`
+      expect.objectContaining({ amountPaise: 80000 }) // 40000 + 40000 from lockedPricePaise, not the injected `1`
     );
-    expect(result.amount).toBe(80000); // toPaise(800)
+    expect(result.amount).toBe(80000); // checkout payload carries paise natively now
   });
 
   it("TC-2.5 — a Razorpay order-creation failure marks the payment FAILED instead of leaving it silently CREATED forever", async () => {
     validateSlotSelection.mockResolvedValue({ uniqueIds: ["slot1"], turfId: "turf1" });
-    Slot.find.mockReturnValue(withSelect([{ _id: "slot1", price: 500, lockedPrice: 500 }]));
+    Slot.find.mockReturnValue(withSelect([{ _id: "slot1", pricePaise: 50000, lockedPricePaise: 50000 }]));
     Slot.updateMany.mockResolvedValue({ modifiedCount: 1 });
-    const paymentDoc = { _id: "pay_1", amount: 500, save: vi.fn().mockResolvedValue(true) };
+    const paymentDoc = { _id: "pay_1", amountPaise: 50000, save: vi.fn().mockResolvedValue(true) };
     Payment.create.mockResolvedValue(paymentDoc);
     getRazorpayClient.mockReturnValue({
       orders: { create: vi.fn().mockRejectedValue(new Error("Razorpay 500")) },
@@ -149,7 +147,7 @@ describe("createOrGetOrder (Section 7 — server-computed amount, never client-s
         status: "ORDER_CREATED",
         razorpayOrderId: "order_existing",
         slotIds: ["slot1"],
-        amount: 500,
+        amountPaise: 50000,
         currency: "INR",
         turfId: "turf1",
         save: vi.fn().mockResolvedValue(true),
@@ -170,7 +168,7 @@ describe("createOrGetOrder (Section 7 — server-computed amount, never client-s
         status: "ORDER_CREATED",
         razorpayOrderId: "order_existing",
         slotIds: ["slot1"],
-        amount: 500,
+        amountPaise: 50000,
       });
       Slot.updateMany.mockResolvedValue({ modifiedCount: 0 }); // lock expired — nothing to extend
 
@@ -182,9 +180,9 @@ describe("createOrGetOrder (Section 7 — server-computed amount, never client-s
     it("an unrecognized/foreign groupId falls through to a fresh checkout rather than trusting client-supplied state", async () => {
       Payment.findOne.mockResolvedValue(null);
       validateSlotSelection.mockResolvedValue({ uniqueIds: ["slot1"], turfId: "turf1" });
-      Slot.find.mockReturnValue(withSelect([{ _id: "slot1", price: 500, lockedPrice: 500 }]));
+      Slot.find.mockReturnValue(withSelect([{ _id: "slot1", pricePaise: 50000, lockedPricePaise: 50000 }]));
       Slot.updateMany.mockResolvedValue({ modifiedCount: 1 });
-      Payment.create.mockResolvedValue({ _id: "pay_2", amount: 500, save: vi.fn().mockResolvedValue(true) });
+      Payment.create.mockResolvedValue({ _id: "pay_2", amountPaise: 50000, save: vi.fn().mockResolvedValue(true) });
       getRazorpayClient.mockReturnValue({ orders: { create: vi.fn().mockResolvedValue({ id: "order_new" }) } });
       Turf.findById.mockReturnValue(withSelect({ name: "Turf A" }));
 

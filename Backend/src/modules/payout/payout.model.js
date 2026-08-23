@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { toRupees } from "../../common/utils/money.js";
 
 /**
  * A record of the platform actually sending an owner their share of one or
@@ -23,12 +24,13 @@ const payoutSchema = new mongoose.Schema(
       required: true,
       validate: { validator: (v) => v.length > 0, message: "At least one booking is required" },
     },
-    amount: {
-      // Rupees — the sum of the settled bookings' ownerAmount at the time of
-      // payout, not recomputed later.
+    amountPaise: {
+      // Sum of the settled bookings' ownerAmountPaise at the time of payout,
+      // not recomputed later.
       type: Number,
       required: true,
       min: [1, "Amount must be positive"],
+      validate: { validator: Number.isInteger, message: "amountPaise must be an integer" },
     },
     method: {
       type: String,
@@ -53,6 +55,14 @@ const payoutSchema = new mongoose.Schema(
 );
 
 payoutSchema.index({ ownerId: 1, createdAt: -1 });
+
+const moneyToJSON = (_doc, ret) => {
+  ret.amount = toRupees(ret.amountPaise);
+  delete ret.amountPaise;
+  return ret;
+};
+payoutSchema.set("toJSON", { transform: moneyToJSON });
+payoutSchema.set("toObject", { transform: moneyToJSON });
 
 const Payout = mongoose.model("Payout", payoutSchema);
 export default Payout;

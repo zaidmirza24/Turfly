@@ -4,6 +4,7 @@ import Turf from "../turf/turf.model.js";
 import ApiError from "../../common/utils/ApiError.js";
 import { releaseExpiredLocks } from "../../common/jobs/releaseExpiredLocks.js";
 import { istDateTime, istDayBounds, nextDateKey, istHour } from "../../common/utils/istTime.js";
+import { toPaise } from "../../common/utils/money.js";
 
 /**
  * True when a slot starting at `start` falls inside `turf`'s configured
@@ -92,7 +93,7 @@ export const createSlots = async (ownerId, turfId, slots) => {
   const slotDocs = slots.map((slot) => ({
     startTime: slot.startTime,
     endTime: slot.endTime,
-    price: slot.price,
+    pricePaise: toPaise(slot.price),
     turfId,
   }));
 
@@ -135,16 +136,17 @@ const migrateHourlySlotsToHalfHour = async (turfId, startDateKey, endDateKey) =>
     turfId,
     startTime: { $gte: start, $lte: end },
     status: { $nin: ["BOOKED", "LOCKED"] },
-  }).select("startTime endTime price status").lean();
+  }).select("startTime endTime pricePaise status").lean();
 
   const toSplit = staleHourly.filter((s) => s.endTime.getTime() - s.startTime.getTime() === HOUR_MS);
   if (toSplit.length === 0) return;
 
   const halves = toSplit.flatMap((s) => {
     const mid = new Date(s.startTime.getTime() + SLOT_MINUTES * 60 * 1000);
+    const halfPricePaise = Math.round(s.pricePaise / 2);
     return [
-      { turfId, startTime: s.startTime, endTime: mid, price: s.price / 2, status: s.status },
-      { turfId, startTime: mid, endTime: s.endTime, price: s.price / 2, status: s.status },
+      { turfId, startTime: s.startTime, endTime: mid, pricePaise: halfPricePaise, status: s.status },
+      { turfId, startTime: mid, endTime: s.endTime, pricePaise: halfPricePaise, status: s.status },
     ];
   });
 
@@ -211,7 +213,7 @@ const provisionDefaultSlots = async (turf, startDateKey, endDateKey) => {
     .map((startTime) => {
       const endTime = new Date(startTime.getTime() + SLOT_MINUTES * 60 * 1000);
       // Half the hourly rate, since each slot is now half an hour.
-      return { turfId: turf._id, startTime, endTime, price: turf.pricePerHour / 2, status: "AVAILABLE" };
+      return { turfId: turf._id, startTime, endTime, pricePaise: Math.round(turf.pricePerHourPaise / 2), status: "AVAILABLE" };
     });
 
   if (toCreate.length === 0) return;
@@ -392,7 +394,7 @@ export const setSlotsStatus = async (ownerId, turfId, { slots, status }) => {
         turfId,
         startTime: start,
         endTime: end,
-        price: turf.pricePerHour,
+        pricePaise: turf.pricePerHourPaise,
         status,
       });
       updated.push(created);
@@ -402,7 +404,7 @@ export const setSlotsStatus = async (ownerId, turfId, { slots, status }) => {
   return updated;
 };
 
-export const updateSlots = async (ownerId, turfId, { date, price, weekdayPrice, weekendPrice }) => {
+export const updateSlots = async (ownerId, turfId, { date, pricePaise, weekdayPricePaise, weekendPricePaise }) => {
   const turf = await Turf.findById(turfId);
   if (!turf) throw new ApiError(404, "Turf not found");
   if (turf.ownerId.toString() !== ownerId.toString()) {
@@ -425,19 +427,19 @@ export const updateSlots = async (ownerId, turfId, { date, price, weekdayPrice, 
   // Sunday and get weekend pricing instead of weekday pricing.
   const dayOfWeekIST = { $dayOfWeek: { date: "$startTime", timezone: "Asia/Kolkata" } };
 
-  if (price) {
-    await Slot.updateMany(baseQuery, { $set: { price } });
-  } else if (weekdayPrice && weekendPrice) {
+  if (pricePaise) {
+    await Slot.updateMany(baseQuery, { $set: { pricePaise } });
+  } else if (weekdayPricePaise && weekendPricePaise) {
     // Update Weekdays (Mon-Fri: 1-5)
     await Slot.updateMany({
       ...baseQuery,
       $expr: { $and: [{ $gte: [dayOfWeekIST, 2] }, { $lte: [dayOfWeekIST, 6] }] }
-    }, { $set: { price: weekdayPrice } });
+    }, { $set: { pricePaise: weekdayPricePaise } });
 
     // Update Weekends (Sat-Sun: 7, 1)
     await Slot.updateMany({
       ...baseQuery,
       $expr: { $or: [{ $eq: [dayOfWeekIST, 7] }, { $eq: [dayOfWeekIST, 1] }] }
-    }, { $set: { price: weekendPrice } });
+    }, { $set: { pricePaise: weekendPricePaise } });
   }
 };

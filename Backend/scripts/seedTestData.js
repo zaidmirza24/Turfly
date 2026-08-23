@@ -5,6 +5,7 @@ import User from "../src/modules/user/user.model.js";
 import Turf from "../src/modules/turf/turf.model.js";
 import Slot from "../src/modules/slot/slot.model.js";
 import Booking from "../src/modules/booking/booking.model.js";
+import { toPaise } from "../src/common/utils/money.js";
 
 const hoursFromMidnight = (date, hour) => {
   const d = new Date(date);
@@ -88,7 +89,7 @@ const run = async () => {
     location: "Koramangala, Bangalore",
     sportsType: ["football"],
     amenities: ["Floodlights", "Changing Rooms", "Parking"],
-    pricePerHour: 1000,
+    pricePerHourPaise: toPaise(1000),
     isActive: true,
     approvalStatus: "APPROVED",
   });
@@ -99,7 +100,7 @@ const run = async () => {
     location: "Indiranagar, Bangalore",
     sportsType: ["badminton"],
     amenities: ["Air Conditioning", "Equipment Rental"],
-    pricePerHour: 600,
+    pricePerHourPaise: toPaise(600),
     isActive: true,
     approvalStatus: "PENDING", // test admin approve/reject flow
   });
@@ -110,7 +111,7 @@ const run = async () => {
     location: "HSR Layout, Bangalore",
     sportsType: ["cricket"],
     amenities: ["Floodlights", "Parking", "Drinking Water"],
-    pricePerHour: 1400,
+    pricePerHourPaise: toPaise(1400),
     isActive: true,
     approvalStatus: "APPROVED",
   });
@@ -121,7 +122,7 @@ const run = async () => {
     location: "Whitefield, Bangalore",
     sportsType: ["tennis"],
     amenities: ["Coaching", "Pro Shop"],
-    pricePerHour: 900,
+    pricePerHourPaise: toPaise(900),
     isActive: true,
     approvalStatus: "REJECTED", // test rejected-state display
   });
@@ -137,7 +138,7 @@ const run = async () => {
       turfId: turf._id,
       startTime: hoursFromMidnight(date, h),
       endTime: hoursFromMidnight(date, h + 1),
-      price: turf.pricePerHour,
+      pricePaise: turf.pricePerHourPaise,
       status: "AVAILABLE",
     }));
 
@@ -160,7 +161,7 @@ const run = async () => {
     turfId: greenArena._id,
     slotId: slot1._id,
     status: "CONFIRMED",
-    amount: greenArena.pricePerHour,
+    amountPaise: greenArena.pricePerHourPaise,
   });
   await Slot.findByIdAndUpdate(slot1._id, { bookingId: booking1._id });
 
@@ -172,7 +173,7 @@ const run = async () => {
     turfId: boundaryNets._id,
     slotId: slot2._id,
     status: "CONFIRMED",
-    amount: boundaryNets.pricePerHour,
+    amountPaise: boundaryNets.pricePerHourPaise,
   });
   await Slot.findByIdAndUpdate(slot2._id, { bookingId: booking2._id });
 
@@ -182,7 +183,7 @@ const run = async () => {
     turfId: greenArena._id,
     slotId: pastSlot._id,
     status: "CANCELLED",
-    amount: greenArena.pricePerHour,
+    amountPaise: greenArena.pricePerHourPaise,
   });
 
   console.log("\nDone. Seeded:");

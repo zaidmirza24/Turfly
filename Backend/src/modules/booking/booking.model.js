@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { toRupees } from "../../common/utils/money.js";
 
 const bookingSchema = new mongoose.Schema(
   {
@@ -37,10 +38,11 @@ const bookingSchema = new mongoose.Schema(
       enum: ["CUSTOMER", "OWNER", "ADMIN", "SYSTEM"],
       default: null,
     },
-    amount: {
+    amountPaise: {
       type: Number,
       required: [true, "Booking amount is required"],
       min: [0, "Amount cannot be negative"],
+      validate: { validator: Number.isInteger, message: "amountPaise must be an integer" },
     },
     // Links bookings created together in one multi-slot checkout. Each slot
     // still gets its own Booking document (existing single-slot code paths —
@@ -65,10 +67,11 @@ const bookingSchema = new mongoose.Schema(
       enum: ["NONE", "MARKED_REFUNDED", "REFUND_PENDING", "REFUNDED", "REFUND_FAILED"],
       default: "NONE",
     },
-    refundAmount: {
+    refundAmountPaise: {
       type: Number,
       default: 0,
       min: 0,
+      validate: { validator: Number.isInteger, message: "refundAmountPaise must be an integer" },
     },
     // Set once a real online payment confirms this booking (payment.service.js
     // finalizePaymentSuccess). null for CASH/manual owner bookings, which have
@@ -108,11 +111,11 @@ const bookingSchema = new mongoose.Schema(
     // there is nothing to split or pay out. Computed from `amount` and
     // env.PLATFORM_COMMISSION_RATE at that moment and never recalculated, so
     // a later rate change can't silently reprice an already-confirmed booking.
-    commissionAmount: {
+    commissionAmountPaise: {
       type: Number,
       default: null,
     },
-    ownerAmount: {
+    ownerAmountPaise: {
       type: Number,
       default: null,
     },
@@ -153,6 +156,20 @@ const bookingSchema = new mongoose.Schema(
 // createdAt order directly.
 bookingSchema.index({ turfId: 1, createdAt: -1 });
 bookingSchema.index({ userId: 1, createdAt: -1 });
+
+const moneyToJSON = (_doc, ret) => {
+  ret.amount = toRupees(ret.amountPaise);
+  delete ret.amountPaise;
+  ret.refundAmount = toRupees(ret.refundAmountPaise || 0);
+  delete ret.refundAmountPaise;
+  ret.commissionAmount = ret.commissionAmountPaise != null ? toRupees(ret.commissionAmountPaise) : null;
+  delete ret.commissionAmountPaise;
+  ret.ownerAmount = ret.ownerAmountPaise != null ? toRupees(ret.ownerAmountPaise) : null;
+  delete ret.ownerAmountPaise;
+  return ret;
+};
+bookingSchema.set("toJSON", { transform: moneyToJSON });
+bookingSchema.set("toObject", { transform: moneyToJSON });
 
 const Booking = mongoose.model("Booking", bookingSchema);
 export default Booking;

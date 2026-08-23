@@ -17,8 +17,6 @@ vi.mock("../booking/booking.service.js", () => ({
 }));
 vi.mock("./razorpay.client.js", () => ({
   getRazorpayClient: vi.fn(),
-  toPaise: (r) => Math.round(r * 100),
-  toRupees: (p) => Math.round(p) / 100,
   verifyPaymentSignature: vi.fn(),
 }));
 vi.mock("../../common/config/env.js", () => ({
@@ -130,7 +128,7 @@ describe("finalizePaymentSuccess (Phase 6/9/10 — the one authoritative confirm
     Payment.findOneAndUpdate.mockResolvedValue({
       ...paymentDoc,
       status: "PAID",
-      amount: 500,
+      amountPaise: 50000,
       razorpayPaymentId: "pay_1",
       refunds: [],
       refundedAmount: () => 0,
@@ -139,7 +137,7 @@ describe("finalizePaymentSuccess (Phase 6/9/10 — the one authoritative confirm
     Payment.findById.mockResolvedValue({
       _id: "pay_doc_1",
       status: "PAID_BOOKING_FAILED",
-      amount: 500,
+      amountPaise: 50000,
       razorpayPaymentId: "pay_1",
       refunds: [],
       refundedAmount: () => 0,

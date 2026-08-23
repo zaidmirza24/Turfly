@@ -20,6 +20,9 @@ import userRoutes from "./modules/user/user.routes.js";
 import paymentRoutes from "./modules/payment/payment.routes.js";
 import paymentWebhookRoutes from "./modules/payment/payment.webhook.routes.js";
 import notificationRoutes from "./modules/notification/notification.routes.js";
+import settingsRoutes from "./modules/settings/settings.routes.js";
+import complaintRoutes from "./modules/complaint/complaint.routes.js";
+import adminComplaintRoutes from "./modules/complaint/complaint.admin.routes.js";
 
 /**
  * Pure Express app — no app.listen(), no background jobs.
@@ -119,6 +122,9 @@ app.use("/api/reviews", reviewRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/admin/settings", settingsRoutes);
+app.use("/api/admin/complaints", adminComplaintRoutes);
+app.use("/api/complaints", complaintRoutes);
 
 // ── 404 Handler ──
 app.use((_req, res) => {

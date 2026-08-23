@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import { Eye, EyeOff, User, Building2, ArrowLeft, ArrowRight, Check, Loader2 } from 'lucide-react';
@@ -77,6 +78,95 @@ function ProgressBar({ step, total }: { step: number; total: number }) {
   );
 }
 
+/* ---------- Shared OTP verification step ---------- */
+
+/**
+ * Mandatory email-verification step, shared between signup (right after
+ * account creation) and login (when an account created its password
+ * correctly but never finished verifying). Owns nothing about what happens
+ * next — the caller decides via `onVerified`.
+ */
+function OtpStep({
+  email,
+  title = 'Verify your email',
+  subtitle,
+  onVerified,
+}: {
+  email: string;
+  title?: string;
+  subtitle?: React.ReactNode;
+  onVerified: () => void;
+}) {
+  const { verifyOtp, resendOtp } = useAuth();
+  const [otp, setOtp] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [resent, setResent] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (otp.length !== 6) { setError('Enter the 6-digit code'); return; }
+    setLoading(true);
+    const ok = await verifyOtp(email, otp);
+    setLoading(false);
+    if (ok) {
+      onVerified();
+    } else {
+      setError('Incorrect or expired code — try again or resend');
+    }
+  };
+
+  const handleResend = async () => {
+    setResending(true);
+    setError('');
+    try {
+      await resendOtp(email);
+      setResent(true);
+      toast.success('A new code has been sent');
+    } catch {
+      setError('Could not resend right now — try again in a moment');
+    } finally {
+      setResending(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <h1 className="font-display text-2xl font-bold tracking-tight mb-1">{title}</h1>
+      <p className="text-sm text-muted-foreground mb-6">
+        {subtitle ?? <>Enter the 6-digit code we sent to <span className="font-semibold text-foreground">{email}</span>.</>}
+      </p>
+
+      <div className="flex justify-center mb-6">
+        <InputOTP maxLength={6} value={otp} onChange={setOtp}>
+          <InputOTPGroup>
+            <InputOTPSlot index={0} />
+            <InputOTPSlot index={1} />
+            <InputOTPSlot index={2} />
+            <InputOTPSlot index={3} />
+            <InputOTPSlot index={4} />
+            <InputOTPSlot index={5} />
+          </InputOTPGroup>
+        </InputOTP>
+      </div>
+
+      {error && (
+        <div role="alert" className="bg-destructive/10 border border-destructive/20 text-destructive text-xs font-medium p-3 rounded-lg mb-4">{error}</div>
+      )}
+
+      <Button type="submit" className="w-full h-11 rounded-lg font-semibold" disabled={loading || otp.length !== 6}>
+        {loading ? <Loader2 className="animate-spin" size={18} /> : 'Verify email'}
+      </Button>
+
+      <button type="button" onClick={handleResend} disabled={resending} className="w-full text-center text-xs font-semibold text-muted-foreground hover:text-foreground mt-4">
+        {resending ? 'Sending…' : resent ? 'Code resent — send again?' : "Didn't get a code? Resend"}
+      </button>
+    </form>
+  );
+}
+
 /* ---------- Login ---------- */
 
 export function LoginPage() {
@@ -92,6 +182,17 @@ export function LoginPage() {
   const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [needsVerification, setNeedsVerification] = useState(false);
+
+  const goToDestination = () => {
+    toast.success('Welcome back!');
+    const stored = JSON.parse(localStorage.getItem('user') || '{}');
+    // Only follow an in-app path — an attacker-supplied `next` of
+    // "https://evil.example" would otherwise be an open redirect off a page
+    // the user just typed their password into.
+    const safeNext = nextPath && nextPath.startsWith('/') && !nextPath.startsWith('//') ? nextPath : null;
+    navigate(safeNext || redirectPathForRole(stored.role), { replace: true });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,20 +200,31 @@ export function LoginPage() {
     if (!email) { setError('Email is required'); return; }
     if (!password) { setError('Password is required'); return; }
     setLoading(true);
-    const ok = await login(email, password);
+    const result = await login(email, password);
     setLoading(false);
-    if (ok) {
-      toast.success('Welcome back!');
-      const stored = JSON.parse(localStorage.getItem('user') || '{}');
-      // Only follow an in-app path — an attacker-supplied `next` of
-      // "https://evil.example" would otherwise be an open redirect off a page
-      // the user just typed their password into.
-      const safeNext = nextPath && nextPath.startsWith('/') && !nextPath.startsWith('//') ? nextPath : null;
-      navigate(safeNext || redirectPathForRole(stored.role), { replace: true });
+    if (result === 'success') {
+      goToDestination();
+    } else if (result === 'unverified') {
+      // Right password, but the account never finished the mandatory email
+      // verification step from signup — send them to finish it here rather
+      // than a generic "invalid credentials" error.
+      setNeedsVerification(true);
     } else {
       setError('Invalid credentials. Please try again.');
     }
   };
+
+  if (needsVerification) {
+    return (
+      <AuthShell
+        brandTitle="Almost there"
+        brandSubtitle="Verify your email to finish logging in."
+        brandBullet="Real-time slots, zero double-bookings"
+      >
+        <OtpStep email={email} onVerified={goToDestination} />
+      </AuthShell>
+    );
+  }
 
   return (
     <AuthShell
@@ -167,7 +279,7 @@ export function LoginPage() {
 
 /* ---------- Signup (multi-step) ---------- */
 
-type Step = 'role' | 'account' | 'turf' | 'done';
+type Step = 'role' | 'account' | 'otp' | 'turf' | 'done';
 
 export function SignupPage() {
   const { signup } = useAuth();
@@ -197,8 +309,8 @@ export function SignupPage() {
     );
   };
 
-  const totalSteps = role === 'OWNER' ? 4 : 3;
-  const stepIndex = { role: 1, account: 2, turf: 3, done: totalSteps }[step];
+  const totalSteps = role === 'OWNER' ? 5 : 4;
+  const stepIndex = { role: 1, account: 2, otp: 3, turf: 4, done: totalSteps }[step];
 
   const handleCreateAccount = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -211,7 +323,9 @@ export function SignupPage() {
     const ok = await signup({ name, email, password, role, phone: phone || undefined });
     setLoading(false);
     if (!ok) { setError('Registration failed. Email might already be in use.'); return; }
-    setStep(role === 'OWNER' ? 'turf' : 'done');
+    // Mandatory verification step — onboarding can't proceed to the turf
+    // step (or finish, for a player) until the OTP we just emailed is spent.
+    setStep('otp');
   };
 
   const handleCreateTurf = async (e: React.FormEvent) => {
@@ -243,6 +357,7 @@ export function SignupPage() {
     account: role === 'OWNER'
       ? { title: 'Set up your partner account', subtitle: "Next you'll tell us about your turf — takes about two minutes.", bullet: 'No listing fees to get started' }
       : { title: 'Almost there', subtitle: "Just the basics — you'll be booking your first slot in under a minute.", bullet: 'No spam — just booking confirmations' },
+    otp: { title: 'Check your inbox', subtitle: 'One quick code and your account is verified.', bullet: 'Keeps your account secure from day one' },
     turf: { title: 'Tell us the basics', subtitle: 'You can add photos, amenities and slot pricing anytime after this — nothing here is final.', bullet: 'Usually reviewed within a few hours' },
     done: role === 'OWNER'
       ? { title: `Nice work, ${name.split(' ')[0] || ''}`, subtitle: "Head to your dashboard to add photos and set up slots while you wait.", bullet: '' }
@@ -255,8 +370,8 @@ export function SignupPage() {
       <AnimatePresence mode="wait">
         <motion.div key={step} initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={{ duration: 0.18 }}>
 
-          {step !== 'role' && step !== 'done' && (
-            <button type="button" onClick={() => setStep(step === 'turf' ? 'account' : 'role')} className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground mb-4">
+          {step === 'turf' && (
+            <button type="button" onClick={() => setStep('account')} className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground mb-4">
               <ArrowLeft size={14} /> Back
             </button>
           )}
@@ -269,8 +384,11 @@ export function SignupPage() {
           {step === 'account' && (
             <div className="text-xs font-bold text-primary uppercase tracking-wider mb-2">Step 2 of {totalSteps}</div>
           )}
-          {step === 'turf' && (
+          {step === 'otp' && (
             <div className="text-xs font-bold text-primary uppercase tracking-wider mb-2">Step 3 of {totalSteps}</div>
+          )}
+          {step === 'turf' && (
+            <div className="text-xs font-bold text-primary uppercase tracking-wider mb-2">Step 4 of {totalSteps}</div>
           )}
 
           {/* Step 1: role */}
@@ -362,7 +480,15 @@ export function SignupPage() {
             </form>
           )}
 
-          {/* Step 3 (owner only): turf basics */}
+          {/* Step 3: mandatory email verification */}
+          {step === 'otp' && (
+            <OtpStep
+              email={email}
+              onVerified={() => setStep(role === 'OWNER' ? 'turf' : 'done')}
+            />
+          )}
+
+          {/* Step 4 (owner only): turf basics */}
           {step === 'turf' && (
             <form onSubmit={handleCreateTurf}>
               <h1 className="font-display text-2xl font-bold tracking-tight mb-1">Tell us about your turf</h1>

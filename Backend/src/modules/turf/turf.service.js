@@ -5,6 +5,7 @@ import logger from "../../common/utils/logger.js";
 import { attachImagesToTurf } from "../image/image.service.js";
 import { geocodeLocation } from "./geocode.js";
 import { updateSlots as updateSlotPrices } from "../slot/slot.service.js";
+import { toPaise } from "../../common/utils/money.js";
 
 // Fields whose change should propagate to already-generated, not-yet-booked
 // Slot documents. Without this, editing a turf's rate only affects slots
@@ -13,6 +14,15 @@ import { updateSlots as updateSlotPrices } from "../slot/slot.service.js";
 // price from) keeps showing the old number until an owner separately opens
 // Slot Management and hits "Sync Schedule".
 const PRICING_FIELDS = ["pricePerHour", "defaultWeekdayPrice", "defaultWeekendPrice"];
+
+// Requests carry these three fields as rupees (the wire contract the
+// frontend speaks); the schema stores their paise equivalents under these
+// keys. Converted once here, right at the input boundary.
+const PRICING_FIELD_TO_PAISE_KEY = {
+  pricePerHour: "pricePerHourPaise",
+  defaultWeekdayPrice: "defaultWeekdayPricePaise",
+  defaultWeekendPrice: "defaultWeekendPricePaise",
+};
 
 // Fields an owner may edit on their own turf via PATCH /api/turfs/:id.
 // ownerId and approvalStatus are deliberately excluded — approvalStatus is
@@ -44,6 +54,17 @@ const OWNER_EDITABLE_FIELDS = [
 // while one that's actually in progress may already be too late to catch.
 const AVAILABLE_NOW_WINDOW_MS = 2 * 60 * 60 * 1000;
 
+/** Mutates safeData in place: replaces rupee pricing keys with their paise
+ * schema equivalents, right before the doc is written. */
+const convertPricingToPaise = (safeData) => {
+  for (const [rupeeField, paiseField] of Object.entries(PRICING_FIELD_TO_PAISE_KEY)) {
+    if (safeData[rupeeField] !== undefined) {
+      safeData[paiseField] = toPaise(safeData[rupeeField]);
+      delete safeData[rupeeField];
+    }
+  }
+};
+
 /**
  * Create a new turf (owner only).
  *
@@ -58,6 +79,7 @@ export const createTurf = async (ownerId, data) => {
   for (const field of OWNER_EDITABLE_FIELDS) {
     if (data[field] !== undefined) safeData[field] = data[field];
   }
+  convertPricingToPaise(safeData);
 
   // Images are validated before the turf exists, so the ids are checked for
   // ownership up front and the attachment is recorded immediately after.
@@ -83,8 +105,8 @@ export const createTurf = async (ownerId, data) => {
 };
 
 const SORT_STAGES = {
-  price_asc: { pricePerHour: 1 },
-  price_desc: { pricePerHour: -1 },
+  price_asc: { pricePerHourPaise: 1 },
+  price_desc: { pricePerHourPaise: -1 },
   rating: { avgRating: -1, reviewCount: -1 },
   popularity: { bookingCount: -1 },
   newest: { createdAt: -1 },
@@ -175,6 +197,7 @@ export const updateTurf = async (turfId, ownerId, data) => {
   for (const field of OWNER_EDITABLE_FIELDS) {
     if (data[field] !== undefined) safeData[field] = data[field];
   }
+  convertPricingToPaise(safeData);
 
   // Never persisted as given: every entry must resolve to an image this owner
   // uploaded, or the field becomes a way to point the site at arbitrary
@@ -194,14 +217,14 @@ export const updateTurf = async (turfId, ownerId, data) => {
 
   const updatedTurf = await Turf.findByIdAndUpdate(turfId, { $set: safeData }, { new: true });
 
-  if (PRICING_FIELDS.some((f) => f in safeData)) {
-    if (updatedTurf.defaultWeekdayPrice != null && updatedTurf.defaultWeekendPrice != null) {
+  if (Object.values(PRICING_FIELD_TO_PAISE_KEY).some((f) => f in safeData)) {
+    if (updatedTurf.defaultWeekdayPricePaise != null && updatedTurf.defaultWeekendPricePaise != null) {
       await updateSlotPrices(ownerId, turfId, {
-        weekdayPrice: updatedTurf.defaultWeekdayPrice,
-        weekendPrice: updatedTurf.defaultWeekendPrice,
+        weekdayPricePaise: updatedTurf.defaultWeekdayPricePaise,
+        weekendPricePaise: updatedTurf.defaultWeekendPricePaise,
       });
-    } else if (safeData.pricePerHour !== undefined) {
-      await updateSlotPrices(ownerId, turfId, { price: updatedTurf.pricePerHour });
+    } else if (safeData.pricePerHourPaise !== undefined) {
+      await updateSlotPrices(ownerId, turfId, { pricePaise: updatedTurf.pricePerHourPaise });
     }
   }
 

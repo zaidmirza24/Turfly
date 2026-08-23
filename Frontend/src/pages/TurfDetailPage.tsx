@@ -160,7 +160,7 @@ export default function TurfDetailPage() {
         images={images}
         thumbnails={thumbnails}
         isFavorite={isFavorite}
-        onToggleFavorite={() => toggleFavorite(turf._id)}
+        onToggleFavorite={() => toggleFavorite(turf)}
         showFavorite={isCustomer}
       />
 

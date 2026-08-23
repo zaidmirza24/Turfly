@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { toRupees } from "../../common/utils/money.js";
 
 const slotSchema = new mongoose.Schema(
   {
@@ -16,10 +17,11 @@ const slotSchema = new mongoose.Schema(
       type: Date,
       required: [true, "End time is required"],
     },
-    price: {
+    pricePaise: {
       type: Number,
       required: [true, "Price is required"],
       min: [0, "Price cannot be negative"],
+      validate: { validator: Number.isInteger, message: "pricePaise must be an integer" },
     },
     status: {
       type: String,
@@ -47,7 +49,7 @@ const slotSchema = new mongoose.Schema(
     // confirm time — otherwise a price change made by the owner mid-hold
     // (e.g. a bulk weekday/weekend repricing) would silently change what a
     // customer who already saw and accepted a price ends up paying.
-    lockedPrice: {
+    lockedPricePaise: {
       type: Number,
       default: null,
     },
@@ -69,6 +71,16 @@ const slotSchema = new mongoose.Schema(
 // concurrent requests provisioning the same hour race safely instead of
 // creating duplicate slot documents for it.
 slotSchema.index({ turfId: 1, startTime: 1 }, { unique: true });
+
+const moneyToJSON = (_doc, ret) => {
+  ret.price = toRupees(ret.pricePaise);
+  delete ret.pricePaise;
+  ret.lockedPrice = ret.lockedPricePaise != null ? toRupees(ret.lockedPricePaise) : null;
+  delete ret.lockedPricePaise;
+  return ret;
+};
+slotSchema.set("toJSON", { transform: moneyToJSON });
+slotSchema.set("toObject", { transform: moneyToJSON });
 
 const Slot = mongoose.model("Slot", slotSchema);
 export default Slot;

@@ -1,4 +1,5 @@
 import env from "../../common/config/env.js";
+import { toRupees } from "../../common/utils/money.js";
 
 /**
  * Every dynamic string dropped into these templates ultimately traces back
@@ -23,6 +24,9 @@ const escapeHtml = (value) =>
   }[ch]));
 
 const rupees = (n) => `₹${Number(n).toLocaleString("en-IN")}`;
+// Templates are handed raw Mongoose documents (never JSON-serialized), so
+// they read the stored *Paise fields directly and convert here.
+const rupeesFromPaise = (paise) => rupees(toRupees(paise));
 
 const fmtDate = (date) =>
   new Date(date).toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
@@ -76,7 +80,7 @@ const viewBookingUrl = () => `${env.FRONTEND_URL}/dashboard`;
 // ── Customer emails ────────────────────────────────────────────────────
 
 export const bookingConfirmedEmail = (bookings, payment, turf, slots, customerName) => {
-  const total = bookings.reduce((s, b) => s + b.amount, 0);
+  const total = toRupees(bookings.reduce((s, b) => s + b.amountPaise, 0));
   const first = slots[0];
   const last = slots[slots.length - 1];
   const rows = [
@@ -95,6 +99,14 @@ export const bookingConfirmedEmail = (bookings, payment, turf, slots, customerNa
     `<p>Hi ${escapeHtml(customerName)},</p>
      <p>Your booking at <strong>${escapeHtml(turf.name)}</strong> is confirmed.</p>
      ${table(rows)}
+     <p style="margin-top:16px;font-size:13px;color:#374151;"><strong>Before you arrive:</strong></p>
+     <ul style="margin:4px 0 0;padding-left:18px;font-size:13px;color:#374151;">
+       <li>Arrive about 10 minutes early to check in and get ready without cutting into your slot.</li>
+       <li>Keep this booking reference handy — some venues ask for it on arrival.</li>
+       <li>Bring appropriate sports footwear and equipment for the venue.</li>
+       <li>Play ends at your booked end time; extra time isn't guaranteed and depends on venue availability.</li>
+       ${turf.rules ? `<li>${escapeHtml(turf.rules)}</li>` : ""}
+     </ul>
      <p style="margin-top:16px;font-size:13px;color:#6b7280;">Cancellation policy: free cancellation up to 6 hours before your slot starts, from My Bookings.</p>`,
     { ctaLabel: "View booking", ctaUrl: viewBookingUrl() }
   );
@@ -105,7 +117,7 @@ export const paymentSuccessEmail = (payment, bookings, turf) => {
   const rows = [
     row("Payment reference", payment.razorpayPaymentId),
     row("Booking reference", `#${bookingRef(bookings[0])}`),
-    row("Amount", rupees(payment.amount)),
+    row("Amount", rupeesFromPaise(payment.amountPaise)),
     row("Date & time", `${fmtDate(payment.paidAt)} ${fmtTime(payment.paidAt)}`),
     row("Venue", turf?.name || "-"),
   ];
@@ -119,7 +131,7 @@ export const paymentSuccessEmail = (payment, bookings, turf) => {
 export const paymentFailedEmail = (payment) => {
   const rows = [
     row("Booking reference", payment.groupId),
-    row("Amount", rupees(payment.amount)),
+    row("Amount", rupeesFromPaise(payment.amountPaise)),
     row("Status", "Payment failed"),
     ...(payment.failureReason ? [row("Reason", payment.failureReason)] : []),
   ];
@@ -136,7 +148,7 @@ export const bookingCancelledEmail = (booking, turf, refundInfo) => {
     row("Booking reference", `#${bookingRef(booking)}`),
     row("Venue", turf?.name || "-"),
     ...(booking.notes ? [row("Reason", booking.notes)] : []),
-    row("Refund amount", refundInfo?.refunded ? rupees(booking.amount) : rupees(0)),
+    row("Refund amount", refundInfo?.refunded ? rupeesFromPaise(booking.amountPaise) : rupees(0)),
     row("Refund status", refundInfo?.refunded ? "Initiated" : "Not applicable"),
   ];
   const html = layout("Booking Cancelled", `<p>Your booking has been cancelled.</p>${table(rows)}`);
@@ -145,7 +157,7 @@ export const bookingCancelledEmail = (booking, turf, refundInfo) => {
 
 export const refundInitiatedEmail = (booking, payment, refundId) => {
   const rows = [
-    row("Refund amount", rupees(booking.amount)),
+    row("Refund amount", rupeesFromPaise(booking.amountPaise)),
     row("Original payment", payment.razorpayPaymentId),
     row("Refund reference", refundId),
   ];
@@ -158,7 +170,7 @@ export const refundInitiatedEmail = (booking, payment, refundId) => {
 
 export const refundCompletedEmail = (booking, payment, refundId) => {
   const rows = [
-    row("Refund amount", rupees(booking.refundAmount || booking.amount)),
+    row("Refund amount", rupeesFromPaise(booking.refundAmountPaise || booking.amountPaise)),
     row("Refund reference", refundId),
     row("Original booking", `#${bookingRef(booking)}`),
   ];
@@ -169,7 +181,7 @@ export const refundCompletedEmail = (booking, payment, refundId) => {
 export const paymentSucceededBookingFailedEmail = (payment) => {
   const html = layout(
     "We're sorry — your slot became unavailable",
-    `<p>Your payment of ${rupees(payment.amount)} was received, but the slot you booked was taken by another customer in the same moment.
+    `<p>Your payment of ${rupeesFromPaise(payment.amountPaise)} was received, but the slot you booked was taken by another customer in the same moment.
      We've automatically initiated a full refund — no action is needed from you.</p>`
   );
   return { subject: "Payment received but slot unavailable — refund initiated", html };
@@ -192,17 +204,30 @@ export const passwordResetEmail = (name, resetUrl) => {
   return { subject: "Reset your password", html };
 };
 
+export const otpEmail = (name, otp) => {
+  const html = layout(
+    "Verify your email",
+    `<p>Hi ${escapeHtml(name)},</p>
+     <p>Use the code below to verify your email address. It expires in ${env.OTP_EXPIRY_MINUTES} minutes.</p>
+     <p style="margin:24px 0;text-align:center;">
+       <span style="display:inline-block;font-size:32px;font-weight:700;letter-spacing:8px;color:${PRIMARY};">${escapeHtml(otp)}</span>
+     </p>
+     <p style="margin-top:16px;font-size:13px;color:#6b7280;">If you didn't create an account, you can safely ignore this email.</p>`
+  );
+  return { subject: `${otp} is your verification code`, html };
+};
+
 // ── Owner emails ───────────────────────────────────────────────────────
 
 export const ownerNewBookingEmail = (bookings, turf, customerName) => {
-  const total = bookings.reduce((s, b) => s + b.amount, 0);
+  const total = toRupees(bookings.reduce((s, b) => s + b.amountPaise, 0));
   const rows = [row("Customer", customerName), row("Slots", bookings.length), row("Amount", rupees(total))];
   const html = layout("New Confirmed Booking", `<p>You have a new confirmed booking at <strong>${escapeHtml(turf.name)}</strong>.</p>${table(rows)}`);
   return { subject: `New booking at ${turf.name}`, html };
 };
 
 export const ownerBookingCancelledEmail = (booking, turf) => {
-  const rows = [row("Booking reference", `#${bookingRef(booking)}`), row("Amount", rupees(booking.amount))];
+  const rows = [row("Booking reference", `#${bookingRef(booking)}`), row("Amount", rupeesFromPaise(booking.amountPaise))];
   const html = layout("Booking Cancelled", `<p>A booking at <strong>${escapeHtml(turf.name)}</strong> was cancelled.</p>${table(rows)}`);
   return { subject: `Booking cancelled at ${turf.name}`, html };
 };
