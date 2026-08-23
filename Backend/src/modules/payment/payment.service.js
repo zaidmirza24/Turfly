@@ -445,7 +445,20 @@ export const initiateRefundForBooking = async (booking, { initiatedBy }) => {
   if (!payment || payment.status !== "PAID") {
     return { refunded: false, reason: "Payment is not in a refundable state" };
   }
-  if (["REFUND_PENDING", "REFUNDED"].includes(booking.refundStatus)) {
+
+  // Atomic claim, mirroring finalizePaymentSuccess's pattern (Phase 10): two
+  // concurrent cancellations of the same booking (double-click, retried
+  // request, customer-cancel racing an owner-cancel) must not both pass a
+  // plain read-then-write check on refundStatus and both call Razorpay's
+  // refund API. Only the caller that actually flips NONE/REFUND_FAILED →
+  // REFUND_PENDING here proceeds; everyone else sees null and backs off
+  // immediately, before any refund call is made.
+  const claimed = await Booking.findOneAndUpdate(
+    { _id: booking._id, refundStatus: { $in: ["NONE", "REFUND_FAILED"] } },
+    { refundStatus: "REFUND_PENDING" },
+    { new: true }
+  );
+  if (!claimed) {
     return { refunded: false, reason: "Already refunded or refund already in progress" };
   }
 
@@ -455,7 +468,6 @@ export const initiateRefundForBooking = async (booking, { initiatedBy }) => {
       initiatedBy,
       notes: { bookingId: String(booking._id) },
     });
-    await Booking.findByIdAndUpdate(booking._id, { refundStatus: "REFUND_PENDING" });
     await emailService.sendRefundInitiated(booking, payment, result.razorpayRefundId).catch((e) =>
       log.error("Failed to send refund-initiated email", { err: e, bookingId: booking._id })
     );
