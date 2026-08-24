@@ -218,13 +218,15 @@ export const updateTurf = async (turfId, ownerId, data) => {
   const updatedTurf = await Turf.findByIdAndUpdate(turfId, { $set: safeData }, { new: true });
 
   if (Object.values(PRICING_FIELD_TO_PAISE_KEY).some((f) => f in safeData)) {
+    // All three of these are per-hour rates; updateSlotPrices converts them to
+    // per-slot prices itself (slot.service.js hourlyRateToSlotPricePaise).
     if (updatedTurf.defaultWeekdayPricePaise != null && updatedTurf.defaultWeekendPricePaise != null) {
       await updateSlotPrices(ownerId, turfId, {
-        weekdayPricePaise: updatedTurf.defaultWeekdayPricePaise,
-        weekendPricePaise: updatedTurf.defaultWeekendPricePaise,
+        weekdayHourlyPricePaise: updatedTurf.defaultWeekdayPricePaise,
+        weekendHourlyPricePaise: updatedTurf.defaultWeekendPricePaise,
       });
     } else if (safeData.pricePerHourPaise !== undefined) {
-      await updateSlotPrices(ownerId, turfId, { pricePaise: updatedTurf.pricePerHourPaise });
+      await updateSlotPrices(ownerId, turfId, { hourlyPricePaise: updatedTurf.pricePerHourPaise });
     }
   }
 

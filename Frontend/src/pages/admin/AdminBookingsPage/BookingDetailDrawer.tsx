@@ -36,26 +36,16 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
     mutationFn: (bookingIds: string[]) =>
       Promise.all(
         bookingIds.map((id) =>
-          apiPatch<{ booking: Booking; refund: { refunded: boolean } }>(`/bookings/${id}/cancel`, { reason: reason.trim() || undefined })
+          apiPatch<{ booking: Booking }>(`/bookings/${id}/cancel`, { reason: reason.trim() || undefined })
         )
       ),
-    onSuccess: (results) => {
-      const anyRefunded = results.some((res) => res.data.refund.refunded);
-      toast.success(anyRefunded ? 'Booking cancelled — refund initiated' : 'Booking cancelled');
+    onSuccess: () => {
+      toast.success('Booking cancelled — the slot has been released');
       setConfirmingCancel(false);
       setReason('');
       invalidateAll();
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to cancel booking'),
-  });
-
-  const refundMutation = useMutation({
-    mutationFn: (bookingIds: string[]) => Promise.all(bookingIds.map((id) => apiPatch<Booking>(`/bookings/${id}/refund`))),
-    onSuccess: () => {
-      toast.success('Marked as refunded');
-      invalidateAll();
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to update refund status'),
   });
 
   if (!booking) return null;
@@ -83,8 +73,7 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
               <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
                 {booking.refundStatus === 'REFUNDED' ? 'Refunded' :
                   booking.refundStatus === 'REFUND_PENDING' ? 'Refund pending' :
-                  booking.refundStatus === 'REFUND_FAILED' ? 'Refund failed' :
-                  booking.refundStatus === 'MARKED_REFUNDED' ? 'Refunded (recorded)' : 'Not refunded'}
+                  booking.refundStatus === 'REFUND_FAILED' ? 'Refund failed' : 'Non-refundable'}
               </span>
             )}
           </div>
@@ -185,28 +174,12 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
             <div className="pt-4 border-t">
               <p className="text-[11px] text-muted-foreground text-center">
                 {booking.refundStatus === 'REFUNDED'
-                  ? `₹${booking.refundAmount ?? booking.amount} was refunded automatically to the customer's original payment method.`
+                  ? `₹${booking.refundAmount ?? booking.amount} was refunded to the customer from the Razorpay dashboard, and this booking was reconciled to match.`
                   : booking.refundStatus === 'REFUND_PENDING'
-                  ? "A refund was automatically initiated and is being processed by Razorpay — this updates on its own once it's confirmed."
+                  ? 'A refund is being processed by Razorpay — this updates on its own once confirmed.'
                   : booking.refundStatus === 'REFUND_FAILED'
-                  ? 'The automatic refund failed — this needs manual follow-up in the Razorpay dashboard.'
-                  : 'No refund was needed for this booking.'}
-              </p>
-            </div>
-          )}
-
-          {booking.status === 'CANCELLED' && !isOnlinePayment && booking.refundStatus !== 'MARKED_REFUNDED' && (
-            <div className="pt-4 border-t space-y-2">
-              <Button
-                variant="outline"
-                className="w-full"
-                disabled={refundMutation.isPending}
-                onClick={() => refundMutation.mutate(bookingIds)}
-              >
-                {refundMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : 'Mark as Refunded'}
-              </Button>
-              <p className="text-[11px] text-muted-foreground text-center">
-                Records that the booking was refunded outside the app — no payment is processed here.
+                  ? 'A refund was attempted and failed — needs follow-up in the Razorpay dashboard.'
+                  : 'Bookings are non-refundable, so no money was returned for this cancellation.'}
               </p>
             </div>
           )}

@@ -2,9 +2,9 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { apiGet } from '@/lib/api';
 import { DollarSign, CalendarDays, TrendingUp, MapPin, ChevronRight, Activity } from 'lucide-react';
-import { Booking, Paginated, Turf } from '@/types';
+import { Booking, OwnerStats, Paginated, Turf } from '@/types';
 import { bookingStartTime, bookingTurf, bookingUser } from '@/lib/booking';
-import { formatSlotDate, formatSlotTime, toISTDateKey } from '@/lib/dateKey';
+import { formatSlotDate, formatSlotTime, parseDateKey } from '@/lib/dateKey';
 import { turfCoverImage, TURF_PLACEHOLDER_IMAGE } from '@/lib/imageUrl';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -22,34 +22,36 @@ export default function OwnerDashboard() {
     queryFn: () => apiGet<Turf[]>('/turfs/my-turfs'),
   });
 
-  // A dashboard-specific query key + a generous limit rather than the
-  // paginated 20-per-page default: this page only needs "enough recent
-  // bookings" for the 7-day chart and recent-activity list, not a page
-  // control of its own.
+  // Totals come from the server, aggregated over every matching booking.
+  // They used to be reduced in the browser over a `?limit=500` booking list,
+  // which quietly made "Your Earnings" a function of the page size — past 500
+  // lifetime bookings it stopped growing while still being labelled a lifetime
+  // total. A count is not something a list endpoint can answer.
+  const { data: statsResponse, isLoading: isLoadingStats, isError: isStatsError, refetch: refetchStats } = useQuery({
+    queryKey: ['owner-stats'],
+    queryFn: () => apiGet<OwnerStats>('/bookings/owner/stats'),
+  });
+
+  // The recent-activity list and "next up" panel still need actual bookings,
+  // but only the first page of them — they show at most six rows.
   const { data: bookingsResponse, isLoading: isLoadingBookings, isError: isBookingsError, refetch: refetchBookings } = useQuery({
     queryKey: ['owner-bookings-dashboard'],
-    queryFn: () => apiGet<Paginated<Booking>>('/bookings/owner?limit=500'),
+    queryFn: () => apiGet<Paginated<Booking>>('/bookings/owner?limit=20'),
   });
 
   const turfs = turfsResponse?.data ?? [];
   const bookings = bookingsResponse?.data?.items ?? [];
-
-  const confirmed = bookings.filter(b => b.status === 'CONFIRMED');
-  // Net of the platform's commission for ONLINE bookings (what the owner
-  // actually receives), full amount for CASH/PENDING ones (the owner
-  // collected that themselves — the platform never held it). Bookings
-  // confirmed before the commission-split rollout have no ownerAmount set;
-  // treat those as pre-commission, full-amount, same as CASH.
-  const revenue = confirmed.reduce((sum, b) => {
-    if (b.paymentMethod === 'ONLINE' && b.ownerAmount != null) return sum + b.ownerAmount;
-    return sum + (b.amount || 0);
-  }, 0);
+  const stats0 = statsResponse?.data;
+  const activeTurfCount = turfs.filter(t => t.isActive).length;
 
   const now = Date.now();
-  const upcoming = confirmed.filter(b => {
-    const start = bookingStartTime(b);
-    return !!start && start.getTime() >= now;
-  });
+  // Soonest first — the "Live Status" panel is answering "who's arriving next".
+  const upcoming = bookings
+    .filter(b => {
+      const start = bookingStartTime(b);
+      return b.status === 'CONFIRMED' && !!start && start.getTime() >= now;
+    })
+    .sort((a, b) => (bookingStartTime(a)?.getTime() ?? 0) - (bookingStartTime(b)?.getTime() ?? 0));
 
   // Each stat carries a real caption derived from the same data, not a
   // hardcoded trend. The previous "+12% / +8.4% / +2 / Stable since last week"
@@ -57,34 +59,37 @@ export default function OwnerDashboard() {
   // to owners as if they were measured performance.
   const stats = useMemo(() => [
     {
-      label: 'Total Bookings',
-      value: bookings.length,
-      caption: `${confirmed.length} confirmed`,
-      icon: CalendarDays,
-      color: 'from-blue-500/15 to-blue-600/15 text-blue-600',
-    },
-    {
-      label: 'Your Earnings',
-      value: `₹${revenue.toLocaleString('en-IN')}`,
-      caption: 'Net of platform commission',
+      label: "Today's Earnings",
+      value: `₹${(stats0?.todayEarnings ?? 0).toLocaleString('en-IN')}`,
+      caption: `${stats0?.todayCount ?? 0} booking${(stats0?.todayCount ?? 0) === 1 ? '' : 's'} today`,
       icon: DollarSign,
       color: 'from-success/15 to-success/25 text-success',
     },
     {
       label: 'Upcoming',
-      value: upcoming.length,
+      value: stats0?.upcomingCount ?? 0,
       caption: 'Slots still to play',
       icon: TrendingUp,
       color: 'from-warning/15 to-warning/25 text-warning',
     },
     {
+      label: 'Total Earnings',
+      value: `₹${(stats0?.totalEarnings ?? 0).toLocaleString('en-IN')}`,
+      caption: 'All time, net of commission',
+      icon: CalendarDays,
+      color: 'from-blue-500/15 to-blue-600/15 text-blue-600',
+    },
+    {
       label: 'Active Turfs',
-      value: turfs.filter(t => t.isActive).length,
-      caption: `${turfs.length} listed`,
+      value: stats0?.activeTurfs ?? activeTurfCount,
+      caption: `${stats0?.totalTurfs ?? turfs.length} listed`,
       icon: MapPin,
       color: 'from-purple-500/15 to-purple-600/15 text-purple-600',
     },
-  ], [bookings.length, confirmed.length, revenue, upcoming.length, turfs]);
+    // `turfs` is a fresh array every render (it's read off the query response),
+    // so depending on it directly would defeat the memo — the two counts are
+    // the only things actually read from it here.
+  ], [stats0, activeTurfCount, turfs.length]);
 
   // Prepare chart data
   // Buckets are IST calendar days. The previous version keyed both sides off
@@ -92,34 +97,25 @@ export default function OwnerDashboard() {
   // between 00:00 and 05:29 IST belongs to the previous UTC day and was
   // charted a column early, and the row labels (built with the browser's local
   // weekday) could disagree with the bucket they sat above.
-  const chartData = useMemo(() => {
-    const last7Days = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - (6 - i));
-      return { key: toISTDateKey(d), label: formatSlotDate(d, { weekday: 'short' }) };
-    });
+  // The server already bucketed these into IST calendar days over every
+  // matching booking; this only turns each key into a weekday label.
+  const chartData = useMemo(
+    () => (stats0?.dailySeries ?? []).map(({ date, revenue }) => ({
+      date: formatSlotDate(parseDateKey(date), { weekday: 'short' }),
+      revenue,
+    })),
+    [stats0]
+  );
 
-    return last7Days.map(({ key, label }) => {
-      const revenueForDay = bookings.reduce((sum, b) => {
-        if (b.status !== 'CONFIRMED') return sum;
-        const start = bookingStartTime(b);
-        if (!start || toISTDateKey(start) !== key) return sum;
-        const net = b.paymentMethod === 'ONLINE' && b.ownerAmount != null ? b.ownerAmount : (b.amount || 0);
-        return sum + net;
-      }, 0);
-      return { date: label, revenue: revenueForDay };
-    });
-  }, [bookings]);
-
-  if (isLoadingTurfs || isLoadingBookings) {
+  if (isLoadingTurfs || isLoadingBookings || isLoadingStats) {
     return <SyncingIndicator label="Syncing Arena Data" double />;
   }
 
-  if (isTurfsError || isBookingsError) {
+  if (isTurfsError || isBookingsError || isStatsError) {
     return (
       <QueryErrorState
         message="Couldn't load your arena data."
-        onRetry={() => { refetchTurfs(); refetchBookings(); }}
+        onRetry={() => { refetchTurfs(); refetchBookings(); refetchStats(); }}
       />
     );
   }

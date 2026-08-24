@@ -6,7 +6,17 @@ export type Sport = 'football' | 'cricket' | 'badminton' | 'tennis' | 'basketbal
 // to compare against both — and TypeScript flagged the uppercase half of each
 // comparison as impossible.
 export type SlotStatus = 'AVAILABLE' | 'LOCKED' | 'BOOKED' | 'CLOSED' | 'FULL';
-export type BookingStatus = 'CONFIRMED' | 'CANCELLED';
+/**
+ * CONFIRMED is live (booked, not yet played). COMPLETED and NO_SHOW are both
+ * terminal and both mean the slot has passed — they differ only in whether the
+ * customer turned up. CANCELLED is the only one that refunds.
+ *
+ * COMPLETED is set lazily server-side when a booking list is read, so a
+ * just-finished booking can still briefly read as CONFIRMED; anything deciding
+ * "has this been played" should compare times rather than trust the status
+ * alone.
+ */
+export type BookingStatus = 'CONFIRMED' | 'COMPLETED' | 'NO_SHOW' | 'CANCELLED';
 export type TurfApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 export type UserRole = 'USER' | 'OWNER' | 'ADMIN';
 export type VenueType = 'INDOOR' | 'OUTDOOR' | 'BOTH';
@@ -19,9 +29,6 @@ export interface User {
   role: UserRole;
   avatar?: string | null;
   isBanned?: boolean;
-  // Only meaningful for role: OWNER — USER/ADMIN accounts are never vetted
-  // and always come back APPROVED (see Backend user.model.js).
-  approvalStatus?: TurfApprovalStatus;
   favorites?: (string | Turf)[];
   createdAt: string;
   // Set only on a customer an owner created from the panel (phone/walk-in
@@ -169,6 +176,25 @@ export interface Booking {
   payoutStatus?: 'NONE' | 'PENDING' | 'PAID' | 'VOID' | 'CLAWBACK_OWED';
   payoutId?: string | null;
   paidOutAt?: string | null;
+}
+
+/**
+ * Owner dashboard headline figures, aggregated server-side over every matching
+ * booking (GET /bookings/owner/stats). Deliberately not derived from a booking
+ * list on the client — a total computed from one page is a total of that page.
+ * All money is in rupees, matching the rest of the wire format.
+ */
+export interface OwnerStats {
+  totalBookings: number;
+  confirmedCount: number;
+  totalEarnings: number;
+  upcomingCount: number;
+  todayCount: number;
+  todayEarnings: number;
+  activeTurfs: number;
+  totalTurfs: number;
+  /** Last 7 IST calendar days, oldest first, keyed "YYYY-MM-DD". */
+  dailySeries: { date: string; revenue: number }[];
 }
 
 /** A settled owner payout — see Backend/src/modules/payout/payout.model.js. */

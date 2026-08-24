@@ -37,19 +37,6 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    // Soft gate on OWNER accounts: a new owner can register/log in
-    // immediately, but createTurf (turf.controller.js) refuses until an
-    // admin approves them. USER/ADMIN accounts are never vetted, so they
-    // default straight to APPROVED — only a fresh OWNER signup starts
-    // PENDING (see the default function below, evaluated against `this.role`
-    // at document creation).
-    approvalStatus: {
-      type: String,
-      enum: ["PENDING", "APPROVED", "REJECTED"],
-      default: function () {
-        return this.role === "OWNER" ? "PENDING" : "APPROVED";
-      },
-    },
     // Always one of our own `/api/images/:id` paths (see user.service.js) —
     // never an arbitrary URL, for the same reason turf.images is validated.
     avatar: {

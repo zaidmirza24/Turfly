@@ -11,26 +11,17 @@ import { QueryErrorState } from '@/components/QueryErrorState';
 
 const LIMIT = 20;
 
-const APPROVAL_FILTERS = [
-  { value: '', label: 'All' },
-  { value: 'PENDING', label: 'Pending owners' },
-  { value: 'APPROVED', label: 'Approved' },
-  { value: 'REJECTED', label: 'Rejected' },
-] as const;
-
 export default function AdminUsersPage() {
   const [search, setSearch] = useState('');
-  const [approvalFilter, setApprovalFilter] = useState('');
   const [page, setPage] = useState(1);
   const queryClient = useQueryClient();
 
-  const filters = { search, approvalFilter, page };
+  const filters = { search, page };
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['admin-users', filters],
     queryFn: () => {
       const params = new URLSearchParams({ page: String(page), limit: String(LIMIT) });
       if (search.trim()) params.set('search', search.trim());
-      if (approvalFilter) params.set('approvalStatus', approvalFilter);
       return apiGet<Paginated<User>>(`/admin/users?${params.toString()}`);
     },
   });
@@ -54,26 +45,6 @@ export default function AdminUsersPage() {
     onError: (error: Error, _variables, context) => {
       context?.previous.forEach(([key, data]) => queryClient.setQueryData(key, data));
       toast.error(error.message || 'Failed to update user');
-    },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
-  });
-
-  const approvalMutation = useMutation({
-    mutationFn: ({ id, approvalStatus }: { id: string; approvalStatus: 'APPROVED' | 'REJECTED' }) =>
-      apiPatch<User>(`/admin/users/${id}/approval`, { approvalStatus }),
-    onMutate: async ({ id, approvalStatus }) => {
-      await queryClient.cancelQueries({ queryKey: ['admin-users'] });
-      const previous = queryClient.getQueriesData<{ data: Paginated<User> }>({ queryKey: ['admin-users'] });
-      queryClient.setQueriesData<{ data: Paginated<User> }>({ queryKey: ['admin-users'] }, (old) => {
-        if (!old) return old;
-        return { ...old, data: { ...old.data, items: old.data.items.map(u => u._id === id ? { ...u, approvalStatus } : u) } };
-      });
-      return { previous };
-    },
-    onSuccess: (_res, variables) => toast.success(variables.approvalStatus === 'APPROVED' ? 'Owner approved' : 'Owner rejected'),
-    onError: (error: Error, _variables, context) => {
-      context?.previous.forEach(([key, data]) => queryClient.setQueryData(key, data));
-      toast.error(error.message || 'Failed to update approval');
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
   });
@@ -107,19 +78,6 @@ export default function AdminUsersPage() {
             className="w-full h-12 pl-12 pr-4 rounded-2xl bg-primary/5 border-2 border-transparent focus:border-primary/20 focus:bg-background outline-none font-bold transition-all"
           />
         </div>
-        <div className="flex gap-2 overflow-x-auto">
-          {APPROVAL_FILTERS.map((f) => (
-            <Button
-              key={f.value}
-              size="sm"
-              variant={approvalFilter === f.value ? 'default' : 'outline'}
-              onClick={() => { setApprovalFilter(f.value); setPage(1); }}
-              className="shrink-0"
-            >
-              {f.label}
-            </Button>
-          ))}
-        </div>
       </div>
 
       {isError ? (
@@ -146,23 +104,8 @@ export default function AdminUsersPage() {
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div className="flex items-center gap-2 flex-wrap">
                     <Badge variant={u.isBanned ? 'destructive' : 'outline'}>{u.isBanned ? 'Banned' : 'Active'}</Badge>
-                    {u.role === 'OWNER' && (
-                      <Badge variant={u.approvalStatus === 'APPROVED' ? 'outline' : u.approvalStatus === 'REJECTED' ? 'destructive' : 'secondary'}>
-                        {u.approvalStatus === 'PENDING' ? 'Pending approval' : u.approvalStatus === 'REJECTED' ? 'Rejected' : 'Approved'}
-                      </Badge>
-                    )}
                   </div>
                   <div className="flex items-center gap-2">
-                    {u.role === 'OWNER' && u.approvalStatus === 'PENDING' && (
-                      <>
-                        <Button size="sm" disabled={approvalMutation.isPending} onClick={() => approvalMutation.mutate({ id: u._id, approvalStatus: 'APPROVED' })}>
-                          Approve
-                        </Button>
-                        <Button size="sm" variant="destructive" disabled={approvalMutation.isPending} onClick={() => approvalMutation.mutate({ id: u._id, approvalStatus: 'REJECTED' })}>
-                          Reject
-                        </Button>
-                      </>
-                    )}
                     {u.role !== 'ADMIN' && (
                       <Button
                         size="sm"
@@ -200,25 +143,10 @@ export default function AdminUsersPage() {
                       <td className="p-6">
                         <div className="flex items-center gap-2 flex-wrap">
                           <Badge variant={u.isBanned ? 'destructive' : 'outline'}>{u.isBanned ? 'Banned' : 'Active'}</Badge>
-                          {u.role === 'OWNER' && (
-                            <Badge variant={u.approvalStatus === 'APPROVED' ? 'outline' : u.approvalStatus === 'REJECTED' ? 'destructive' : 'secondary'}>
-                              {u.approvalStatus === 'PENDING' ? 'Pending approval' : u.approvalStatus === 'REJECTED' ? 'Rejected' : 'Approved'}
-                            </Badge>
-                          )}
                         </div>
                       </td>
                       <td className="p-6">
                         <div className="flex items-center gap-2">
-                          {u.role === 'OWNER' && u.approvalStatus === 'PENDING' && (
-                            <>
-                              <Button size="sm" disabled={approvalMutation.isPending} onClick={() => approvalMutation.mutate({ id: u._id, approvalStatus: 'APPROVED' })}>
-                                Approve
-                              </Button>
-                              <Button size="sm" variant="destructive" disabled={approvalMutation.isPending} onClick={() => approvalMutation.mutate({ id: u._id, approvalStatus: 'REJECTED' })}>
-                                Reject
-                              </Button>
-                            </>
-                          )}
                           {u.role !== 'ADMIN' && (
                             <Button
                               size="sm"

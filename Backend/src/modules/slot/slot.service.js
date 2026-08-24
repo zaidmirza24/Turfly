@@ -79,11 +79,20 @@ export const createSlots = async (ownerId, turfId, slots) => {
     }
   }
 
-  // To prevent duplicates, we clear existing unbooked slots for these time ranges
+  // Clear existing slots for these time ranges so regenerating a schedule
+  // doesn't collide with the unique (turfId, startTime) index.
+  //
+  // LOCKED is excluded alongside BOOKED: a LOCKED slot is a customer partway
+  // through checkout, possibly with a live Razorpay order already created
+  // against it. Deleting it out from under them makes their payment fail to
+  // claim a slot, which the payment path then has to resolve by force-
+  // cancelling and refunding — turning a routine owner action into a failed
+  // booking for a customer who did nothing wrong. `updateSlots` and
+  // `setSlotsStatus` already refuse to touch LOCKED for the same reason.
   const startTimes = slots.map(s => new Date(s.startTime));
   await Slot.deleteMany({
     turfId,
-    status: { $ne: "BOOKED" },
+    status: { $nin: ["BOOKED", "LOCKED"] },
     startTime: { $in: startTimes }
   });
 
@@ -113,6 +122,32 @@ const MAX_PROVISION_DAYS = 62;
 const SLOT_MINUTES = 30;
 
 const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * The single conversion between the two units of money in this system.
+ *
+ * Every price an owner types is a **per-hour rate** — on the turf form, in the
+ * weekday/weekend defaults, in the bulk generator. Every price stored on a Slot
+ * is a **per-slot** price for SLOT_MINUTES of court time. Those are not the same
+ * number, and the gap between them is invisible at every call site: both are
+ * plain integers of paise, so writing an hourly rate straight onto a slot type-
+ * checks, passes validation, saves cleanly, and simply charges the customer
+ * double.
+ *
+ * That is exactly what `updateSlots` and `setSlotsStatus` used to do, so an
+ * owner editing their price silently doubled what every subsequent booking cost
+ * (the lock-time price snapshot then faithfully preserved the wrong figure all
+ * the way to Razorpay). Routing every hourly→slot conversion through this one
+ * function is what stops a third path drifting the same way: if a caller isn't
+ * calling this, it had better already hold a per-slot price.
+ *
+ * Callers that are deliberately NOT here, because their input is already a
+ * per-slot price: `createSlots` (the owner UI halves the hourly rate before
+ * posting — see buildBulkSlots/SlotPriceDialog) and `migrateHourlySlotsToHalfHour`
+ * (splitting one legacy 60-minute slot's own price into two halves).
+ */
+export const hourlyRateToSlotPricePaise = (hourlyPricePaise) =>
+  Math.round((hourlyPricePaise * SLOT_MINUTES) / 60);
 
 /**
  * One-time-per-slot migration: a Slot document created before slots were
@@ -212,8 +247,13 @@ const provisionDefaultSlots = async (turf, startDateKey, endDateKey) => {
     .filter((t) => !existingTimes.has(t.getTime()))
     .map((startTime) => {
       const endTime = new Date(startTime.getTime() + SLOT_MINUTES * 60 * 1000);
-      // Half the hourly rate, since each slot is now half an hour.
-      return { turfId: turf._id, startTime, endTime, pricePaise: Math.round(turf.pricePerHourPaise / 2), status: "AVAILABLE" };
+      return {
+        turfId: turf._id,
+        startTime,
+        endTime,
+        pricePaise: hourlyRateToSlotPricePaise(turf.pricePerHourPaise),
+        status: "AVAILABLE",
+      };
     });
 
   if (toCreate.length === 0) return;
@@ -322,7 +362,9 @@ export const deleteSlots = async (ownerId, turfId, { date }) => {
     throw new ApiError(403, "You do not own this turf");
   }
 
-  const query = { turfId, status: { $ne: "BOOKED" } };
+  // Same rule as createSlots: a LOCKED slot is an in-progress checkout, not
+  // spare inventory an owner can clear.
+  const query = { turfId, status: { $nin: ["BOOKED", "LOCKED"] } };
 
   if (date) {
     const { start, end } = istDayBounds(date);
@@ -394,7 +436,10 @@ export const setSlotsStatus = async (ownerId, turfId, { slots, status }) => {
         turfId,
         startTime: start,
         endTime: end,
-        pricePaise: turf.pricePerHourPaise,
+        // turf.pricePerHourPaise is an *hourly* rate and this is a half-hour
+        // slot — see hourlyRateToSlotPricePaise. Writing the hourly figure here
+        // priced every hour an owner un-blocked from this toolbar at double.
+        pricePaise: hourlyRateToSlotPricePaise(turf.pricePerHourPaise),
         status,
       });
       updated.push(created);
@@ -404,7 +449,21 @@ export const setSlotsStatus = async (ownerId, turfId, { slots, status }) => {
   return updated;
 };
 
-export const updateSlots = async (ownerId, turfId, { date, pricePaise, weekdayPricePaise, weekendPricePaise }) => {
+/**
+ * Bulk-reprice a turf's not-yet-booked slots.
+ *
+ * Every parameter here is a per-*hour* rate (that's what the owner typed, on
+ * the turf form or the schedule-sync action) and is converted to a per-slot
+ * price exactly once, below. The parameter names say `Hourly` for that reason:
+ * they used to be plain `pricePaise`/`weekdayPricePaise`, which read as "a
+ * price in paise, ready to store" at both call sites — and so got written
+ * straight onto half-hour slots, doubling every booking made afterwards.
+ */
+export const updateSlots = async (
+  ownerId,
+  turfId,
+  { date, hourlyPricePaise, weekdayHourlyPricePaise, weekendHourlyPricePaise }
+) => {
   const turf = await Turf.findById(turfId);
   if (!turf) throw new ApiError(404, "Turf not found");
   if (turf.ownerId.toString() !== ownerId.toString()) {
@@ -427,19 +486,21 @@ export const updateSlots = async (ownerId, turfId, { date, pricePaise, weekdayPr
   // Sunday and get weekend pricing instead of weekday pricing.
   const dayOfWeekIST = { $dayOfWeek: { date: "$startTime", timezone: "Asia/Kolkata" } };
 
-  if (pricePaise) {
-    await Slot.updateMany(baseQuery, { $set: { pricePaise } });
-  } else if (weekdayPricePaise && weekendPricePaise) {
+  if (hourlyPricePaise) {
+    await Slot.updateMany(baseQuery, {
+      $set: { pricePaise: hourlyRateToSlotPricePaise(hourlyPricePaise) },
+    });
+  } else if (weekdayHourlyPricePaise && weekendHourlyPricePaise) {
     // Update Weekdays (Mon-Fri: 1-5)
     await Slot.updateMany({
       ...baseQuery,
       $expr: { $and: [{ $gte: [dayOfWeekIST, 2] }, { $lte: [dayOfWeekIST, 6] }] }
-    }, { $set: { pricePaise: weekdayPricePaise } });
+    }, { $set: { pricePaise: hourlyRateToSlotPricePaise(weekdayHourlyPricePaise) } });
 
     // Update Weekends (Sat-Sun: 7, 1)
     await Slot.updateMany({
       ...baseQuery,
       $expr: { $or: [{ $eq: [dayOfWeekIST, 7] }, { $eq: [dayOfWeekIST, 1] }] }
-    }, { $set: { pricePaise: weekendPricePaise } });
+    }, { $set: { pricePaise: hourlyRateToSlotPricePaise(weekendHourlyPricePaise) } });
   }
 };

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isWithinOperatingHours } from "./slot.service.js";
+import { isWithinOperatingHours, hourlyRateToSlotPricePaise } from "./slot.service.js";
 import { istDateTime } from "../../common/utils/istTime.js";
 
 const turf = (overrides = {}) => ({ is24x7: false, openHour: 6, closeHour: 22, ...overrides });
@@ -52,5 +52,39 @@ describe("isWithinOperatingHours", () => {
     const start = istDateTime("2026-08-21", 1);
     const end = istDateTime("2026-08-21", 2);
     expect(isWithinOperatingHours(t, start, end)).toBe(false);
+  });
+});
+
+/**
+ * A slot is half an hour; every price an owner enters is a per-hour rate.
+ * `updateSlots` and `setSlotsStatus` both used to write the hourly figure
+ * straight onto a slot, so any owner price edit doubled what customers were
+ * actually charged — and nothing failed, because both numbers are just
+ * integers of paise. These pin the conversion so a future caller can't
+ * quietly reintroduce it.
+ */
+describe("hourlyRateToSlotPricePaise", () => {
+  it("halves an hourly rate into the price of one half-hour slot", () => {
+    expect(hourlyRateToSlotPricePaise(120000)).toBe(60000); // ₹1200/hr → ₹600/slot
+  });
+
+  it("keeps two slots summing back to exactly one hour's rate", () => {
+    const hourly = 150000; // ₹1500/hr
+    expect(hourlyRateToSlotPricePaise(hourly) * 2).toBe(hourly);
+  });
+
+  it("returns whole paise for an odd rate rather than a fractional amount", () => {
+    const slotPrice = hourlyRateToSlotPricePaise(99999);
+    expect(Number.isInteger(slotPrice)).toBe(true);
+    expect(slotPrice).toBe(50000);
+  });
+
+  it("never returns the hourly rate itself — the exact bug this guards", () => {
+    const hourly = 120000;
+    expect(hourlyRateToSlotPricePaise(hourly)).not.toBe(hourly);
+  });
+
+  it("handles a free slot", () => {
+    expect(hourlyRateToSlotPricePaise(0)).toBe(0);
   });
 });

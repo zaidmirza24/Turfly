@@ -139,30 +139,15 @@ export const sendPaymentSucceededBookingFailed = async (payment) => {
   });
 };
 
-export const sendBookingCancelled = async (booking, refundInfo) => {
+export const sendBookingCancelled = async (booking) => {
   const [customer, turf] = await Promise.all([customerOf(booking.userId), turfOf(booking.turfId)]);
   if (!customer) return;
-  const { subject, html } = tpl.bookingCancelledEmail(booking, turf, refundInfo);
+  const { subject, html } = tpl.bookingCancelledEmail(booking, turf);
   return sendOnce({
     type: "BOOKING_CANCELLED",
     recipientEmail: customer.email,
     bookingId: booking._id,
     dedupeKeySuffix: booking._id,
-    subject,
-    html,
-  });
-};
-
-export const sendRefundInitiated = async (booking, payment, refundId) => {
-  const customer = await customerOf(booking.userId);
-  if (!customer) return;
-  const { subject, html } = tpl.refundInitiatedEmail(booking, payment, refundId);
-  return sendOnce({
-    type: "REFUND_INITIATED",
-    recipientEmail: customer.email,
-    bookingId: booking._id,
-    paymentId: payment._id,
-    dedupeKeySuffix: refundId,
     subject,
     html,
   });

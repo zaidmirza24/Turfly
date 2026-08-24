@@ -526,7 +526,7 @@ export default function BookingFlowPage() {
 
         <div className="mt-6 border rounded-xl p-4 bg-muted/30 text-xs text-muted-foreground space-y-1">
           <p className="font-semibold text-foreground">Cancellation policy</p>
-          <p>Free cancellation up to 6 hours before your slot starts, from My Bookings — cancelling in time refunds the full amount to your original payment method.</p>
+          <p><span className="font-semibold text-foreground">Bookings are non-refundable.</span> You can cancel from My Bookings up to 6 hours before your slot starts, which releases the slot for someone else — but the amount you pay is not returned. Please make sure you can make it before you pay.</p>
         </div>
 
         {step === 'summary' && (

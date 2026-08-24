@@ -1,6 +1,6 @@
 import User from "../user/user.model.js";
 import Turf from "../turf/turf.model.js";
-import Booking from "../booking/booking.model.js";
+import Booking, { HONOURED_STATUSES, IS_HONOURED_EXPR } from "../booking/booking.model.js";
 import Slot from "../slot/slot.model.js";
 import Payment from "../payment/payment.model.js";
 import Payout from "../payout/payout.model.js";
@@ -8,6 +8,7 @@ import AuditLog from "./auditLog.model.js";
 import ApiError from "../../common/utils/ApiError.js";
 import logger from "../../common/utils/logger.js";
 import { toRupees } from "../../common/utils/money.js";
+import { istRangeFilter, istDateKey, istDayBounds, previousDateKey, IST_TIMEZONE } from "../../common/utils/istTime.js";
 
 /**
  * Record an admin-triggered mutation for the audit trail. Never lets a
@@ -29,24 +30,37 @@ export const logAdminAction = async (adminId, action, targetType, targetId, meta
  * aggregation since admin volume is platform-wide, unlike the owner
  * dashboard's client-side reduction over one owner's bookings.
  */
+const SERIES_DAYS = 14;
+
 export const getStats = async () => {
-  const seriesStart = new Date();
-  seriesStart.setHours(0, 0, 0, 0);
-  seriesStart.setDate(seriesStart.getDate() - 13);
+  // The 14-day window is a run of IST calendar days, and every part of it has
+  // to agree on that. It previously used the server's *local* midnight for the
+  // window start, a UTC $dateToString for the buckets, and a UTC key for the
+  // fill loop — three different notions of "day" on a platform that operates
+  // in one. On Vercel (UTC) that charted every booking before 05:30 IST a day
+  // early, so the column an admin read as "today" was missing its own morning.
+  const todayKey = istDateKey(new Date());
+  const seriesKeys = [];
+  let cursor = todayKey;
+  for (let i = 0; i < SERIES_DAYS; i++) {
+    seriesKeys.unshift(cursor);
+    cursor = previousDateKey(cursor);
+  }
+  const seriesStart = istDayBounds(seriesKeys[0]).start;
 
   const [totalUsers, totalTurfs, totalBookings, revenueAgg, commissionAgg, payableAgg, paidOutAgg, dailySeriesRaw] = await Promise.all([
     User.countDocuments(),
     Turf.countDocuments(),
     Booking.countDocuments(),
     Booking.aggregate([
-      { $match: { status: "CONFIRMED" } },
+      { $match: { status: { $in: HONOURED_STATUSES } } },
       { $group: { _id: null, total: { $sum: "$amountPaise" } } },
     ]),
     // Commission actually earned by the platform — ONLINE bookings only,
     // since CASH/PENDING bookings never had the platform holding the money
     // (see booking.model.js's payoutStatus doc comment).
     Booking.aggregate([
-      { $match: { status: "CONFIRMED", paymentMethod: "ONLINE" } },
+      { $match: { status: { $in: HONOURED_STATUSES }, paymentMethod: "ONLINE" } },
       { $group: { _id: null, total: { $sum: "$commissionAmountPaise" } } },
     ]),
     Booking.aggregate([
@@ -61,25 +75,23 @@ export const getStats = async () => {
       { $match: { createdAt: { $gte: seriesStart } } },
       {
         $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: IST_TIMEZONE } },
           bookings: { $sum: 1 },
-          revenuePaise: { $sum: { $cond: [{ $eq: ["$status", "CONFIRMED"] }, "$amountPaise", 0] } },
+          revenuePaise: { $sum: { $cond: [IS_HONOURED_EXPR, "$amountPaise", 0] } },
         },
       },
       { $sort: { _id: 1 } },
     ]),
   ]);
 
-  // Fill in days with no bookings so the chart has a continuous x-axis.
+  // Fill in days with no bookings so the chart has a continuous x-axis. Walks
+  // the same IST keys the buckets were grouped by, so a label and its column
+  // always describe the same day.
   const byDate = new Map(dailySeriesRaw.map((d) => [d._id, d]));
-  const dailySeries = [];
-  for (let i = 0; i < 14; i++) {
-    const date = new Date(seriesStart);
-    date.setDate(date.getDate() + i);
-    const key = date.toISOString().slice(0, 10);
+  const dailySeries = seriesKeys.map((key) => {
     const entry = byDate.get(key);
-    dailySeries.push({ date: key, bookings: entry?.bookings ?? 0, revenue: toRupees(entry?.revenuePaise ?? 0) });
-  }
+    return { date: key, bookings: entry?.bookings ?? 0, revenue: toRupees(entry?.revenuePaise ?? 0) };
+  });
 
   return {
     totalUsers,
@@ -156,10 +168,9 @@ export const setTurfApproval = async (adminId, turfId, approvalStatus) => {
 /**
  * All users (admin view), paginated with optional search/role filters.
  */
-export const getAllUsers = async ({ page = 1, limit = 20, search, role, approvalStatus } = {}) => {
+export const getAllUsers = async ({ page = 1, limit = 20, search, role } = {}) => {
   const query = {};
   if (role) query.role = role;
-  if (approvalStatus) query.approvalStatus = approvalStatus;
   if (search) {
     const regex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
     query.$or = [{ name: regex }, { email: regex }];
@@ -198,31 +209,6 @@ export const setUserBanned = async (adminId, userId, isBanned) => {
 };
 
 /**
- * Approve or reject a pending OWNER account. Only meaningful for role:
- * OWNER — USER/ADMIN accounts are never vetted (see user.model.js's
- * approvalStatus default), so applying this to one would be a no-op the
- * caller almost certainly didn't intend.
- */
-export const setOwnerApproval = async (adminId, userId, approvalStatus) => {
-  const target = await User.findById(userId).select("role");
-  if (!target) {
-    throw new ApiError(404, "User not found");
-  }
-  if (target.role !== "OWNER") {
-    throw new ApiError(400, "Only OWNER accounts can be approved/rejected");
-  }
-
-  const user = await User.findByIdAndUpdate(userId, { approvalStatus }, { new: true }).select("-password");
-  await logAdminAction(
-    adminId,
-    approvalStatus === "APPROVED" ? "OWNER_APPROVED" : "OWNER_REJECTED",
-    "USER",
-    userId
-  );
-  return user;
-};
-
-/**
  * All bookings platform-wide (admin view) — same query/pagination shape as
  * the owner's getOwnerBookings, but with no owner/turf-ownership scoping.
  */
@@ -244,11 +230,12 @@ export const getAllBookingsForAdmin = async ({ page = 1, limit = 20, from, to, t
     const paymentIds = await Payment.find({ status: paymentStatus }).select("_id");
     query.paymentId = { $in: paymentIds.map((p) => p._id) };
   }
-  if (from || to) {
-    query.createdAt = {};
-    if (from) query.createdAt.$gte = new Date(from);
-    if (to) query.createdAt.$lte = new Date(to);
-  }
+  // Same play-time semantics as the owner's list (booking.service.js
+  // playTimeRangeFilter) — a date range on a booking list means "bookings
+  // happening then", not "bookings created then", and the day boundaries are
+  // IST because that's the timezone the platform operates in.
+  const playRange = istRangeFilter(from, to);
+  if (playRange) query.slotStartTime = playRange;
 
   const skip = (page - 1) * limit;
   const [items, total] = await Promise.all([
@@ -257,7 +244,7 @@ export const getAllBookingsForAdmin = async ({ page = 1, limit = 20, from, to, t
       .populate("turfId", "name location sportsType")
       .populate("slotId", "startTime endTime pricePaise")
       .populate("paymentId", "status razorpayOrderId razorpayPaymentId amountPaise currency refunds failureReason paidAt")
-      .sort({ createdAt: -1 })
+      .sort({ slotStartTime: -1 })
       .skip(skip)
       .limit(limit),
     Booking.countDocuments(query),
@@ -278,9 +265,9 @@ export const getAllCustomersForAdmin = async ({ page = 1, limit = 20 } = {}) => 
       $group: {
         _id: "$userId",
         totalBookings: { $sum: 1 },
-        confirmedCount: { $sum: { $cond: [{ $eq: ["$status", "CONFIRMED"] }, 1, 0] } },
+        confirmedCount: { $sum: { $cond: [IS_HONOURED_EXPR, 1, 0] } },
         cancelledCount: { $sum: { $cond: [{ $eq: ["$status", "CANCELLED"] }, 1, 0] } },
-        totalSpentPaise: { $sum: { $cond: [{ $eq: ["$status", "CONFIRMED"] }, "$amountPaise", 0] } },
+        totalSpentPaise: { $sum: { $cond: [IS_HONOURED_EXPR, "$amountPaise", 0] } },
         lastBookingAt: { $max: "$createdAt" },
       },
     },
@@ -336,7 +323,7 @@ export const getCustomerDetailForAdmin = async (customerId) => {
     throw new ApiError(404, "Customer not found");
   }
 
-  const confirmed = bookings.filter((b) => b.status === "CONFIRMED");
+  const confirmed = bookings.filter((b) => HONOURED_STATUSES.includes(b.status));
   const stats = {
     totalBookings: bookings.length,
     confirmedCount: confirmed.length,

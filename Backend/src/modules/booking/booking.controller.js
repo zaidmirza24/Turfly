@@ -1,5 +1,4 @@
 import * as bookingService from "./booking.service.js";
-import * as paymentService from "../payment/payment.service.js";
 import * as emailService from "../notification/email.service.js";
 import ApiResponse from "../../common/utils/ApiResponse.js";
 import logger from "../../common/utils/logger.js";
@@ -56,29 +55,28 @@ export const getMyBookings = async (req, res) => {
   new ApiResponse(200, "Bookings fetched successfully", bookings).send(res);
 };
 
-// Cancellation-triggered refund + notification is orchestrated here rather
-// than inside booking.service.js to avoid a circular import (payment.service
-// already depends on booking.service for its own slot-claiming logic).
-// Refund/email failures are caught and logged, never surfaced as a failure
-// of the cancellation itself — the booking is already cancelled by the time
-// either of these runs (Phase 20: notification/refund-attempt failures must
-// not roll back a state change that already succeeded).
+// Cancelling frees the slot; it does not return money. That is a deliberate
+// V1 product decision, not an unfinished feature: Razorpay keeps its gateway
+// fee on a refund, and the platform's commission was being voided at the same
+// time, so free cancellation with a full refund lost money on every use.
+//
+// Note what this does NOT remove. A payment captured for a booking that could
+// not be created at all is still refunded in full (payment.service.js
+// finalizePaymentSuccess) — that isn't a cancellation policy, it's not keeping
+// money for something never delivered. And a refund issued by hand from the
+// Razorpay dashboard (a dispute, a goodwill call) is still reconciled, so the
+// booking cancels and the owner's payout is voided rather than the owner being
+// paid for money the platform gave back.
+//
+// Email failures are caught and logged, never surfaced as a failure of the
+// cancellation itself — the booking is already cancelled by the time this runs.
 const afterCancellation = async (booking) => {
-  let refundInfo = { refunded: false };
-  try {
-    refundInfo = await paymentService.initiateRefundForBooking(booking, {
-      initiatedBy: booking.cancelledBy === "CUSTOMER" ? "CUSTOMER_CANCELLATION" : booking.cancelledBy === "ADMIN" ? "ADMIN_CANCELLATION" : "OWNER_CANCELLATION",
-    });
-  } catch (err) {
-    log.error("Refund orchestration threw unexpectedly", { err, bookingId: booking._id });
-  }
-  await emailService.sendBookingCancelled(booking, refundInfo).catch((err) =>
+  await emailService.sendBookingCancelled(booking).catch((err) =>
     log.error("Failed to send booking-cancelled email", { err, bookingId: booking._id })
   );
   await emailService.sendOwnerBookingCancelled(booking).catch((err) =>
     log.error("Failed to send owner-cancellation email", { err, bookingId: booking._id })
   );
-  return refundInfo;
 };
 
 export const cancelBooking = async (req, res) => {
@@ -86,8 +84,8 @@ export const cancelBooking = async (req, res) => {
     req.user._id,
     req.params.id
   );
-  const refundInfo = await afterCancellation(booking);
-  new ApiResponse(200, "Booking cancelled successfully", { booking, refund: refundInfo }).send(res);
+  await afterCancellation(booking);
+  new ApiResponse(200, "Booking cancelled successfully", { booking }).send(res);
 };
 
 export const cancelBookingAsOwner = async (req, res) => {
@@ -96,18 +94,23 @@ export const cancelBookingAsOwner = async (req, res) => {
     req.params.id,
     req.body.reason
   );
-  const refundInfo = await afterCancellation(booking);
-  new ApiResponse(200, "Booking cancelled successfully", { booking, refund: refundInfo }).send(res);
+  await afterCancellation(booking);
+  new ApiResponse(200, "Booking cancelled successfully", { booking }).send(res);
 };
 
-export const markBookingRefunded = async (req, res) => {
-  const booking = await bookingService.markBookingRefunded(req.user, req.params.id);
-  new ApiResponse(200, "Booking marked as refunded", booking).send(res);
+export const markBookingNoShow = async (req, res) => {
+  const booking = await bookingService.markBookingNoShow(req.user, req.params.id);
+  new ApiResponse(200, "Booking marked as a no-show", booking).send(res);
 };
 
 export const createManualBooking = async (req, res) => {
   const bookings = await bookingService.createManualBooking(req.user._id, req.body);
   new ApiResponse(201, "Booking created", bookings).send(res);
+};
+
+export const getOwnerStats = async (req, res) => {
+  const stats = await bookingService.getOwnerStats(req.user._id);
+  new ApiResponse(200, "Owner stats fetched successfully", stats).send(res);
 };
 
 export const getOwnerCustomers = async (req, res) => {
@@ -125,10 +128,11 @@ export const getOwnerCustomerDetail = async (req, res) => {
 };
 
 export const getTurfBookings = async (req, res) => {
-  const { page, limit } = req.query;
+  const { page, limit, status } = req.query;
   const bookings = await bookingService.getBookingsByTurf(req.user._id, req.params.turfId, {
     page: page ? Number(page) : undefined,
     limit: limit ? Number(limit) : undefined,
+    status,
   });
   new ApiResponse(200, "Turf bookings fetched successfully", bookings).send(
     res

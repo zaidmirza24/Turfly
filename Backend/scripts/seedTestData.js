@@ -160,6 +160,8 @@ const run = async () => {
     userId: playerA._id,
     turfId: greenArena._id,
     slotId: slot1._id,
+    slotStartTime: slot1.startTime,
+    slotEndTime: slot1.endTime,
     status: "CONFIRMED",
     amountPaise: greenArena.pricePerHourPaise,
   });
@@ -172,6 +174,8 @@ const run = async () => {
     userId: playerB._id,
     turfId: boundaryNets._id,
     slotId: slot2._id,
+    slotStartTime: slot2.startTime,
+    slotEndTime: slot2.endTime,
     status: "CONFIRMED",
     amountPaise: boundaryNets.pricePerHourPaise,
   });
@@ -182,6 +186,8 @@ const run = async () => {
     userId: playerA._id,
     turfId: greenArena._id,
     slotId: pastSlot._id,
+    slotStartTime: pastSlot.startTime,
+    slotEndTime: pastSlot.endTime,
     status: "CANCELLED",
     amountPaise: greenArena.pricePerHourPaise,
   });

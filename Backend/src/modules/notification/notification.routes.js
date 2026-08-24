@@ -72,8 +72,32 @@ router.post("/webhooks/brevo", async (req, res) => {
  * email — safe to invoke this endpoint more often than needed (e.g. hourly)
  * without ever double-sending a reminder for the same booking.
  */
-router.post("/jobs/send-reminders", async (req, res) => {
-  if (!env.CRON_SECRET || !safeEqual(req.headers["x-cron-secret"], env.CRON_SECRET)) {
+/**
+ * Two accepted shapes, because the schedulers that can call this don't agree
+ * on one:
+ *
+ *  - `X-Cron-Secret: <secret>` — any generic scheduler (cron-job.org, GitHub
+ *    Actions, a server crontab) that can set an arbitrary header.
+ *  - `Authorization: Bearer <secret>` — Vercel Cron, which sends a plain GET
+ *    and cannot set custom headers; it attaches CRON_SECRET this way itself.
+ *
+ * Supporting only the first is why the reminder job had never actually run:
+ * the natural way to schedule it on this deployment is a Vercel cron, and a
+ * Vercel cron hitting this route would have been rejected as unauthenticated
+ * every time — silently, since it 404s rather than erroring.
+ */
+const isAuthorizedCron = (req) => {
+  if (!env.CRON_SECRET) return false;
+  if (safeEqual(req.headers["x-cron-secret"], env.CRON_SECRET)) return true;
+  const auth = req.headers.authorization;
+  if (typeof auth === "string" && auth.startsWith("Bearer ")) {
+    return safeEqual(auth.slice(7), env.CRON_SECRET);
+  }
+  return false;
+};
+
+const sendReminders = async (req, res) => {
+  if (!isAuthorizedCron(req)) {
     return res.status(404).end();
   }
 
@@ -96,6 +120,13 @@ router.post("/jobs/send-reminders", async (req, res) => {
 
   log.info("Booking reminder job ran", { candidates: bookings.length, sent });
   res.status(200).json({ candidates: bookings.length, sent });
-});
+};
+
+// GET for Vercel Cron (which only issues GETs), POST for everything else.
+// The job is idempotent — NotificationLog dedupes — so a GET having a side
+// effect here is safe against retries and double-delivery, which is the
+// property that usually makes it a bad idea.
+router.get("/jobs/send-reminders", sendReminders);
+router.post("/jobs/send-reminders", sendReminders);
 
 export default router;

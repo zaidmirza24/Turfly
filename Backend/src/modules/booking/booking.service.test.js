@@ -30,9 +30,10 @@ const {
   confirmSlot,
   cancelBooking,
   cancelBookingAsOwner,
-  markBookingRefunded,
   createManualBooking,
   markBookingPaidOut,
+  playTimeRangeFilter,
+  markBookingNoShow,
 } = await import("./booking.service.js");
 const Slot = (await import("../slot/slot.model.js")).default;
 const Turf = (await import("../turf/turf.model.js")).default;
@@ -144,6 +145,116 @@ describe("confirmSlot", () => {
     await expect(confirmSlot("user1", "slot1")).rejects.toMatchObject({ statusCode: 409 });
     expect(Booking.create).not.toHaveBeenCalled();
   });
+
+  // Every operational view filters and sorts on when a booking is *played*,
+  // which is only queryable because these are copied off the slot here. If
+  // this stops happening, date filters silently fall back to matching nothing
+  // rather than failing loudly.
+  it("copies the slot's start and end time onto the booking", async () => {
+    const startTime = new Date("2026-08-24T11:30:00.000Z");
+    const endTime = new Date("2026-08-24T12:00:00.000Z");
+    Slot.findOneAndUpdate.mockResolvedValue({
+      _id: "slot1",
+      turfId: "turf1",
+      startTime,
+      endTime,
+      pricePaise: 90000,
+      lockedPricePaise: 90000,
+    });
+    Booking.create.mockResolvedValue({ _id: "booking1", amountPaise: 90000 });
+    Slot.findByIdAndUpdate.mockResolvedValue({});
+
+    await confirmSlot("user1", "slot1");
+
+    expect(Booking.create).toHaveBeenCalledWith(
+      expect.objectContaining({ slotStartTime: startTime, slotEndTime: endTime })
+    );
+  });
+});
+
+describe("markBookingNoShow", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const past = new Date(Date.now() - 60 * 60 * 1000);
+  const future = new Date(Date.now() + 60 * 60 * 1000);
+
+  const bookingDoc = (overrides = {}) => ({
+    _id: "booking1",
+    turfId: "turf1",
+    status: "CONFIRMED",
+    slotEndTime: past,
+    save: vi.fn().mockResolvedValue(true),
+    ...overrides,
+  });
+
+  const ownsIt = () => Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: { toString: () => "owner1" } }));
+
+  it("records a no-show once the slot has finished", async () => {
+    const booking = bookingDoc();
+    Booking.findById.mockResolvedValue(booking);
+    ownsIt();
+
+    await markBookingNoShow({ _id: "owner1", role: "OWNER" }, "booking1");
+
+    expect(booking.status).toBe("NO_SHOW");
+    expect(booking.save).toHaveBeenCalled();
+  });
+
+  // The distinction the whole state exists for: a no-show keeps the money and
+  // consumes the slot, where a cancellation refunds and frees it. Nothing here
+  // may touch the slot or the refund.
+  it("does not release the slot or start a refund", async () => {
+    const booking = bookingDoc();
+    Booking.findById.mockResolvedValue(booking);
+    ownsIt();
+
+    await markBookingNoShow({ _id: "owner1", role: "OWNER" }, "booking1");
+
+    expect(Slot.findByIdAndUpdate).not.toHaveBeenCalled();
+    expect(booking.refundStatus).toBeUndefined();
+  });
+
+  it("refuses before the slot has finished — they haven't failed to turn up yet", async () => {
+    Booking.findById.mockResolvedValue(bookingDoc({ slotEndTime: future }));
+    ownsIt();
+
+    await expect(
+      markBookingNoShow({ _id: "owner1", role: "OWNER" }, "booking1")
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it("refuses on a cancelled booking", async () => {
+    Booking.findById.mockResolvedValue(bookingDoc({ status: "CANCELLED" }));
+    ownsIt();
+
+    await expect(
+      markBookingNoShow({ _id: "owner1", role: "OWNER" }, "booking1")
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it("refuses an owner acting on a turf they don't own", async () => {
+    Booking.findById.mockResolvedValue(bookingDoc());
+    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: { toString: () => "someone-else" } }));
+
+    await expect(
+      markBookingNoShow({ _id: "owner1", role: "OWNER" }, "booking1")
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
+});
+
+describe("playTimeRangeFilter", () => {
+  // The bug this guards: the range was applied to `createdAt`, so an owner
+  // asking for today got bookings *placed* today rather than the day's
+  // schedule. The field name is the entire fix.
+  it("filters on play time, never on when the booking was created", () => {
+    const filter = playTimeRangeFilter("2026-08-24", "2026-08-24");
+    expect(filter).toHaveProperty("slotStartTime");
+    expect(filter).not.toHaveProperty("createdAt");
+  });
+
+  it("returns an empty filter when no range is given, so the query is unrestricted", () => {
+    expect(playTimeRangeFilter(undefined, undefined)).toEqual({});
+  });
 });
 
 describe("cancelBooking", () => {
@@ -248,56 +359,6 @@ describe("cancelBookingAsOwner", () => {
 
     await expect(
       cancelBookingAsOwner({ _id: "owner1", role: "OWNER" }, "booking1")
-    ).rejects.toMatchObject({ statusCode: 400 });
-  });
-});
-
-describe("markBookingRefunded", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  const bookingDoc = (overrides = {}) => ({
-    _id: "booking1",
-    turfId: "turf1",
-    status: "CANCELLED",
-    refundStatus: "NONE",
-    save: vi.fn().mockResolvedValue(true),
-    ...overrides,
-  });
-
-  it("rejects marking an active (non-cancelled) booking as refunded", async () => {
-    Booking.findById.mockResolvedValue(bookingDoc({ status: "CONFIRMED" }));
-    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: { toString: () => "owner1" } }));
-
-    await expect(
-      markBookingRefunded({ _id: "owner1", role: "OWNER" }, "booking1")
-    ).rejects.toMatchObject({ statusCode: 400 });
-  });
-
-  it("rejects an owner acting on a turf they don't own", async () => {
-    Booking.findById.mockResolvedValue(bookingDoc());
-    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: { toString: () => "some-other-owner" } }));
-
-    await expect(
-      markBookingRefunded({ _id: "owner1", role: "OWNER" }, "booking1")
-    ).rejects.toMatchObject({ statusCode: 403 });
-  });
-
-  it("marks a cancelled booking refunded for the owning owner", async () => {
-    const booking = bookingDoc();
-    Booking.findById.mockResolvedValue(booking);
-    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: { toString: () => "owner1" } }));
-
-    await markBookingRefunded({ _id: "owner1", role: "OWNER" }, "booking1");
-
-    expect(booking.refundStatus).toBe("MARKED_REFUNDED");
-  });
-
-  it("rejects marking an already-refunded booking again", async () => {
-    Booking.findById.mockResolvedValue(bookingDoc({ refundStatus: "MARKED_REFUNDED" }));
-    Turf.findById.mockReturnValue(withSelectNoLean({ ownerId: { toString: () => "owner1" } }));
-
-    await expect(
-      markBookingRefunded({ _id: "owner1", role: "OWNER" }, "booking1")
     ).rejects.toMatchObject({ statusCode: 400 });
   });
 });

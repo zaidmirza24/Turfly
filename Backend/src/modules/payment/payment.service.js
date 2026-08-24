@@ -591,59 +591,18 @@ export const getPaymentById = async (actor, paymentId) => {
   return payment;
 };
 
-// ── Refunds (Phase 13) ──────────────────────────────────────────────────
-
-/**
- * Refunds a specific booking's share of its payment, in full — this platform
- * has exactly one cancellation policy (free cancellation up to 6 hours before
- * the slot, enforced in booking.service.js's cancelBooking/cancelBookingAsOwner),
- * with no partial/tiered refund schedule to apply, so "cancelled" and "fully
- * refund what was paid for this slot" are the same event. Never marks the
- * refund complete just because the Razorpay API call was accepted — that only
- * moves the state to REFUND_PENDING; `refund.processed` (webhook) is what
- * actually confirms it (Phase 13, explicit rule).
- */
-export const initiateRefundForBooking = async (booking, { initiatedBy }) => {
-  if (!booking.paymentId) {
-    return { refunded: false, reason: "No online payment on this booking" };
-  }
-  const payment = await Payment.findById(booking.paymentId);
-  if (!payment || payment.status !== "PAID") {
-    return { refunded: false, reason: "Payment is not in a refundable state" };
-  }
-
-  // Atomic claim, mirroring finalizePaymentSuccess's pattern (Phase 10): two
-  // concurrent cancellations of the same booking (double-click, retried
-  // request, customer-cancel racing an owner-cancel) must not both pass a
-  // plain read-then-write check on refundStatus and both call Razorpay's
-  // refund API. Only the caller that actually flips NONE/REFUND_FAILED →
-  // REFUND_PENDING here proceeds; everyone else sees null and backs off
-  // immediately, before any refund call is made.
-  const claimed = await Booking.findOneAndUpdate(
-    { _id: booking._id, refundStatus: { $in: ["NONE", "REFUND_FAILED"] } },
-    { refundStatus: "REFUND_PENDING" },
-    { new: true }
-  );
-  if (!claimed) {
-    return { refunded: false, reason: "Already refunded or refund already in progress" };
-  }
-
-  try {
-    const result = await refundPaymentInternal(payment, {
-      amountPaise: booking.amountPaise,
-      initiatedBy,
-      notes: { bookingId: String(booking._id) },
-    });
-    await emailService.sendRefundInitiated(booking, payment, result.razorpayRefundId).catch((e) =>
-      log.error("Failed to send refund-initiated email", { err: e, bookingId: booking._id })
-    );
-    return { refunded: true, razorpayRefundId: result.razorpayRefundId };
-  } catch (err) {
-    await Booking.findByIdAndUpdate(booking._id, { refundStatus: "REFUND_FAILED" });
-    log.error("Refund initiation failed", { err, bookingId: booking._id, paymentId: payment._id });
-    return { refunded: false, reason: "REFUND_FAILED", error: err.message };
-  }
-};
+// ── Refunds ─────────────────────────────────────────────────────────────
+//
+// There is no customer-facing refund feature: cancelling a booking frees the
+// slot and returns no money. What remains here is deliberate and narrower:
+//
+//  - refundPaymentInternal is used when a payment was captured but the booking
+//    could not be created at all (finalizePaymentSuccess / reconcileStuckPayment).
+//    Keeping money for something never delivered is not a policy choice.
+//  - the refund webhook handlers below reconcile a refund issued by hand from
+//    the Razorpay dashboard — a dispute, a chargeback, a goodwill call. Without
+//    them the booking would stay CONFIRMED, its slot stay BOOKED, and the owner
+//    still be paid out for money the platform gave back.
 
 const refundPaymentInternal = async (payment, { amountPaise, initiatedBy, notes, reason }) => {
   if (!payment.razorpayPaymentId) {
@@ -661,25 +620,60 @@ const refundPaymentInternal = async (payment, { amountPaise, initiatedBy, notes,
     notes: notes || {},
   });
 
-  await Payment.findByIdAndUpdate(payment._id, {
-    $push: {
-      refunds: {
-        razorpayRefundId: refund.id,
-        amountPaise,
-        status: refund.status === "processed" ? "PROCESSED" : "CREATED",
-        speed: refund.speed_processed || refund.speed_requested || null,
-        notes: notes || null,
-        initiatedBy,
-        failureReason: reason || null,
-        createdAt: new Date(),
-        processedAt: refund.status === "processed" ? new Date() : null,
+  // Guarded rather than a bare $push: Razorpay's `refund.created` webhook for
+  // this same refund can arrive before this line runs (the API call above has
+  // already returned by then, so the refund exists on their side), and
+  // upsertRefundEntry would insert its own entry for it. An unguarded push
+  // then adds a second entry for one refund, which double-counts in
+  // `refundedAmount()` — and that total is what guards against over-refunding,
+  // so the consequence is a later legitimate refund being wrongly rejected as
+  // exceeding what was paid. The $ne filter makes whichever writer arrives
+  // second a no-op instead.
+  const pushed = await Payment.findOneAndUpdate(
+    { _id: payment._id, "refunds.razorpayRefundId": { $ne: refund.id } },
+    {
+      $push: {
+        refunds: {
+          razorpayRefundId: refund.id,
+          amountPaise,
+          status: refund.status === "processed" ? "PROCESSED" : "CREATED",
+          speed: refund.speed_processed || refund.speed_requested || null,
+          notes: notes || null,
+          initiatedBy,
+          failureReason: reason || null,
+          createdAt: new Date(),
+          processedAt: refund.status === "processed" ? new Date() : null,
+        },
       },
-    },
-    // Payment.status is deliberately left at PAID regardless of how much of
-    // it has since been refunded — PAID means "this order was successfully
-    // captured," which stays true forever; refund progress lives on the
-    // Booking (refundStatus) and this document's own refunds[] array instead.
-  });
+      // Payment.status is deliberately left at PAID regardless of how much of
+      // it has since been refunded — PAID means "this order was successfully
+      // captured," which stays true forever; refund progress lives on the
+      // Booking (refundStatus) and this document's own refunds[] array instead.
+    }
+  );
+
+  if (!pushed) {
+    // The webhook got there first. Its entry is missing the context only this
+    // path knows — who asked for the refund, and which booking it covers —
+    // and `notes.bookingId` in particular is what finalizeRefundIfComplete
+    // matches on to decide this was an in-app refund rather than one issued
+    // from the Razorpay dashboard. Backfill those without disturbing the
+    // status the webhook set, which is more current than ours.
+    await Payment.findOneAndUpdate(
+      { _id: payment._id, "refunds.razorpayRefundId": refund.id },
+      {
+        $set: {
+          "refunds.$.initiatedBy": initiatedBy,
+          "refunds.$.notes": notes || null,
+          "refunds.$.failureReason": reason || null,
+        },
+      }
+    );
+    log.info("Refund entry already recorded by webhook — backfilled attribution", {
+      paymentId: payment._id,
+      razorpayRefundId: refund.id,
+    });
+  }
 
   log.info("Refund initiated", { paymentId: payment._id, razorpayRefundId: refund.id, amountPaise });
   return { razorpayRefundId: refund.id };

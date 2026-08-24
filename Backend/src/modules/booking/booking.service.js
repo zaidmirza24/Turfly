@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import mongoose from "mongoose";
 import Slot from "../slot/slot.model.js";
-import Booking from "./booking.model.js";
+import Booking, { HONOURED_STATUSES, IS_HONOURED_EXPR } from "./booking.model.js";
 import Turf from "../turf/turf.model.js";
 import User from "../user/user.model.js";
 import Payment from "../payment/payment.model.js";
@@ -11,6 +11,7 @@ import { logAdminAction } from "../admin/admin.service.js";
 import ApiError from "../../common/utils/ApiError.js";
 import logger from "../../common/utils/logger.js";
 import { toRupees } from "../../common/utils/money.js";
+import { istRangeFilter, istDateKey, istDayBounds, previousDateKey, IST_TIMEZONE } from "../../common/utils/istTime.js";
 
 const log = logger.child({ module: "booking.service" });
 
@@ -224,11 +225,15 @@ export const confirmSlot = async (userId, slotId, groupId = null) => {
     throw new ApiError(500, "Slot is missing price data — booking cannot be priced");
   }
 
-  // Create the booking record
+  // Create the booking record. slotStartTime/slotEndTime are copied from the
+  // slot here — this is the one place a Booking is ever created, so it's the
+  // one place that has to keep them in step (see booking.model.js).
   const booking = await Booking.create({
     userId,
     turfId: slotBeforeConfirm.turfId,
     slotId: slotBeforeConfirm._id,
+    slotStartTime: slotBeforeConfirm.startTime,
+    slotEndTime: slotBeforeConfirm.endTime,
     status: "CONFIRMED",
     amountPaise: chargedAmountPaise,
     groupId,
@@ -448,10 +453,16 @@ export const forceCancelForSystem = async (bookingId, reason) => {
  * are grouped by `${groupId||_id}:${status}` so a partial cancellation never
  * gets silently merged with the bookings that are still active.
  *
- * Runs in JS after a full (unpaginated) fetch rather than as a Mongo
- * $group, because each item here already carries several populated refs
- * (turfId/userId/slotId/paymentId) that would otherwise need re-deriving
- * via $lookup — simplest correct option for this app's booking volume.
+ * Still runs in JS, but only ever over ONE PAGE of bookings — `pageOfReservations`
+ * below resolves which reservations belong on the page with a Mongo $group
+ * first, then fetches just those. Doing the merge here keeps the populated
+ * refs (turfId/userId/slotId/paymentId) that an all-aggregation version would
+ * have to re-derive via $lookup, without the unbounded fetch it used to need.
+ *
+ * Ordered by play time, newest first — `startTime`, not `createdAt`. These
+ * lists answer "what's on the schedule", so the booking's own creation time is
+ * the wrong axis; sorting by it is what made the owner's list read as a
+ * chronicle of when people happened to book rather than of when they play.
  */
 const groupBookingsByReservation = (bookings) => {
   const groups = new Map();
@@ -485,44 +496,194 @@ const groupBookingsByReservation = (bookings) => {
       createdAt: first.createdAt,
       cancelledBy: first.cancelledBy,
       refundStatus: first.refundStatus,
+      // Carried through because the customer-facing cancellation flow has to
+      // tell someone whether cancelling refunds real money or not, and that
+      // answer is ONLINE-vs-CASH. Omitting it here made every grouped
+      // reservation look like it had no payment method at all, which is how
+      // the cancel dialog ended up telling paying customers they were never
+      // charged.
+      paymentMethod: first.paymentMethod,
       payoutStatus: first.payoutStatus,
       notes: first.notes,
     });
   }
 
-  result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  result.sort((a, b) => {
+    const aStart = a.startTime ?? a.createdAt;
+    const bStart = b.startTime ?? b.createdAt;
+    return new Date(bStart) - new Date(aStart);
+  });
   return result;
 };
 
-const paginateGrouped = (items, page, limit) => {
-  const total = items.length;
-  const skip = (page - 1) * limit;
-  return { items: items.slice(skip, skip + limit), total, page, pages: Math.ceil(total / limit) || 1 };
+// The populated refs every booking list returns. Kept in one place because
+// four call sites repeat it and a field missing from one of them shows up as
+// a silently blank column rather than an error.
+const withBookingRefs = (query) =>
+  query
+    .populate("userId", "name email phone")
+    .populate("turfId", "name location sportsType")
+    .populate("slotId", "startTime endTime pricePaise")
+    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amountPaise currency refunds failureReason paidAt");
+
+/**
+ * One reservation = every Booking document sharing a groupId *and* a status
+ * (see groupBookingsByReservation). Pagination has to count and slice those
+ * reservations, not the underlying per-slot Booking documents, or page sizes
+ * come out wrong the moment anyone books more than one slot.
+ *
+ * This previously couldn't be done in Mongo, so the code fetched a capped 500
+ * bookings and sliced the grouped array in JS. That cap was a silent data-loss
+ * bug: past it, older reservations simply stopped existing as far as every
+ * caller was concerned — history pages went blank and the owner dashboard's
+ * lifetime revenue quietly stopped growing while still being displayed as fact.
+ *
+ * The fix is two round trips instead of one. First $group the matching
+ * bookings into reservations and page over *those* server-side — cheap, since
+ * it projects almost nothing. Then fetch and populate only the bookings on
+ * that page. Cost is now bounded by page size rather than by lifetime history,
+ * with no cap and nothing dropped.
+ */
+const pageOfReservations = async (query, { page = 1, limit = 20 } = {}) => {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 20, 100));
+  const safePage = Math.max(1, Number(page) || 1);
+  const skip = (safePage - 1) * safeLimit;
+
+  const [faceted] = await Booking.aggregate([
+    { $match: query },
+    {
+      $group: {
+        // Mirrors the JS key exactly: a groupId if there is one, otherwise the
+        // booking's own id, and always split by status so a partially
+        // cancelled group doesn't merge with its still-active siblings.
+        _id: {
+          key: { $ifNull: ["$groupId", { $toString: "$_id" }] },
+          status: "$status",
+        },
+        bookingIds: { $push: "$_id" },
+        startTime: { $min: "$slotStartTime" },
+      },
+    },
+    // Play time, newest first. `_id` breaks ties so paging is stable — without
+    // it, two reservations starting at the same instant can swap places
+    // between requests and a booking shows twice or not at all.
+    { $sort: { startTime: -1, "_id.key": 1 } },
+    {
+      $facet: {
+        total: [{ $count: "n" }],
+        page: [{ $skip: skip }, { $limit: safeLimit }],
+      },
+    },
+  ]);
+
+  const total = faceted?.total?.[0]?.n ?? 0;
+  const idsOnPage = (faceted?.page ?? []).flatMap((g) => g.bookingIds);
+
+  const bookings = idsOnPage.length
+    ? await withBookingRefs(Booking.find({ _id: { $in: idsOnPage } }))
+    : [];
+
+  return {
+    items: groupBookingsByReservation(bookings),
+    total,
+    page: safePage,
+    pages: Math.ceil(total / safeLimit) || 1,
+  };
 };
 
-// groupBookingsByReservation has to see every matching Booking document to
-// collapse a multi-slot checkout into one reservation, so the query behind
-// it can't paginate at the DB level the normal way (see paginateGrouped's
-// own JS slice, above) — page/limit there only trim what's sent to the
-// browser, not what's fetched or populated. This caps the *raw* fetch at a
-// bounded, recent window instead of letting it grow unboundedly with a
-// user's/turf's lifetime booking count: cost is now capped regardless of
-// history, at the price of very old pages (well past a few hundred
-// bookings back) potentially not appearing. A real fix is an aggregation
-// pipeline that groups by groupId with $skip/$limit server-side; this is
-// the safety net until that lands — see PRODUCTION_READINESS_ASSESSMENT.md.
-const MAX_BOOKINGS_SCAN = 500;
+/**
+ * Moves finished bookings CONFIRMED → COMPLETED.
+ *
+ * Deliberately lazy and scoped, in the same spirit as `releaseExpiredLocks`:
+ * this codebase has no scheduler, and a booking's completion doesn't need one.
+ * Reading a booking list is what settles the bookings in it, and the answer is
+ * correct whether or not anything has swept the collection — `slotEndTime` is
+ * the source of truth, the status is a materialised view of it.
+ *
+ * NO_SHOW is never set here. The system can tell that a slot has passed; it
+ * cannot tell whether anyone turned up, so that transition only ever happens
+ * because a human said so.
+ */
+export const settleFinishedBookings = async (query = {}) => {
+  const result = await Booking.updateMany(
+    { ...query, status: "CONFIRMED", slotEndTime: { $lte: new Date() } },
+    { $set: { status: "COMPLETED" } }
+  );
+  return result.modifiedCount;
+};
+
+/**
+ * Owner/admin marks a booking as a no-show. Only meaningful once the slot has
+ * actually passed — before that the customer hasn't failed to turn up, they
+ * just haven't turned up *yet*.
+ *
+ * Distinct from cancellation in the way that matters: a cancellation refunds
+ * and frees the slot, a no-show keeps the money and leaves the slot consumed.
+ */
+export const markBookingNoShow = async (actor, bookingId) => {
+  const booking = await Booking.findById(bookingId);
+  if (!booking) {
+    throw new ApiError(404, "Booking not found");
+  }
+  await assertCanManageBooking(actor, booking.turfId);
+
+  if (booking.status === "CANCELLED") {
+    throw new ApiError(400, "A cancelled booking cannot be marked as a no-show");
+  }
+  if (booking.status === "NO_SHOW") {
+    throw new ApiError(400, "Booking is already marked as a no-show");
+  }
+  if (booking.slotEndTime > new Date()) {
+    throw new ApiError(400, "This booking hasn't finished yet — you can only mark a no-show after the slot has passed");
+  }
+
+  booking.status = "NO_SHOW";
+  await booking.save();
+
+  if (actor.role === "ADMIN") {
+    await logAdminAction(actor._id, "BOOKING_NO_SHOW", "BOOKING", booking._id);
+  }
+
+  return booking;
+};
+
+/**
+ * Turns a `from`/`to` pair into a filter on when the booking is *played*.
+ *
+ * Two bugs lived here. The range was applied to `createdAt`, so an owner
+ * asking for today got the bookings *placed* today — next month's advance
+ * bookings included, this afternoon's actual schedule excluded, which is the
+ * opposite of what the filter is for. And the bounds were parsed with a bare
+ * `new Date("YYYY-MM-DD")`, which resolves to UTC midnight: on an IST platform
+ * that starts the day 5½ hours late and ends it 5½ hours early, so early-
+ * morning and late-evening slots fell out of their own day.
+ *
+ * A plain ISO timestamp (rather than a date-only key) is passed straight
+ * through, so a caller that genuinely wants an instant still can.
+ */
+export const playTimeRangeFilter = (from, to) => {
+  const range = istRangeFilter(from, to);
+  return range ? { slotStartTime: range } : {};
+};
 
 /**
  * Get all bookings for the logged-in user.
+ *
+ * Returns a plain array rather than a page: the dashboard splits these into
+ * Upcoming/Completed/Cancelled tabs client-side, so it needs the whole set.
+ * Ordered by play time descending, which also makes the guard below benign —
+ * if a customer ever did exceed it, what falls off the end is their most
+ * ancient history, never an upcoming booking.
  */
+const MAX_USER_BOOKINGS = 500;
+
 export const getUserBookings = async (userId) => {
-  const bookings = await Booking.find({ userId })
-    .populate("turfId", "name location sportsType")
-    .populate("slotId", "startTime endTime pricePaise")
-    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amountPaise currency refunds failureReason paidAt")
-    .sort({ createdAt: -1 })
-    .limit(MAX_BOOKINGS_SCAN);
+  // Settle first, so the list reflects reality rather than whatever the
+  // statuses last happened to be written as.
+  await settleFinishedBookings({ userId });
+  const bookings = await withBookingRefs(Booking.find({ userId }))
+    .sort({ slotStartTime: -1 })
+    .limit(MAX_USER_BOOKINGS);
   return groupBookingsByReservation(bookings);
 };
 
@@ -612,44 +773,6 @@ export const cancelBookingAsOwner = async (actor, bookingId, reason) => {
 
   if (actor.role === "ADMIN") {
     await logAdminAction(actor._id, "BOOKING_CANCELLED", "BOOKING", booking._id, { reason: reason || undefined });
-  }
-
-  return booking;
-};
-
-/**
- * Mark a cancelled booking as refunded — the owner's own bookkeeping note
- * that they handed the money back outside the app (cash, UPI, etc). No
- * payment gateway exists, so this never moves real money; it only exists so
- * an owner has somewhere to record that they did.
- */
-export const markBookingRefunded = async (actor, bookingId) => {
-  const booking = await Booking.findById(bookingId);
-  if (!booking) {
-    throw new ApiError(404, "Booking not found");
-  }
-  await assertCanManageBooking(actor, booking.turfId);
-  if (booking.status !== "CANCELLED") {
-    throw new ApiError(400, "Only a cancelled booking can be marked as refunded");
-  }
-  if (booking.paymentId) {
-    // A real Razorpay refund is auto-initiated on cancellation for any
-    // ONLINE booking (see payment.service.js initiateRefundForBooking,
-    // invoked from booking.controller.js's afterCancellation) — this manual
-    // bookkeeping note exists only for CASH/PENDING bookings with no real
-    // payment record, so it must never be used to paper over a real refund's
-    // actual state.
-    throw new ApiError(400, "This booking was paid online — its refund status is tracked automatically");
-  }
-  if (booking.refundStatus === "MARKED_REFUNDED") {
-    throw new ApiError(400, "Booking is already marked as refunded");
-  }
-
-  booking.refundStatus = "MARKED_REFUNDED";
-  await booking.save();
-
-  if (actor.role === "ADMIN") {
-    await logAdminAction(actor._id, "BOOKING_REFUNDED", "BOOKING", booking._id);
   }
 
   return booking;
@@ -779,18 +902,20 @@ export const createManualBooking = async (ownerId, { turfId, customerId, slotIds
  * check any owner could enumerate turf ids and harvest the whole platform's
  * customer PII.
  */
-export const getBookingsByTurf = async (ownerId, turfId, { page = 1, limit = 20 } = {}) => {
-  await assertOwnsBookingTurf(ownerId, turfId);
+export const getBookingsByTurf = async (ownerId, turfId, { page = 1, limit = 20, status } = {}) => {
+  const turf = await assertOwnsBookingTurf(ownerId, turfId);
 
-  const query = { turfId, status: "CONFIRMED" };
-  const bookings = await Booking.find(query)
-    .populate("userId", "name email phone")
-    .populate("slotId", "startTime endTime pricePaise")
-    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amountPaise currency refunds failureReason paidAt")
-    .sort({ createdAt: -1 })
-    .limit(MAX_BOOKINGS_SCAN);
+  // `status` used to be hardcoded to CONFIRMED here, so this view silently
+  // disagreed with the all-turfs list about the same bookings — a cancellation
+  // visible on one screen was simply absent from the other, with nothing to
+  // indicate it was being filtered. Now it's an optional filter like everywhere
+  // else, and the default is "everything".
+  await settleFinishedBookings({ turfId: turf._id });
 
-  return paginateGrouped(groupBookingsByReservation(bookings), page, limit);
+  const query = { turfId: turf._id };
+  if (status) query.status = status;
+
+  return pageOfReservations(query, { page, limit });
 };
 
 /**
@@ -801,6 +926,7 @@ export const getBookingsByTurf = async (ownerId, turfId, { page = 1, limit = 20 
 export const getOwnerBookings = async (ownerId, { page = 1, limit = 20, from, to, turfId, status, paymentStatus, refundStatus, payoutStatus } = {}) => {
   const turfs = await Turf.find({ ownerId }).select("_id");
   const turfIds = turfs.map((t) => t._id);
+  await settleFinishedBookings({ turfId: { $in: turfIds } });
 
   const query = { turfId: { $in: turfIds } };
   if (turfId) {
@@ -816,21 +942,109 @@ export const getOwnerBookings = async (ownerId, { page = 1, limit = 20, from, to
     const paymentIds = await Payment.find({ status: paymentStatus }).select("_id");
     query.paymentId = { $in: paymentIds.map((p) => p._id) };
   }
-  if (from || to) {
-    query.createdAt = {};
-    if (from) query.createdAt.$gte = new Date(from);
-    if (to) query.createdAt.$lte = new Date(to);
+  Object.assign(query, playTimeRangeFilter(from, to));
+
+  return pageOfReservations(query, { page, limit });
+};
+
+// What the owner actually earns from one booking: their share after the
+// platform's commission for ONLINE bookings, and the whole amount for
+// CASH/PENDING ones (the platform never held that money). Bookings confirmed
+// before the commission split existed have no ownerAmountPaise and are treated
+// as pre-commission, same as cash.
+const OWNER_EARNINGS_EXPR = {
+  $cond: [
+    { $and: [{ $eq: ["$paymentMethod", "ONLINE"] }, { $ne: ["$ownerAmountPaise", null] }] },
+    "$ownerAmountPaise",
+    "$amountPaise",
+  ],
+};
+
+const REVENUE_SERIES_DAYS = 7;
+
+/**
+ * Headline numbers for the owner dashboard, aggregated in Mongo.
+ *
+ * These used to be derived in the browser by reducing over whatever bookings
+ * the list endpoint happened to return (`/bookings/owner?limit=500`), which
+ * made the dashboard's "Your Earnings" figure a function of the page size
+ * rather than of the bookings: past 500 lifetime bookings it silently stopped
+ * growing while still being presented as a lifetime total. Revenue has to be
+ * computed over all matching rows, server-side, or it isn't revenue.
+ */
+export const getOwnerStats = async (ownerId) => {
+  const turfs = await Turf.find({ ownerId }).select("_id isActive");
+  const turfIds = turfs.map((t) => t._id);
+  await settleFinishedBookings({ turfId: { $in: turfIds } });
+  const now = new Date();
+
+  const seriesKeys = [];
+  let cursor = istDateKey(now);
+  for (let i = 0; i < REVENUE_SERIES_DAYS; i++) {
+    seriesKeys.unshift(cursor);
+    cursor = previousDateKey(cursor);
   }
+  const seriesStart = istDayBounds(seriesKeys[0]).start;
 
-  const bookings = await Booking.find(query)
-    .populate("userId", "name email phone")
-    .populate("turfId", "name location sportsType")
-    .populate("slotId", "startTime endTime pricePaise")
-    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amountPaise currency refunds failureReason paidAt")
-    .sort({ createdAt: -1 })
-    .limit(MAX_BOOKINGS_SCAN);
+  const [totals, upcoming, todayAgg, seriesRaw] = await Promise.all([
+    Booking.aggregate([
+      { $match: { turfId: { $in: turfIds } } },
+      {
+        $group: {
+          _id: null,
+          totalBookings: { $sum: 1 },
+          confirmedCount: { $sum: { $cond: [IS_HONOURED_EXPR, 1, 0] } },
+          earningsPaise: {
+            $sum: { $cond: [IS_HONOURED_EXPR, OWNER_EARNINGS_EXPR, 0] },
+          },
+        },
+      },
+    ]),
+    Booking.countDocuments({
+      turfId: { $in: turfIds },
+      status: "CONFIRMED",
+      slotStartTime: { $gte: now },
+    }),
+    // "Today" is the IST calendar day, and it's keyed off when the booking is
+    // played — an owner asking what today has taken means the day's sessions,
+    // not the payments that happened to be made today.
+    Booking.aggregate([
+      {
+        $match: {
+          turfId: { $in: turfIds },
+          status: { $in: HONOURED_STATUSES },
+          slotStartTime: { $gte: istDayBounds(istDateKey(now)).start, $lte: istDayBounds(istDateKey(now)).end },
+        },
+      },
+      { $group: { _id: null, count: { $sum: 1 }, earningsPaise: { $sum: OWNER_EARNINGS_EXPR } } },
+    ]),
+    Booking.aggregate([
+      { $match: { turfId: { $in: turfIds }, status: { $in: HONOURED_STATUSES }, slotStartTime: { $gte: seriesStart } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$slotStartTime", timezone: IST_TIMEZONE } },
+          earningsPaise: { $sum: OWNER_EARNINGS_EXPR },
+        },
+      },
+    ]),
+  ]);
 
-  return paginateGrouped(groupBookingsByReservation(bookings), page, limit);
+  const byDate = new Map(seriesRaw.map((d) => [d._id, d]));
+
+  return {
+    totalBookings: totals[0]?.totalBookings ?? 0,
+    confirmedCount: totals[0]?.confirmedCount ?? 0,
+    totalEarnings: toRupees(totals[0]?.earningsPaise ?? 0),
+    upcomingCount: upcoming,
+    todayCount: todayAgg[0]?.count ?? 0,
+    todayEarnings: toRupees(todayAgg[0]?.earningsPaise ?? 0),
+    activeTurfs: turfs.filter((t) => t.isActive).length,
+    totalTurfs: turfs.length,
+    dailySeries: seriesKeys.map((key) => ({
+      date: key,
+      revenue: toRupees(byDate.get(key)?.earningsPaise ?? 0),
+    })),
+  };
 };
 
 /**
@@ -851,9 +1065,9 @@ export const getOwnerCustomers = async (ownerId, { page = 1, limit = 20 } = {}) 
       $group: {
         _id: "$userId",
         totalBookings: { $sum: 1 },
-        confirmedCount: { $sum: { $cond: [{ $eq: ["$status", "CONFIRMED"] }, 1, 0] } },
+        confirmedCount: { $sum: { $cond: [IS_HONOURED_EXPR, 1, 0] } },
         cancelledCount: { $sum: { $cond: [{ $eq: ["$status", "CANCELLED"] }, 1, 0] } },
-        totalSpentPaise: { $sum: { $cond: [{ $eq: ["$status", "CONFIRMED"] }, "$amountPaise", 0] } },
+        totalSpentPaise: { $sum: { $cond: [IS_HONOURED_EXPR, "$amountPaise", 0] } },
         lastBookingAt: { $max: "$createdAt" },
       },
     },
@@ -921,7 +1135,7 @@ export const getOwnerCustomerDetail = async (ownerId, customerId) => {
     throw new ApiError(404, "Customer not found");
   }
 
-  const confirmed = bookings.filter((b) => b.status === "CONFIRMED");
+  const confirmed = bookings.filter((b) => HONOURED_STATUSES.includes(b.status));
   const stats = {
     totalBookings: bookings.length,
     confirmedCount: confirmed.length,

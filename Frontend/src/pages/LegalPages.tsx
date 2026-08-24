@@ -40,7 +40,9 @@ export function TermsPage() {
         <p>A confirmed booking reserves a specific time slot at a venue. Slots are locked atomically at checkout, so a slot is never double-booked. Checkout on this platform is currently simulated — no real payment is collected.</p>
       </Section>
       <Section title="Cancellation policy">
-        <p>You may cancel a booking free of charge up to 6 hours before the slot's start time, from My Bookings. Cancellations inside that window, or after the slot has started, aren't permitted. Since no real payment is collected today, there is nothing to refund on cancellation.</p>
+        <p><strong>Bookings are non-refundable.</strong> Payment secures the slot for you, and the venue holds it open on that basis, so the amount paid is not returned if you cancel or don't attend.</p>
+        <p>You may cancel from My Bookings up to 6 hours before the slot's start time. Cancelling releases the slot so the venue can resell it, but does not return your payment. Cancellations inside that window, or after the slot has started, aren't permitted.</p>
+        <p>If a venue cancels your booking, contact the venue directly about the amount you paid. If you were charged for a booking that was never confirmed, that payment is refunded automatically.</p>
       </Section>
       <Section title="Venue listings">
         <p>Every venue is reviewed by our team before it appears in search — see the "Verified Venue" badge on a listing. We don't independently verify every detail an owner provides (amenities, photos, house rules); report anything inaccurate via Help &amp; Support.</p>

@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { CalendarDays, User, Activity, ChevronRight, XCircle, AlertTriangle, RefreshCw } from 'lucide-react';
 import { Booking } from '@/types';
-import { bookingStartTime } from '@/lib/booking';
+import { bookingStartTime, cancellationRefundCopy, isFinishedBooking, isUpcomingBooking } from '@/lib/booking';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
@@ -34,18 +34,20 @@ export default function UserDashboard() {
   const bookings = bookingsResponse?.data ?? [];
 
   const now = Date.now();
-  const upcoming = bookings.filter(b => {
-    const start = bookingStartTime(b);
-    return b.status === 'CONFIRMED' && !!start && start.getTime() >= now;
-  });
+  // Soonest first. The list arrives newest-play-time-first, which is right for
+  // history but backwards here — the booking you need to know about is the one
+  // happening next, not the one furthest away.
+  const upcoming = bookings
+    .filter(b => isUpcomingBooking(b, now))
+    .sort((a, b) => (bookingStartTime(a)?.getTime() ?? 0) - (bookingStartTime(b)?.getTime() ?? 0));
 
   // "Completed" — played and never cancelled. Kept separate from "Cancelled"
   // because they mean very different things to a customer glancing at their
-  // history, even though both are, mechanically, "not upcoming".
-  const completed = bookings.filter(b => {
-    const start = bookingStartTime(b);
-    return b.status === 'CONFIRMED' && !!start && start.getTime() < now;
-  });
+  // history, even though both are, mechanically, "not upcoming". Includes
+  // no-shows: from the customer's side that slot still happened and was still
+  // paid for, so hiding it would make their history disagree with their bank
+  // statement.
+  const completed = bookings.filter(b => isFinishedBooking(b, now));
 
   const cancelled = bookings.filter(b => b.status === 'CANCELLED');
 
@@ -55,13 +57,8 @@ export default function UserDashboard() {
     if (cancelId && !isCancelling) {
       setIsCancelling(true);
       try {
-        const results = await cancelBooking(cancelTarget?.bookingIds ?? [cancelId]);
-        const anyRefunded = results.some((r) => r.refund.refunded);
-        toast.success(
-          anyRefunded
-            ? 'Booking cancelled — your refund has been initiated'
-            : 'Booking cancelled'
-        );
+        await cancelBooking(cancelTarget?.bookingIds ?? [cancelId]);
+        toast.success('Booking cancelled — your slot has been released');
         queryClient.invalidateQueries({ queryKey: ['my-bookings'] });
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Failed to cancel booking');
@@ -189,9 +186,7 @@ export default function UserDashboard() {
             <AlertDialogTitle className="text-2xl font-black tracking-tighter">Cancel Slot?</AlertDialogTitle>
             <AlertDialogDescription className="text-muted-foreground font-medium space-y-2">
               <span className="block">This releases your reserved time back to the venue and can't be undone. Free cancellation is only available up to 6 hours before the slot starts.</span>
-              <span className="block text-xs">
-                You paid ₹{cancelTarget?.amount ?? 0} for this slot — but since this platform doesn't process real payments yet, nothing was actually charged, so there's no refund to process either.
-              </span>
+              <span className="block text-xs">{cancellationRefundCopy(cancelTarget)}</span>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="mt-8 gap-3">

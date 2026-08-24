@@ -21,6 +21,7 @@ const auditLogSchema = new mongoose.Schema(
         "USER_BANNED",
         "USER_UNBANNED",
         "BOOKING_CANCELLED",
+        "BOOKING_NO_SHOW",
         "BOOKING_REFUNDED",
         "BOOKING_PAID_OUT",
         "PAYMENT_RECONCILED",

@@ -1,5 +1,13 @@
 import Review from "./review.model.js";
 import Booking from "../booking/booking.model.js";
+
+// Who may review: someone who held the booking through to its slot. CONFIRMED
+// is included because the CONFIRMED → COMPLETED transition is lazy (see
+// booking.service.js settleFinishedBookings), so a just-finished booking may
+// not have been settled yet — the slotEndTime check is what actually enforces
+// "has played". NO_SHOW is excluded: not turning up isn't grounds to rate the
+// venue.
+const PLAYED_STATUSES = ["CONFIRMED", "COMPLETED"];
 import Turf from "../turf/turf.model.js";
 import ApiError from "../../common/utils/ApiError.js";
 import logger from "../../common/utils/logger.js";
@@ -48,9 +56,24 @@ export const createReview = async (userId, turfId, { rating, comment, facilityRa
     throw new ApiError(400, "Rating must be an integer between 1 and 5");
   }
 
-  const eligibleBooking = await Booking.findOne({ userId, turfId, status: "CONFIRMED" }).select("_id");
+  // "Booked and played at" — both halves are enforced. Checking only that a
+  // CONFIRMED booking exists let someone book a slot for next month and review
+  // the turf immediately, which is a free rating-manipulation vector (book the
+  // cheapest slot anywhere, review, cancel). The slot has to have actually
+  // finished, so this joins through to the slot's endTime rather than trusting
+  // booking status alone.
+  const eligibleBooking = await Booking.findOne({
+    userId,
+    turfId,
+    status: { $in: PLAYED_STATUSES },
+    slotEndTime: { $lte: new Date() },
+  }).select("_id");
+
   if (!eligibleBooking) {
-    throw new ApiError(403, "You can only review a turf you've booked and played at");
+    // Deliberately one message for both "never booked here" and "booked but
+    // hasn't played yet": the distinction would tell an attacker probing the
+    // endpoint which of the two states they're in, and neither permits a review.
+    throw new ApiError(403, "You can only review a turf after you've played your booking");
   }
 
   const alreadyReviewed = await Review.findOne({ userId, turfId }).select("_id");
@@ -144,11 +167,21 @@ export const getReviewsForTurf = async (turfId) => {
   return Review.find({ turfId }).populate("userId", "name").sort({ createdAt: -1 });
 };
 
-/** Whether the given user is eligible to review this turf right now. */
+/**
+ * Whether the given user is eligible to review this turf right now. Must stay
+ * in step with createReview's own check — this is what decides whether the UI
+ * offers the control, and the two disagreeing means offering a button that
+ * then 403s.
+ */
 export const canReview = async (userId, turfId) => {
-  const [hasBooking, alreadyReviewed] = await Promise.all([
-    Booking.exists({ userId, turfId, status: "CONFIRMED" }),
+  const [hasPlayedBooking, alreadyReviewed] = await Promise.all([
+    Booking.exists({
+      userId,
+      turfId,
+      status: { $in: PLAYED_STATUSES },
+      slotEndTime: { $lte: new Date() },
+    }),
     Review.exists({ userId, turfId }),
   ]);
-  return Boolean(hasBooking) && !alreadyReviewed;
+  return Boolean(hasPlayedBooking) && !alreadyReviewed;
 };
