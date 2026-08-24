@@ -2,17 +2,25 @@ import env from "./common/config/env.js";
 import connectDB from "./common/config/db.js";
 import app from "./app.js";
 import logger from "./common/utils/logger.js";
+import { startBookingReminderScheduler } from "./common/jobs/sendBookingReminders.js";
 
 /**
  * Local/traditional (long-running process) entry point.
  * Not used on Vercel — see api/index.js for the serverless entry point, which
  * reuses the same app.js but skips app.listen().
  *
- * There are no background jobs to start. Both recurring chores are handled
- * without a scheduler: expired slot locks self-heal (see
- * common/jobs/releaseExpiredLocks.js) and abandoned image uploads carry their
- * own MongoDB TTL expiry (see modules/image/image.model.js). That keeps this
- * entry point and the serverless one behaving identically.
+ * Almost every recurring chore here needs no scheduler: expired slot locks
+ * self-heal on read (common/jobs/releaseExpiredLocks.js), finished bookings
+ * settle when a booking list is read (booking.service.js
+ * settleFinishedBookings), and abandoned image uploads carry their own MongoDB
+ * TTL expiry (modules/image/image.model.js).
+ *
+ * Booking reminders are the exception — "message the customer three hours
+ * before they play" has no corresponding read to hang off, so it needs a
+ * clock. This entry point starts an in-process timer for it. The serverless
+ * entry point deliberately does NOT: that process is frozen between requests,
+ * so a timer registered there would look correct and fire unpredictably or
+ * never. Serverless drives the same job through vercel.json's cron instead.
  */
 
 /**
@@ -42,10 +50,15 @@ const start = async () => {
       logger.info("Server listening", { port: env.PORT, env: env.NODE_ENV });
     });
 
+    // Started only after the DB connection is up, so the first sweep has
+    // something to query.
+    const stopReminderScheduler = startBookingReminderScheduler();
+
     // Stop accepting new connections and let in-flight requests finish, rather
     // than dropping them mid-response when the platform sends SIGTERM.
     const shutdown = (signal) => {
       logger.info("Shutting down", { signal });
+      stopReminderScheduler();
       server.close(() => process.exit(0));
       // Don't hang forever on a stuck keep-alive connection.
       setTimeout(() => process.exit(1), 10_000).unref();
