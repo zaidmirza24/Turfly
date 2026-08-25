@@ -1,10 +1,10 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { TurfCard } from '@/components/TurfCard';
 import { CardSkeleton } from '@/components/Skeletons';
 import { apiGet } from '@/lib/api';
-import { Turf, Sport, VenueType } from '@/types';
+import { Turf, Sport, VenueType, Paginated } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -243,17 +243,35 @@ export default function TurfListingPage() {
     return params.toString();
   }, [search, selectedSports, venueType, selectedAmenities, priceRange, minRating, availableNow, near, sortBy]);
 
-  const { data: turfsResponse, isLoading, error } = useQuery({
-    queryKey: ['turfs', queryParams],
-    queryFn: () => apiGet<Turf[]>(`/turfs?${queryParams}`),
+  // Server-side pages of PAGE_SIZE turfs, accumulated as "Load more" is
+  // pressed — a card grid like this reads as a feed, so load-more fits
+  // better than page-number controls while still bounding each request.
+  const PAGE_SIZE = 24;
+  const [page, setPage] = useState(1);
+  const [accumulated, setAccumulated] = useState<Turf[]>([]);
+
+  useEffect(() => { setPage(1); }, [queryParams]);
+
+  const { data: turfsResponse, isLoading, isFetching, error } = useQuery({
+    queryKey: ['turfs', queryParams, page],
+    queryFn: () => apiGet<Paginated<Turf>>(`/turfs?${queryParams}&page=${page}&limit=${PAGE_SIZE}`),
+    placeholderData: keepPreviousData,
   });
 
-  const turfs = turfsResponse?.data ?? [];
+  useEffect(() => {
+    if (!turfsResponse) return;
+    setAccumulated((prev) => (page === 1 ? turfsResponse.data.items : [...prev, ...turfsResponse.data.items]));
+  }, [turfsResponse, page]);
+
+  const total = turfsResponse?.data?.total ?? 0;
+  const totalPages = turfsResponse?.data?.pages ?? 1;
+  const hasMore = page < totalPages;
+
   const visibleTurfs = useMemo(() => {
-    if (!search.trim()) return turfs;
+    if (!search.trim()) return accumulated;
     const q = search.toLowerCase();
-    return turfs.filter(t => t.name.toLowerCase().includes(q) || t.location.toLowerCase().includes(q));
-  }, [turfs, search]);
+    return accumulated.filter(t => t.name.toLowerCase().includes(q) || t.location.toLowerCase().includes(q));
+  }, [accumulated, search]);
 
   const toggleSport = (s: Sport) => {
     setSelectedSports(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
@@ -416,7 +434,9 @@ export default function TurfListingPage() {
           ) : (
             <>
               <p className="text-sm text-muted-foreground mb-4" role="status" aria-live="polite">
-                {visibleTurfs.length} {visibleTurfs.length === 1 ? 'turf' : 'turfs'} found
+                {search.trim()
+                  ? `${visibleTurfs.length} ${visibleTurfs.length === 1 ? 'turf' : 'turfs'} found`
+                  : `${accumulated.length} of ${total} ${total === 1 ? 'turf' : 'turfs'}`}
               </p>
               {visibleTurfs.length === 0 ? (
                 <div className="text-center py-16 text-muted-foreground">
@@ -427,9 +447,19 @@ export default function TurfListingPage() {
                   {hasFilters && <Button variant="outline" className="mt-4" onClick={clearFilters}>Clear Filters</Button>}
                 </div>
               ) : (
-                <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-5">
-                  {visibleTurfs.map(turf => <TurfCard key={turf._id} turf={turf} />)}
-                </div>
+                <>
+                  <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-5">
+                    {visibleTurfs.map(turf => <TurfCard key={turf._id} turf={turf} />)}
+                  </div>
+                  {!search.trim() && hasMore && (
+                    <div className="flex justify-center mt-8">
+                      <Button variant="outline" disabled={isFetching} onClick={() => setPage((p) => p + 1)}>
+                        {isFetching ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : null}
+                        Load more turfs
+                      </Button>
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}

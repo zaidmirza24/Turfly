@@ -1,21 +1,23 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { apiGet } from '@/lib/api';
-import { Button } from '@/components/ui/button';
-import { ChevronLeft, ChevronRight, History, Activity } from 'lucide-react';
+import { History, Activity } from 'lucide-react';
 import { AuditLogEntry, Paginated } from '@/types';
 import { SyncingIndicator } from '@/components/SyncingIndicator';
 import { QueryErrorState } from '@/components/QueryErrorState';
+import { PaginationFooter } from '@/components/PaginationFooter';
+import { usePageQueryParam } from '@/hooks/usePageQueryParam';
+import { cn } from '@/lib/utils';
 import { AuditLogRow } from './AuditLogRow';
 
 const LIMIT = 25;
 
 export default function AdminActivityPage() {
-  const [page, setPage] = useState(1);
+  const { page, setPage } = usePageQueryParam();
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: ['admin-audit-log', page],
     queryFn: () => apiGet<Paginated<AuditLogEntry>>(`/admin/audit-log?page=${page}&limit=${LIMIT}`),
+    placeholderData: keepPreviousData,
   });
 
   const entries = data?.data?.items ?? [];
@@ -49,25 +51,13 @@ export default function AdminActivityPage() {
           </div>
         </div>
       ) : (
-        <>
+        <div className={cn('space-y-10 transition-opacity', isFetching && !isLoading && 'opacity-60')}>
           <div className="glass-card rounded-[3rem] p-4 border-primary/10 space-y-1">
             {entries.map((entry) => <AuditLogRow key={entry._id} entry={entry} />)}
           </div>
 
-          {pages > 1 && (
-            <div className="flex items-center justify-between gap-4">
-              <p className="text-sm text-muted-foreground">Page {page} of {pages} · {total} total</p>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="icon" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-                  <ChevronLeft size={16} />
-                </Button>
-                <Button variant="outline" size="icon" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>
-                  <ChevronRight size={16} />
-                </Button>
-              </div>
-            </div>
-          )}
-        </>
+          <PaginationFooter page={page} pages={pages} total={total} onPageChange={setPage} />
+        </div>
       )}
     </div>
   );

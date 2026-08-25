@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { apiGet, apiPatch } from '@/lib/api';
 import { Booking, Paginated, PendingPayoutSummary, Payout } from '@/types';
 import { bookingTurf } from '@/lib/booking';
@@ -15,6 +15,9 @@ import { Wallet, ChevronDown, ChevronUp, Loader2, AlertTriangle, History } from 
 import { toast } from 'sonner';
 import { SyncingIndicator } from '@/components/SyncingIndicator';
 import { QueryErrorState } from '@/components/QueryErrorState';
+import { PaginationFooter } from '@/components/PaginationFooter';
+import { usePageQueryParam } from '@/hooks/usePageQueryParam';
+import { cn } from '@/lib/utils';
 
 function PayoutDetailsSummary({ owner }: { owner: PendingPayoutSummary }) {
   const d = owner.payoutDetails;
@@ -80,15 +83,19 @@ function MarkPaidDialog({ booking, onSettled }: { booking: Booking; onSettled: (
 
 function OwnerPendingRow({ owner }: { owner: PendingPayoutSummary }) {
   const [expanded, setExpanded] = useState(false);
+  const [page, setPage] = useState(1);
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['admin-payouts-owner-bookings', owner.ownerId],
-    queryFn: () => apiGet<Booking[]>(`/admin/payouts/pending/${owner.ownerId}/bookings`),
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ['admin-payouts-owner-bookings', owner.ownerId, page],
+    queryFn: () => apiGet<Paginated<Booking>>(`/admin/payouts/pending/${owner.ownerId}/bookings?page=${page}&limit=20`),
     enabled: expanded,
+    placeholderData: keepPreviousData,
   });
 
-  const bookings = data?.data ?? [];
+  const bookings = data?.data?.items ?? [];
+  const total = data?.data?.total ?? 0;
+  const pages = data?.data?.pages ?? 1;
 
   const refreshAll = () => {
     queryClient.invalidateQueries({ queryKey: ['admin-payouts-pending'] });
@@ -123,27 +130,30 @@ function OwnerPendingRow({ owner }: { owner: PendingPayoutSummary }) {
           {isLoading ? (
             <div className="py-6 flex justify-center"><Loader2 className="animate-spin" size={18} /></div>
           ) : (
-            <div className="rounded-2xl border border-primary/10 overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-muted/50">
-                    <th className="text-left p-3 font-black uppercase text-[10px] text-muted-foreground">Arena</th>
-                    <th className="text-left p-3 font-black uppercase text-[10px] text-muted-foreground">Booked</th>
-                    <th className="text-left p-3 font-black uppercase text-[10px] text-muted-foreground">Owed</th>
-                    <th className="text-left p-3 font-black uppercase text-[10px] text-muted-foreground"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-primary/5">
-                  {bookings.map(b => (
-                    <tr key={b._id}>
-                      <td className="p-3 font-bold">{bookingTurf(b)?.name || 'Arena'}</td>
-                      <td className="p-3 text-muted-foreground">{formatSlotDate(new Date(b.createdAt))}</td>
-                      <td className="p-3 font-black">₹{b.ownerAmount ?? 0}</td>
-                      <td className="p-3 text-right"><MarkPaidDialog booking={b} onSettled={refreshAll} /></td>
+            <div className={cn('space-y-3 transition-opacity', isFetching && 'opacity-60')}>
+              <div className="rounded-2xl border border-primary/10 overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-muted/50">
+                      <th className="text-left p-3 font-black uppercase text-[10px] text-muted-foreground">Arena</th>
+                      <th className="text-left p-3 font-black uppercase text-[10px] text-muted-foreground">Booked</th>
+                      <th className="text-left p-3 font-black uppercase text-[10px] text-muted-foreground">Owed</th>
+                      <th className="text-left p-3 font-black uppercase text-[10px] text-muted-foreground"></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-primary/5">
+                    {bookings.map(b => (
+                      <tr key={b._id}>
+                        <td className="p-3 font-bold">{bookingTurf(b)?.name || 'Arena'}</td>
+                        <td className="p-3 text-muted-foreground">{formatSlotDate(new Date(b.createdAt))}</td>
+                        <td className="p-3 font-black">₹{b.ownerAmount ?? 0}</td>
+                        <td className="p-3 text-right"><MarkPaidDialog booking={b} onSettled={refreshAll} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <PaginationFooter page={page} pages={pages} total={total} onPageChange={setPage} itemLabel="pending" />
             </div>
           )}
         </div>
@@ -152,25 +162,46 @@ function OwnerPendingRow({ owner }: { owner: PendingPayoutSummary }) {
   );
 }
 
+const PENDING_LIMIT = 20;
+const CLAWBACKS_LIMIT = 20;
+const HISTORY_LIMIT = 15;
+
 export default function AdminPayoutsPage() {
+  const { page: pendingPage, setPage: setPendingPage } = usePageQueryParam('pendingPage');
+  const { page: clawbacksPage, setPage: setClawbacksPage } = usePageQueryParam('clawbacksPage');
+  const { page: historyPage, setPage: setHistoryPage } = usePageQueryParam('historyPage');
+
   const { data: pendingData, isLoading: isPendingLoading, isError: isPendingError, refetch: refetchPending } = useQuery({
-    queryKey: ['admin-payouts-pending'],
-    queryFn: () => apiGet<PendingPayoutSummary[]>('/admin/payouts/pending'),
+    queryKey: ['admin-payouts-pending', pendingPage],
+    queryFn: () => apiGet<Paginated<PendingPayoutSummary>>(`/admin/payouts/pending?page=${pendingPage}&limit=${PENDING_LIMIT}`),
+    placeholderData: keepPreviousData,
   });
 
   const { data: clawbacksData } = useQuery({
-    queryKey: ['admin-payouts-clawbacks'],
-    queryFn: () => apiGet<Booking[]>('/admin/payouts/clawbacks'),
+    queryKey: ['admin-payouts-clawbacks', clawbacksPage],
+    queryFn: () => apiGet<Paginated<Booking>>(`/admin/payouts/clawbacks?page=${clawbacksPage}&limit=${CLAWBACKS_LIMIT}`),
+    placeholderData: keepPreviousData,
   });
 
-  const { data: historyData } = useQuery({
-    queryKey: ['admin-payouts-history'],
-    queryFn: () => apiGet<Paginated<Payout>>('/admin/payouts/history?limit=15'),
+  const { data: historyData, isFetching: isHistoryFetching } = useQuery({
+    queryKey: ['admin-payouts-history', historyPage],
+    queryFn: () => apiGet<Paginated<Payout>>(`/admin/payouts/history?page=${historyPage}&limit=${HISTORY_LIMIT}`),
+    placeholderData: keepPreviousData,
   });
 
-  const owners = pendingData?.data ?? [];
-  const clawbacks = clawbacksData?.data ?? [];
+  const owners = pendingData?.data?.items ?? [];
+  const pendingOwnersTotal = pendingData?.data?.total ?? 0;
+  const pendingOwnersPages = pendingData?.data?.pages ?? 1;
+  const clawbacks = clawbacksData?.data?.items ?? [];
+  const clawbacksTotal = clawbacksData?.data?.total ?? 0;
+  const clawbacksPages = clawbacksData?.data?.pages ?? 1;
   const history = historyData?.data?.items ?? [];
+  const historyTotal = historyData?.data?.total ?? 0;
+  const historyPages = historyData?.data?.pages ?? 1;
+  // The "Total Owed" tile intentionally sums only the current page of owners
+  // — a running total across every owner would need its own aggregate
+  // endpoint. Fine at the owner counts this platform expects, but worth
+  // revisiting if the pending-payouts list itself outgrows one page often.
   const totalPending = owners.reduce((sum, o) => sum + o.pendingAmount, 0);
 
   if (isPendingLoading) return <SyncingIndicator label="Syncing Payout Data" />;

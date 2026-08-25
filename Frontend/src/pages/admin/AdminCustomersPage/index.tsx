@@ -1,22 +1,25 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { apiGet } from '@/lib/api';
-import { Button } from '@/components/ui/button';
-import { Users, ChevronLeft, ChevronRight, Activity } from 'lucide-react';
+import { Users, Activity } from 'lucide-react';
 import { CustomerSummary, Paginated } from '@/types';
 import { SyncingIndicator } from '@/components/SyncingIndicator';
 import { QueryErrorState } from '@/components/QueryErrorState';
+import { PaginationFooter } from '@/components/PaginationFooter';
+import { usePageQueryParam } from '@/hooks/usePageQueryParam';
+import { cn } from '@/lib/utils';
 import { CustomerDetailDrawer } from './CustomerDetailDrawer';
 
 const LIMIT = 20;
 
 export default function AdminCustomersPage() {
-  const [page, setPage] = useState(1);
+  const { page, setPage } = usePageQueryParam();
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: ['admin-customers', page],
     queryFn: () => apiGet<Paginated<CustomerSummary>>(`/admin/customers?page=${page}&limit=${LIMIT}`),
+    placeholderData: keepPreviousData,
   });
 
   const customers = data?.data?.items ?? [];
@@ -50,7 +53,7 @@ export default function AdminCustomersPage() {
           </div>
         </div>
       ) : (
-        <>
+        <div className={cn('space-y-10 transition-opacity', isFetching && !isLoading && 'opacity-60')}>
           <div className="md:hidden space-y-3">
             {customers.map((c) => (
               <button
@@ -106,20 +109,8 @@ export default function AdminCustomersPage() {
             </div>
           </div>
 
-          {pages > 1 && (
-            <div className="flex items-center justify-between gap-4">
-              <p className="text-sm text-muted-foreground">Page {page} of {pages} · {total} total</p>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="icon" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-                  <ChevronLeft size={16} />
-                </Button>
-                <Button variant="outline" size="icon" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>
-                  <ChevronRight size={16} />
-                </Button>
-              </div>
-            </div>
-          )}
-        </>
+          <PaginationFooter page={page} pages={pages} total={total} onPageChange={setPage} />
+        </div>
       )}
 
       <CustomerDetailDrawer

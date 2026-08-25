@@ -1,29 +1,38 @@
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { apiGet, apiPatch } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Search, Users, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Users, Activity } from 'lucide-react';
 import { toast } from 'sonner';
 import { Paginated, User } from '@/types';
 import { SyncingIndicator } from '@/components/SyncingIndicator';
 import { QueryErrorState } from '@/components/QueryErrorState';
+import { PaginationFooter } from '@/components/PaginationFooter';
+import { usePageQueryParam } from '@/hooks/usePageQueryParam';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { cn } from '@/lib/utils';
 
 const LIMIT = 20;
 
 export default function AdminUsersPage() {
   const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
+  const debouncedSearch = useDebouncedValue(search);
+  const { page, setPage, resetPage } = usePageQueryParam();
   const queryClient = useQueryClient();
 
-  const filters = { search, page };
-  const { data, isLoading, isError, refetch } = useQuery({
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { resetPage(); }, [debouncedSearch]);
+
+  const filters = { search: debouncedSearch, page };
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: ['admin-users', filters],
     queryFn: () => {
       const params = new URLSearchParams({ page: String(page), limit: String(LIMIT) });
-      if (search.trim()) params.set('search', search.trim());
+      if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
       return apiGet<Paginated<User>>(`/admin/users?${params.toString()}`);
     },
+    placeholderData: keepPreviousData,
   });
 
   const users = data?.data?.items ?? [];
@@ -73,7 +82,7 @@ export default function AdminUsersPage() {
             type="text"
             placeholder="Search name or email..."
             value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            onChange={(e) => setSearch(e.target.value)}
             aria-label="Search users"
             className="w-full h-12 pl-12 pr-4 rounded-2xl bg-primary/5 border-2 border-transparent focus:border-primary/20 focus:bg-background outline-none font-bold transition-all"
           />
@@ -90,7 +99,7 @@ export default function AdminUsersPage() {
           </div>
         </div>
       ) : (
-        <>
+        <div className={cn('space-y-10 transition-opacity', isFetching && !isLoading && 'opacity-60')}>
           <div className="md:hidden space-y-3">
             {users.map(u => (
               <div key={u._id} className="glass rounded-[2rem] border-primary/10 p-5 shadow-xl shadow-black/5 space-y-3">
@@ -166,20 +175,8 @@ export default function AdminUsersPage() {
             </div>
           </div>
 
-          {pages > 1 && (
-            <div className="flex items-center justify-between gap-4">
-              <p className="text-sm text-muted-foreground">Page {page} of {pages} · {total} total</p>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="icon" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-                  <ChevronLeft size={16} />
-                </Button>
-                <Button variant="outline" size="icon" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>
-                  <ChevronRight size={16} />
-                </Button>
-              </div>
-            </div>
-          )}
-        </>
+          <PaginationFooter page={page} pages={pages} total={total} onPageChange={setPage} />
+        </div>
       )}
     </div>
   );

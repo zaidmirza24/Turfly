@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { apiGet, apiPatch } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,9 @@ import { toast } from 'sonner';
 import { Complaint, ComplaintStatus, Paginated } from '@/types';
 import { SyncingIndicator } from '@/components/SyncingIndicator';
 import { QueryErrorState } from '@/components/QueryErrorState';
+import { PaginationFooter } from '@/components/PaginationFooter';
+import { usePageQueryParam } from '@/hooks/usePageQueryParam';
+import { cn } from '@/lib/utils';
 import { formatSlotDate } from '@/lib/dateKey';
 
 const LIMIT = 20;
@@ -120,21 +123,29 @@ function ComplaintDetailDrawer({ complaint, open, onOpenChange }: { complaint: C
 
 export default function AdminComplaintsPage() {
   const [statusFilter, setStatusFilter] = useState('');
-  const [page, setPage] = useState(1);
+  const { page, setPage, resetPage } = usePageQueryParam();
   const [selected, setSelected] = useState<Complaint | null>(null);
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: ['admin-complaints', statusFilter, page],
     queryFn: () => {
       const params = new URLSearchParams({ page: String(page), limit: String(LIMIT) });
       if (statusFilter) params.set('status', statusFilter);
       return apiGet<Paginated<Complaint>>(`/admin/complaints?${params.toString()}`);
     },
+    placeholderData: keepPreviousData,
   });
 
   const complaints = data?.data?.items ?? [];
   const pages = data?.data?.pages ?? 1;
   const total = data?.data?.total ?? 0;
+
+  // Resolving a complaint can move it out of a status-filtered page — if that
+  // empties the current page (e.g. it was the last item on page 2 of 2),
+  // clamp back into range instead of showing a stranded empty page.
+  useEffect(() => {
+    if (data && page > pages) setPage(pages);
+  }, [data, page, pages, setPage]);
 
   if (isLoading) {
     return <SyncingIndicator label="Syncing Complaints" />;
@@ -159,7 +170,7 @@ export default function AdminComplaintsPage() {
             key={f.value}
             size="sm"
             variant={statusFilter === f.value ? 'default' : 'outline'}
-            onClick={() => { setStatusFilter(f.value); setPage(1); }}
+            onClick={() => { setStatusFilter(f.value); resetPage(); }}
             className="shrink-0"
           >
             {f.label}
@@ -177,7 +188,7 @@ export default function AdminComplaintsPage() {
           </div>
         </div>
       ) : (
-        <>
+        <div className={cn('space-y-10 transition-opacity', isFetching && !isLoading && 'opacity-60')}>
           <div className="space-y-3">
             {complaints.map((c) => (
               <button
@@ -199,16 +210,8 @@ export default function AdminComplaintsPage() {
             ))}
           </div>
 
-          {pages > 1 && (
-            <div className="flex items-center justify-between gap-4">
-              <p className="text-sm text-muted-foreground">Page {page} of {pages} · {total} total</p>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Prev</Button>
-                <Button variant="outline" size="sm" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>Next</Button>
-              </div>
-            </div>
-          )}
-        </>
+          <PaginationFooter page={page} pages={pages} total={total} onPageChange={setPage} />
+        </div>
       )}
 
       <ComplaintDetailDrawer complaint={selected} open={!!selected} onOpenChange={(open) => !open && setSelected(null)} />

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("./booking.model.js", () => ({
-  default: { create: vi.fn(), findById: vi.fn(), findOneAndUpdate: vi.fn() },
+  default: { create: vi.fn(), findById: vi.fn(), findOneAndUpdate: vi.fn(), updateMany: vi.fn() },
 }));
 vi.mock("../payout/payout.model.js", () => ({
   default: { create: vi.fn(), findByIdAndDelete: vi.fn() },
@@ -34,6 +34,7 @@ const {
   markBookingPaidOut,
   playTimeRangeFilter,
   markBookingNoShow,
+  settleFinishedBookings,
 } = await import("./booking.service.js");
 const Slot = (await import("../slot/slot.model.js")).default;
 const Turf = (await import("../turf/turf.model.js")).default;
@@ -242,6 +243,38 @@ describe("markBookingNoShow", () => {
   });
 });
 
+describe("settleFinishedBookings", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // The lazy CONFIRMED -> COMPLETED transition this whole mechanism relies
+  // on: it must only ever move a booking that is still CONFIRMED and whose
+  // slot has actually ended, and it must never touch CANCELLED/NO_SHOW.
+  it("only settles CONFIRMED bookings whose slot has ended, scoped by the given query", async () => {
+    Booking.updateMany.mockResolvedValue({ modifiedCount: 3 });
+
+    const modified = await settleFinishedBookings({ turfId: "turf1" });
+
+    expect(Booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        turfId: "turf1",
+        status: "CONFIRMED",
+        slotEndTime: expect.objectContaining({ $lte: expect.any(Date) }),
+      }),
+      { $set: { status: "COMPLETED" } }
+    );
+    expect(modified).toBe(3);
+  });
+
+  it("never sets NO_SHOW — that transition only ever happens because a human said so", async () => {
+    Booking.updateMany.mockResolvedValue({ modifiedCount: 1 });
+
+    await settleFinishedBookings({});
+
+    const [, update] = Booking.updateMany.mock.calls[0];
+    expect(update).toEqual({ $set: { status: "COMPLETED" } });
+  });
+});
+
 describe("playTimeRangeFilter", () => {
   // The bug this guards: the range was applied to `createdAt`, so an owner
   // asking for today got bookings *placed* today rather than the day's
@@ -304,6 +337,31 @@ describe("cancelBooking", () => {
     Slot.findById.mockReturnValue(withSelect({ startTime: new Date(Date.now() - 60 * 1000) }));
 
     await expect(cancelBooking("user1", "booking1")).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  // No refund is issued (policy). Without this, the owner would still be
+  // eligible to be paid out for a slot that was never played — and paid
+  // twice over if the freed slot gets resold.
+  it("voids a pending payout on cancellation, since no refund means no payout is owed", async () => {
+    const booking = bookingDoc({ payoutStatus: "PENDING" });
+    Booking.findById.mockResolvedValue(booking);
+    Slot.findById.mockReturnValue(withSelect({ startTime: new Date(Date.now() + 10 * 60 * 60 * 1000) }));
+    Slot.findByIdAndUpdate.mockResolvedValue({});
+
+    await cancelBooking("user1", "booking1");
+
+    expect(booking.payoutStatus).toBe("VOID");
+  });
+
+  it("leaves a non-PENDING payoutStatus untouched (CASH booking, or already settled/voided)", async () => {
+    const booking = bookingDoc({ payoutStatus: "PAID" });
+    Booking.findById.mockResolvedValue(booking);
+    Slot.findById.mockReturnValue(withSelect({ startTime: new Date(Date.now() + 10 * 60 * 60 * 1000) }));
+    Slot.findByIdAndUpdate.mockResolvedValue({});
+
+    await cancelBooking("user1", "booking1");
+
+    expect(booking.payoutStatus).toBe("PAID");
   });
 });
 

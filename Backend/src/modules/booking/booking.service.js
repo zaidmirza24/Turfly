@@ -729,6 +729,12 @@ export const cancelBooking = async (userId, bookingId) => {
   // Update booking status
   booking.status = "CANCELLED";
   booking.cancelledBy = "CUSTOMER";
+  // No refund is issued (policy), so the owner isn't owed anything for a
+  // slot that was never played either — void a pending payout so it can't
+  // still be settled after the slot frees up and is possibly resold.
+  if (booking.payoutStatus === "PENDING") {
+    booking.payoutStatus = "VOID";
+  }
   await booking.save();
 
   // Release the slot back to AVAILABLE (clear all lock/booking state)
@@ -762,6 +768,10 @@ export const cancelBookingAsOwner = async (actor, bookingId, reason) => {
   booking.status = "CANCELLED";
   booking.cancelledBy = actor.role === "ADMIN" ? "ADMIN" : "OWNER";
   if (reason) booking.notes = reason;
+  // Same as the customer path: no refund means no payout owed either.
+  if (booking.payoutStatus === "PENDING") {
+    booking.payoutStatus = "VOID";
+  }
   await booking.save();
 
   await Slot.findByIdAndUpdate(booking.slotId, {
@@ -1151,6 +1161,8 @@ export const getOwnerCustomerDetail = async (ownerId, customerId, { page = 1, li
   const turfIds = turfs.map((t) => t._id);
   const query = { turfId: { $in: turfIds }, userId: customerId };
   const skip = (page - 1) * limit;
+
+  await settleFinishedBookings(query);
 
   const [bookings, total, statsAgg] = await Promise.all([
     Booking.find(query)

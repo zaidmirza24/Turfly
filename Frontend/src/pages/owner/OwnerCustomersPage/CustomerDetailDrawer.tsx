@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { apiGet } from '@/lib/api';
 import { Booking, CustomerDetail } from '@/types';
 import { bookingStartTime, bookingTurf } from '@/lib/booking';
@@ -7,8 +7,12 @@ import { formatSlotDate, formatSlotTime } from '@/lib/dateKey';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { BookingStatusBadge } from '@/components/BookingStatusBadge';
 import { QueryErrorState } from '@/components/QueryErrorState';
+import { PaginationFooter } from '@/components/PaginationFooter';
 import { Loader2, MapPin, CalendarDays } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { BookingDetailDrawer } from '../OwnerBookingsPage/BookingDetailDrawer';
+
+const LIMIT = 20;
 
 type Props = {
   customerId: string | null;
@@ -18,11 +22,15 @@ type Props = {
 
 export function CustomerDetailDrawer({ customerId, open, onOpenChange }: Props) {
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+  const [page, setPage] = useState(1);
 
-  const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['owner-customer-detail', customerId],
-    queryFn: () => apiGet<CustomerDetail>(`/bookings/owner/customers/${customerId}`),
+  useEffect(() => { if (open) setPage(1); }, [customerId, open]);
+
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
+    queryKey: ['owner-customer-detail', customerId, page],
+    queryFn: () => apiGet<CustomerDetail>(`/bookings/owner/customers/${customerId}?page=${page}&limit=${LIMIT}`),
     enabled: open && !!customerId,
+    placeholderData: keepPreviousData,
   });
   const detail = data?.data;
 
@@ -48,9 +56,9 @@ export function CustomerDetailDrawer({ customerId, open, onOpenChange }: Props) 
               <Stat label="Total Spent" value={`₹${detail.stats.totalSpent.toLocaleString('en-IN')}`} />
             </div>
 
-            <div className="space-y-3">
+            <div className={cn('space-y-3 transition-opacity', isFetching && 'opacity-60')}>
               <h3 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Booking History</h3>
-              {detail.bookings.map((b) => {
+              {detail.items.map((b) => {
                 const turf = bookingTurf(b);
                 const startTime = bookingStartTime(b);
                 return (
@@ -77,6 +85,8 @@ export function CustomerDetailDrawer({ customerId, open, onOpenChange }: Props) 
                 );
               })}
             </div>
+
+            <PaginationFooter page={detail.page} pages={detail.pages} total={detail.total} onPageChange={setPage} itemLabel="bookings" />
           </div>
         ) : null}
       </SheetContent>
