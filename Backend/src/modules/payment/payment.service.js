@@ -899,34 +899,20 @@ const applyRefundToBooking = async (booking, payment, refundEntity, refundAmount
 const finalizeRefundIfComplete = async (payment, refundEntity) => {
   const totalRefunded = payment.refundedAmount();
   const bookings = await Booking.find({ paymentId: payment._id });
-  const refundedBooking = bookings.find((b) =>
-    payment.refunds.some((r) => r.razorpayRefundId === refundEntity.id && r.notes?.bookingId === String(b._id))
-  );
 
-  if (refundedBooking) {
-    // Normal path: this refund was initiated by initiateRefundForBooking
-    // (customer/owner/admin cancellation), which already cancelled the
-    // booking and released the slot before requesting the refund — `cancel`
-    // here is just a no-op safety net, not new behavior.
-    await applyRefundToBooking(refundedBooking, payment, refundEntity, refundEntity.amount, { cancel: true });
-    log.info("Refund processed", { paymentId: payment._id, totalRefunded, razorpayRefundId: refundEntity.id });
-    return;
-  }
-
-  // No `notes.bookingId` match: this refund wasn't initiated by this
-  // codebase at all — it was issued directly from the Razorpay dashboard,
-  // the normal thing a support person does under pressure. Left unhandled,
-  // the booking stays CONFIRMED, its slot stays BOOKED, and — worst of all —
-  // the owner still gets paid out for a booking the platform just refunded
-  // to the customer. If this refund brings the payment to fully refunded,
-  // reconcile every still-active booking under it the same way a real
-  // cancellation would: cancel, release the slot, void/clawback the payout.
-  // A *partial* unattributed refund can't be safely auto-applied to one
-  // booking out of several in a multi-slot group — that's flagged for a
+  // This app never requests refunds itself (cancellation just voids the
+  // payout, see booking.service.js) — every refund reaching this webhook was
+  // issued directly from the Razorpay dashboard, the normal thing a support
+  // person does under pressure. If this refund brings the payment to fully
+  // refunded, reconcile every booking under it — cancel and release the slot
+  // if it isn't already, and void/clawback the payout either way, since a
+  // booking cancelled through the app already has its payout voided but one
+  // that was already PAID out before this dashboard refund still needs
+  // flagging. A *partial* unattributed refund can't be safely auto-applied to
+  // one booking out of several in a multi-slot group — that's flagged for a
   // human instead of guessing which one it covered.
-  const activeBookings = bookings.filter((b) => b.status !== "CANCELLED");
-  if (activeBookings.length === 0) {
-    log.info("Refund processed (no active bookings to reconcile)", {
+  if (bookings.length === 0) {
+    log.info("Refund processed (no bookings to reconcile)", {
       paymentId: payment._id,
       totalRefunded,
       razorpayRefundId: refundEntity.id,
@@ -944,12 +930,12 @@ const finalizeRefundIfComplete = async (payment, refundEntity) => {
     return;
   }
 
-  log.warn("Refund with no matching booking note — treating as externally-initiated and reconciling all active bookings under this payment", {
+  log.warn("Externally-initiated refund — reconciling all bookings under this payment", {
     paymentId: payment._id,
     razorpayRefundId: refundEntity.id,
-    bookingCount: activeBookings.length,
+    bookingCount: bookings.length,
   });
-  for (const booking of activeBookings) {
+  for (const booking of bookings) {
     await applyRefundToBooking(booking, payment, refundEntity, booking.amountPaise, { cancel: true });
   }
 

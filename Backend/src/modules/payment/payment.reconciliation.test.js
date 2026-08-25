@@ -179,13 +179,13 @@ describe("reconcileStuckPayment", () => {
 });
 
 // ── External (dashboard-initiated) refund reconciliation ──────────────────
-// A refund issued directly from the Razorpay dashboard has no
-// `notes.bookingId` tag (only initiateRefundForBooking sets that) — this
-// must still cancel the booking, release the slot, and void/clawback the
-// payout, not silently leave the booking CONFIRMED while the customer's
-// money is already back in their account.
+// This app never requests refunds itself, so every refund this webhook sees
+// was issued directly from the Razorpay dashboard — reconciliation still
+// must cancel the booking, release the slot, and void/clawback the payout,
+// not silently leave the booking CONFIRMED while the customer's money is
+// already back in their account.
 
-describe("finalizeRefundIfComplete — refund with no matching booking note", () => {
+describe("finalizeRefundIfComplete — externally-initiated refund", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     restoreEmailDefaults();
@@ -252,7 +252,7 @@ describe("finalizeRefundIfComplete — refund with no matching booking note", ()
     expect(bookingDoc.save).not.toHaveBeenCalled();
   });
 
-  it("no active bookings left under the payment is a safe no-op", async () => {
+  it("no bookings left under the payment is a safe no-op", async () => {
     const paymentDoc = {
       _id: "pay_1",
       amountPaise: 50000,
@@ -260,8 +260,33 @@ describe("finalizeRefundIfComplete — refund with no matching booking note", ()
       refundedAmount: () => 50000,
     };
     Payment.findOneAndUpdate.mockResolvedValue(paymentDoc);
-    Booking.find.mockResolvedValue([{ _id: "b1", status: "CANCELLED", save: vi.fn() }]);
+    Booking.find.mockResolvedValue([]);
 
     await expect(handleWebhookEvent("refund.processed", refundWebhook(50000))).resolves.toBeUndefined();
+  });
+
+  it("a full external refund still reconciles a booking already cancelled through the app, flagging clawback if it was paid out", async () => {
+    const paymentDoc = {
+      _id: "pay_1",
+      amountPaise: 50000,
+      refunds: [{ razorpayRefundId: "rfnd_1", amountPaise: 50000, status: "PROCESSED" }],
+      refundedAmount: () => 50000,
+    };
+    Payment.findOneAndUpdate.mockResolvedValue(paymentDoc);
+    const bookingDoc = {
+      _id: "b1",
+      slotId: "s1",
+      status: "CANCELLED",
+      refundStatus: "NONE",
+      payoutStatus: "PAID",
+      save: vi.fn().mockResolvedValue(true),
+    };
+    Booking.find.mockResolvedValue([bookingDoc]);
+
+    await handleWebhookEvent("refund.processed", refundWebhook(50000));
+
+    expect(bookingDoc.refundStatus).toBe("REFUNDED");
+    expect(bookingDoc.payoutStatus).toBe("CLAWBACK_OWED");
+    expect(Slot.findByIdAndUpdate).not.toHaveBeenCalled();
   });
 });
