@@ -1,22 +1,25 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { apiGet } from '@/lib/api';
-import { Button } from '@/components/ui/button';
-import { Users, ChevronLeft, ChevronRight, Activity } from 'lucide-react';
+import { Users, Activity } from 'lucide-react';
 import { CustomerSummary, Paginated } from '@/types';
 import { SyncingIndicator } from '@/components/SyncingIndicator';
 import { QueryErrorState } from '@/components/QueryErrorState';
+import { PaginationFooter } from '@/components/PaginationFooter';
+import { usePageQueryParam } from '@/hooks/usePageQueryParam';
+import { cn } from '@/lib/utils';
 import { CustomerDetailDrawer } from './CustomerDetailDrawer';
 
 const LIMIT = 20;
 
 export default function OwnerCustomersPage() {
-  const [page, setPage] = useState(1);
+  const { page, setPage } = usePageQueryParam();
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: ['owner-customers', page],
     queryFn: () => apiGet<Paginated<CustomerSummary>>(`/bookings/owner/customers?page=${page}&limit=${LIMIT}`),
+    placeholderData: keepPreviousData,
   });
 
   const customers = data?.data?.items ?? [];
@@ -50,7 +53,7 @@ export default function OwnerCustomersPage() {
           </div>
         </div>
       ) : (
-        <>
+        <div className={cn('space-y-10 transition-opacity', isFetching && !isLoading && 'opacity-60')}>
           <div className="md:hidden space-y-3">
             {customers.map((c) => (
               <button

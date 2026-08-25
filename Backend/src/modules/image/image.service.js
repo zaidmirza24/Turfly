@@ -358,12 +358,22 @@ export const rearmImagesByUrl = async (urls) => {
   await Image.updateMany({ _id: { $in: ids } }, { $set: { expiresAt: orphanExpiry() } });
 };
 
+// Naturally bounded per-owner (further scoped to one turf when `turfId` is
+// passed, and each turf already caps at MAX_IMAGES_PER_TURF), but capped
+// defensively rather than left fully unbounded across an owner's whole
+// upload history.
+const MAX_OWNER_IMAGES = 500;
+
 /** Images uploaded by this owner, newest first (metadata only — no binaries). */
 export const listOwnerImages = async (ownerId, { turfId } = {}) => {
   const filter = { ownerId };
   if (turfId) filter.turfId = turfId;
 
-  const images = await Image.find(filter).select("contentType size turfId createdAt").sort({ createdAt: -1 }).lean();
+  const images = await Image.find(filter)
+    .select("contentType size turfId createdAt")
+    .sort({ createdAt: -1 })
+    .limit(MAX_OWNER_IMAGES)
+    .lean();
 
   return images.map((img) => ({ ...img, url: imageUrl(img._id) }));
 };

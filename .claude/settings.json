@@ -63,7 +63,17 @@
       "Bash(tasklist //FI \"IMAGENAME eq node.exe\" //FO CSV)",
       "Bash(taskkill //F //PID 9240)",
       "Bash(tasklist //FI \"IMAGENAME eq node.exe\")",
-      "Bash(node diag_bookings.mjs)"
+      "Bash(node diag_bookings.mjs)",
+      "Bash(node --check scripts/fixDoubledSlotPrices.js)",
+      "Bash(npx vitest *)",
+      "Bash(node --input-type=module -e ' *)",
+      "Bash(git check-ignore *)",
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(PORT=5099 REMINDER_POLL_MINUTES=1 timeout 40 node src/server.js)",
+      "Bash(echo \"exit=$?\")",
+      "Read(//tmp/**)"
     ],
     "additionalDirectories": [
       "C:\\Users\\mirza\\AppData\\Local\\Temp\\claude\\c--Users-mirza-Downloads-TURF\\745594bd-be1f-4110-840f-2e9e6865e7ee\\scratchpad"

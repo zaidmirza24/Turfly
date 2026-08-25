@@ -1,12 +1,65 @@
 # TURF BOOKING SYSTEM — PRODUCTION READINESS ASSESSMENT
 
-**Date:** 2026-08-23, audited; 2026-08-24, all seven "must fix before launch" items closed.
+**Date:** 2026-08-23, audited; 2026-08-24, all seven "must fix before launch" items closed; 2026-08-25, follow-up audit against HEAD `e7def0b`.
 **Scope:** Full-stack audit of the TURF platform — Backend (Express/MongoDB, ~9.6k LOC) + Frontend (React/Vite/TS, ~17.1k LOC), evaluated against real-world turf-booking business requirements.
 **Supersedes:** the 2026-08-21 audit (score 53/100, verdict "NOT SAFE TO LAUNCH — no payment system exists"). That document is preserved in git history.
 
-**Overall Score: 70/100 at audit time → 84/100 after the fix pass below**
-**Production Readiness: 72/100 at audit time → 88/100 after the fix pass**
-**Verdict: 🟢 GO for a soft launch.** The four Critical findings from the 2026-08-23 audit are fixed, tested, and merged (see "Fix pass" below) — score bumped accordingly. Verdict was 🟡 CONDITIONAL GO before the fix pass; the original analysis is kept below unedited as the record of what was found, with the fixes documented as an addendum rather than rewritten into the findings themselves.
+**Overall Score: 70/100 at 2026-08-23 audit → 84/100 after the 2026-08-24 fix pass → 86/100 after the 2026-08-25 follow-up (see addendum at top)**
+**Production Readiness: 72/100 → 88/100 → 89/100**
+**Verdict: 🟢 GO for a soft launch, with one new High-severity item to close first: cancelled bookings still carry a payable `payoutStatus: PENDING` (see 2026-08-25 addendum).** The rest of this document (2026-08-23/24) is kept unedited below as the historical record; the 2026-08-25 section is a fresh independent re-audit against the current codebase, not a rewrite of the old findings.
+
+---
+
+## Follow-up audit (2026-08-25) — against HEAD `e7def0b`
+
+Three commits landed since the 2026-08-24 fix pass and materially changed the system: `5cc362f` (migrated all money fields to integer paise; also fixed a live regression where online bookings silently failed — payment captured, auto-refunded, no booking created), `75fcdae` (removed the refund system and owner-approval flow entirely as a deliberate product decision — cancelling now frees the slot but returns no money — plus a double-pricing bug fix and new COMPLETED/NO_SHOW booking states), and `e7def0b` (an in-process reminder scheduler for long-lived deployments, alongside the existing Vercel cron). This section independently re-verifies the codebase against these changes rather than trusting the commit messages. Verified locally: **173/173 backend tests pass, 40/40 frontend tests pass, `tsc --noEmit` clean.**
+
+### New finding — High: cancelled bookings keep a payable `payoutStatus: PENDING`, so an owner can be paid for a slot that was never played (and double-paid if it's resold)
+
+Before `75fcdae`, every cancellation ran through the refund flow, and `applyRefundToBooking` (`payment.service.js:871-887`) flipped the booking's `payoutStatus` to `VOID` as a side effect. Now that customer/owner-initiated cancellation (`cancelBooking` at `booking.service.js:701-744`, `cancelBookingAsOwner` at `:752-780`) no longer touches the payment or refund path at all, nothing voids the payout — `payoutStatus` is untouched by either function. `VOID` is now set in exactly one place in the whole codebase (`payment.service.js:875`), reachable only from the two remaining system/dashboard-refund paths, which cancellation never calls.
+
+Consequences, both confirmed by reading the actual query and mutation:
+- `getPendingPayoutsSummary` (`admin.service.js:364-368`) and `getOwnerPayoutSummary` (`:410-417`) both aggregate on `{ payoutStatus: "PENDING" }` alone — a cancelled booking's owed-to-owner amount still shows up in the admin "Pending Payouts" screen and the owner's earnings summary, indistinguishable from a real completed booking.
+- `markBookingPaidOut` (`booking.service.js:792-839`) only refuses a booking whose `payoutStatus !== "PENDING"` (:801) — it does **not** check `booking.status`. An admin can settle a payout for a `CANCELLED` booking with no error.
+- Since the slot is released back to `AVAILABLE` on cancellation and can be rebooked, the failure mode is: customer cancels 6h+ before the slot (keeps no refund by policy — that part is fine), owner still collects a payout for a slot they didn't host, and if the slot resells, the owner is paid twice for one physical slot occupancy. This is real money leaving the platform, not a display bug.
+
+**Fix direction:** either (a) filter `payoutStatus: "PENDING"` queries and `markBookingPaidOut` to also require `status: { $ne: "CANCELLED" }`, or (b) explicitly set `payoutStatus: "VOID"` inside `cancelBooking`/`cancelBookingAsOwner` when it was `PENDING` (cheaper, and matches the existing `VOID` semantics used by the refund path — a cancelled-with-no-refund booking is exactly the "owner is not owed anything for this" case `VOID` already models).
+
+### New finding — Medium: lazy COMPLETED/NO_SHOW settlement isn't applied on every read path, so the same booking can show different statuses in different admin/owner screens
+
+`settleFinishedBookings` (`booking.service.js:607-613`) is called before `getUserBookings`, `getBookingsByTurf`, `getOwnerBookings`, and `getOwnerStats`, but **not** before `getOwnerCustomerDetail` (`:1119-1147`), `getOwnerCustomers` (`:1057-1111`), `getAllBookingsForAdmin` (`admin.service.js:223-254`), or `getCustomerDetailForAdmin` (`:315-335`). A booking whose slot time has passed reads as `COMPLETED` on the owner's per-turf bookings page but can still read as stale `CONFIRMED` on the owner's customer-detail page or in the admin bookings list, until something else in the app settles it first. Revenue and count totals are unaffected — every aggregate correctly reads `HONOURED_STATUSES`/`IS_HONOURED_EXPR` (`booking.model.js:224-227`), which already includes CONFIRMED, COMPLETED, and NO_SHOW — so this is a status-label inconsistency, not a money bug. Cheap fix: call `settleFinishedBookings` with the right scope at the top of the four missing functions too.
+
+### Re-verified: the four Critical items from the 2026-08-23/24 audit are still genuinely fixed, and two are now moot
+
+Read directly against current code, not the changelog:
+- **PAID-with-no-booking crash window**: still closed — `Payment.bookingIds` is pushed incrementally, and `findStuckPayments`/`reconcileStuckPayment` (`payment.service.js:412-497`) remain the recovery path. Lower stakes than before: since refunds for this system-triggered case are explicitly carved out of the "no refunds" policy (comment at `payment.service.js:594-605`), a crash here still ends in a correct outcome, just a delayed one.
+- **Dashboard refund not voiding payout**: still closed — `finalizeRefundIfComplete` still reconciles unattributed full refunds against every active booking on the payment.
+- **`refunds[]` lost update**: still closed — `upsertRefundEntry` (`:791-861`) is still atomic `findOneAndUpdate`, no load-then-save.
+- **Booking-list pagination**: fixed properly now, not as a stopgap — `pageOfReservations` (`booking.service.js:547-591`) is a real two-round-trip `$group`+`$facet` aggregation; the old capped-500-then-slice-in-JS code and `MAX_BOOKINGS_SCAN` are gone entirely.
+
+### Paise migration (`5cc362f`) — verified clean
+
+Every model (`Turf`, `Slot`, `Booking`, `Payment`, `Payout`) stores money exclusively as integer `*Paise` fields with `Number.isInteger` validators; every `toJSON`/`toObject` transform strips the paise field and substitutes a rupee field for the API response. `common/utils/money.js`'s `toPaise`/`toRupees` are simple and covered by round-trip tests. Razorpay calls (`payment.service.js:152-153, 201-202, 617-618`) pass `amountPaise` straight through with no double conversion, and the frontend checkout (`BookingFlowPage.tsx:262`) does the same. The double-pricing bug (hourly rate written onto a 30-minute slot) is fixed at the root via a single `hourlyRateToSlotPricePaise` helper, and both frontend and backend agree on the halving. No stale rupee-named fields or mixed-unit reads found by grep across `src/modules/**/*.js`.
+
+### "No refunds" removal (`75fcdae`) — infrastructure correctly narrowed, not blanket-deleted, but see the payout finding above
+
+The refund *code path* was deliberately kept for exactly two cases (documented at `payment.service.js:594-605`): a system auto-refund when a captured payment can't produce a booking, and reconciling a refund issued by hand from the Razorpay dashboard. Customer/owner cancellation never calls either. No leftover "record a refund" admin route, no leftover owner-approval workflow (`PENDING_OWNER`/`ownerApproval`/`CANCEL_REQUESTED` are gone from the codebase). Frontend copy (`BookingCard.tsx`, `lib/booking.ts:88-94`, `HelpPage.tsx:17`, `LegalPages.tsx:43-45`, both admin/owner `BookingDetailDrawer.tsx`) consistently says non-refundable while still correctly surfacing `REFUNDED`/`REFUND_PENDING`/`REFUND_FAILED` for the narrower system-refund case. The one thing this removal didn't account for is the payout side, above.
+
+### Reminder scheduler (`e7def0b`) — claims verified against code, no issues found
+
+`src/server.js` is the only caller of `startBookingReminderScheduler()`; the serverless entry (`app.js`/`api/index.js`) never calls it, so a Vercel deployment still relies solely on the existing hourly cron (`vercel.json`) — correct, since a `setInterval` registered on a serverless entry point would fire unpredictably or never. The overlap guard, error-swallowing, and `SIGTERM`/`SIGINT` cleanup described in the commit message are all real, not just claimed. Running the in-process poller and the Vercel cron at the same time (e.g. during a migration between hosting models) is safe: both funnel through `sendOnce` (`email.service.js:26-69`), backed by a unique index on `NotificationLog.dedupeKey` — a `create()`-then-catch-duplicate pattern, not a read-then-write race.
+
+### Test coverage note
+
+The new lifecycle logic (`settleFinishedBookings`, `pageOfReservations`) and the reminder scheduler's overlap guard have no dedicated tests — grep confirms zero references in any `*.test.js`. The stuck-payment reconciliation added in the 2026-08-24 fix pass does have coverage (`payment.reconciliation.test.js`, 9 tests). Worth adding tests for the new payout-status gap above before fixing it, so the fix has a regression test.
+
+### Updated top risk, replacing the old #1
+
+| # | Risk | Severity | Evidence | Fix before launch? |
+|---|---|---|---|---|
+| 1 | Cancelled booking keeps `payoutStatus: PENDING` — owner can be paid (or double-paid on resale) for a slot never played | High | `booking.service.js:701-780` (no payoutStatus touch); `admin.service.js:364-368,410-417`; `booking.service.js:792-839` | Yes (cheap — one-line fix per cancellation function) |
+| 2 | Booking status settlement not applied on 4 of 8 read paths | Medium | `booking.service.js:1057-1147`; `admin.service.js:223-254,315-335` | Recommended |
+| 3 | No dedicated tests for new lifecycle/settlement/scheduler code | Low | grep, no matches | Recommended |
 
 ---
 
