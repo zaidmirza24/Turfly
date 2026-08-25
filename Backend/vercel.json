@@ -2,11 +2,5 @@
   "version": 2,
   "rewrites": [
     { "source": "/(.*)", "destination": "/api/index" }
-  ],
-  "crons": [
-    {
-      "path": "/api/notifications/jobs/send-reminders",
-      "schedule": "0 * * * *"
-    }
   ]
 }
