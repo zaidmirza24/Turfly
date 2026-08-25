@@ -316,7 +316,10 @@ export interface CustomerDetail {
     cancelledCount: number;
     totalSpent: number;
   };
-  bookings: Booking[];
+  items: Booking[];
+  total: number;
+  page: number;
+  pages: number;
 }
 
 /** Platform-wide admin stats, including the 14-day series behind the Overview chart. */

@@ -109,20 +109,8 @@ export default function OwnerCustomersPage() {
             </div>
           </div>
 
-          {pages > 1 && (
-            <div className="flex items-center justify-between gap-4">
-              <p className="text-sm text-muted-foreground">Page {page} of {pages} · {total} total</p>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="icon" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-                  <ChevronLeft size={16} />
-                </Button>
-                <Button variant="outline" size="icon" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>
-                  <ChevronRight size={16} />
-                </Button>
-              </div>
-            </div>
-          )}
-        </>
+          <PaginationFooter page={page} pages={pages} total={total} onPageChange={setPage} />
+        </div>
       )}
 
       <CustomerDetailDrawer

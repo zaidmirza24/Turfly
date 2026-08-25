@@ -1,13 +1,17 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { apiGet } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, MapPin, Activity, ChevronLeft, ChevronRight, Filter } from 'lucide-react';
+import { Search, MapPin, Activity, Filter } from 'lucide-react';
 import { Paginated, Turf } from '@/types';
 import { SyncingIndicator } from '@/components/SyncingIndicator';
 import { QueryErrorState } from '@/components/QueryErrorState';
+import { PaginationFooter } from '@/components/PaginationFooter';
+import { usePageQueryParam } from '@/hooks/usePageQueryParam';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { cn } from '@/lib/utils';
 import { AdminTurfDetailDrawer } from './AdminTurfDetailDrawer';
 import { useAdminTurfApproval } from './useAdminTurfApproval';
 
@@ -15,19 +19,21 @@ const LIMIT = 20;
 
 export default function AdminTurfsPage() {
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search);
   const [status, setStatus] = useState('all');
-  const [page, setPage] = useState(1);
+  const { page, setPage, resetPage } = usePageQueryParam();
   const [selectedTurf, setSelectedTurf] = useState<Turf | null>(null);
 
-  const filters = { search, status, page };
-  const { data, isLoading, isError, refetch } = useQuery({
+  const filters = { search: debouncedSearch, status, page };
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: ['admin-turfs', filters],
     queryFn: () => {
       const params = new URLSearchParams({ page: String(page), limit: String(LIMIT) });
       if (status !== 'all') params.set('status', status.toUpperCase());
-      if (search.trim()) params.set('search', search.trim());
+      if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
       return apiGet<Paginated<Turf>>(`/admin/turfs?${params.toString()}`);
     },
+    placeholderData: keepPreviousData,
   });
 
   const turfs = data?.data?.items ?? [];
@@ -35,7 +41,17 @@ export default function AdminTurfsPage() {
   const pages = data?.data?.pages ?? 1;
 
   const { approveMutation, rejectMutation, isMutating } = useAdminTurfApproval();
-  const resetToPage1 = <T,>(setter: (v: T) => void) => (v: T) => { setter(v); setPage(1); };
+  const resetToPage1 = <T,>(setter: (v: T) => void) => (v: T) => { setter(v); resetPage(); };
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { resetPage(); }, [debouncedSearch]);
+
+  // Approving/rejecting a turf can remove it from a status-filtered page —
+  // if that empties the current page, clamp back into range rather than
+  // stranding the admin on a blank page.
+  useEffect(() => {
+    if (data && page > pages) setPage(pages);
+  }, [data, page, pages, setPage]);
 
   if (isLoading) {
     return <SyncingIndicator label="Syncing Turfs" />;
@@ -63,7 +79,7 @@ export default function AdminTurfsPage() {
             type="text"
             placeholder="Search name or location..."
             value={search}
-            onChange={(e) => resetToPage1(setSearch)(e.target.value)}
+            onChange={(e) => setSearch(e.target.value)}
             aria-label="Search turfs"
             className="w-full h-12 pl-12 pr-4 rounded-2xl bg-primary/5 border-2 border-transparent focus:border-primary/20 focus:bg-background outline-none font-bold transition-all"
           />
@@ -93,7 +109,7 @@ export default function AdminTurfsPage() {
           </div>
         </div>
       ) : (
-        <>
+        <div className={cn('space-y-10 transition-opacity', isFetching && !isLoading && 'opacity-60')}>
           <div className="md:hidden space-y-3">
             {turfs.map(t => (
               <div key={t._id} onClick={() => setSelectedTurf(t)} className="glass rounded-[2rem] border-primary/10 p-5 shadow-xl shadow-black/5 space-y-3 cursor-pointer active:scale-[0.99] transition-transform">
@@ -190,20 +206,8 @@ export default function AdminTurfsPage() {
             </div>
           </div>
 
-          {pages > 1 && (
-            <div className="flex items-center justify-between gap-4">
-              <p className="text-sm text-muted-foreground">Page {page} of {pages} · {total} total</p>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="icon" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-                  <ChevronLeft size={16} />
-                </Button>
-                <Button variant="outline" size="icon" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>
-                  <ChevronRight size={16} />
-                </Button>
-              </div>
-            </div>
-          )}
-        </>
+          <PaginationFooter page={page} pages={pages} total={total} onPageChange={setPage} />
+        </div>
       )}
 
       <AdminTurfDetailDrawer
