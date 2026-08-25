@@ -353,7 +353,7 @@ export function SignupPage() {
   const brandCopy: Record<Step, { title: string; subtitle: string; bullet: string }> = {
     role: role === 'OWNER'
       ? { title: 'Turn empty slots into revenue', subtitle: 'List your venue and start getting discovered by nearby players today.', bullet: 'We review every listing before it goes live' }
-      : { title: 'Find your next game in seconds', subtitle: 'Real-time availability, instant confirmation — no back-and-forth calls to a venue.', bullet: 'Cancel anytime, instant refund tracking' },
+      : { title: 'Find your next game in seconds', subtitle: 'Real-time availability, instant confirmation — no back-and-forth calls to a venue.', bullet: 'Live availability and instant booking confirmation' },
     account: role === 'OWNER'
       ? { title: 'Set up your partner account', subtitle: "Next you'll tell us about your turf — takes about two minutes.", bullet: 'No listing fees to get started' }
       : { title: 'Almost there', subtitle: "Just the basics — you'll be booking your first slot in under a minute.", bullet: 'No spam — just booking confirmations' },

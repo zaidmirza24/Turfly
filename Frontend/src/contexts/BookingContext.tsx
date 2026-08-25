@@ -19,9 +19,10 @@ interface BookingContextType {
    * server-side, sharing a groupId) — each is cancelled individually since
    * the cancel endpoint only ever accepts one id at a time. Returns the
    * result for each; callers that only need one summary toast can just look
-   * at whether any entry has `refund.refunded`.
+   * Cancelling releases the slot and returns no money — bookings are
+   * non-refundable — so there is no refund outcome to report back.
    */
-  cancelBooking: (bookingIds: string[]) => Promise<Array<{ booking: Booking; refund: { refunded: boolean; reason?: string } }>>;
+  cancelBooking: (bookingIds: string[]) => Promise<Array<{ booking: Booking }>>;
 }
 
 const BookingContext = createContext<BookingContextType | undefined>(undefined);
@@ -80,7 +81,7 @@ export function BookingProvider({ children }: { children: React.ReactNode }) {
   const cancelBooking = useCallback(async (bookingIds: string[]) => {
     const results = await Promise.all(
       bookingIds.map(async (id) => {
-        const res = await apiDelete<{ booking: Booking; refund: { refunded: boolean; reason?: string } }>(`/bookings/${id}`);
+        const res = await apiDelete<{ booking: Booking }>(`/bookings/${id}`);
         return res.data;
       })
     );

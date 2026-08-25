@@ -7,7 +7,6 @@ import {
   rejectTurf,
   getAllUsers,
   setUserBanned,
-  setOwnerApproval,
   getAllBookings,
   getAllCustomers,
   getCustomerDetail,
@@ -34,7 +33,6 @@ router.patch("/turfs/:id/reject", rejectTurf);
 
 router.get("/users", getAllUsers);
 router.patch("/users/:id/ban", setUserBanned);
-router.patch("/users/:id/approval", setOwnerApproval);
 
 router.get("/bookings", getAllBookings);
 

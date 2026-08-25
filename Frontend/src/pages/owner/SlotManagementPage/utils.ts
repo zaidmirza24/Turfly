@@ -33,6 +33,14 @@ export const nextHourMark = (hour: number) => Math.round((hour + 0.5) * 2) / 2;
 export const isPastBookableWindow = (date: Date, hour: number, now: number = Date.now()) =>
   hourStart(date, hour).getTime() <= now;
 
+/**
+ * Owners always type a per-*hour* rate; a slot is 30 minutes. Mirrors the
+ * server's `hourlyRateToSlotPricePaise` (slot.service.js) so an optimistic
+ * price shown here matches what the server will actually store, instead of
+ * flashing double and silently correcting itself on refetch.
+ */
+export const hourlyRateToSlotPrice = (hourlyPrice: number) => Number(hourlyPrice) / 2;
+
 export type BulkConfig = {
   startDate: string;
   days: number;
@@ -64,7 +72,7 @@ export function buildBulkSlots(config: BulkConfig) {
         newSlots.push({
           startTime: startTime.toISOString(),
           endTime: endTime.toISOString(),
-          price: Number(hourlyPrice) / 2,
+          price: hourlyRateToSlotPrice(hourlyPrice),
         });
       }
     }

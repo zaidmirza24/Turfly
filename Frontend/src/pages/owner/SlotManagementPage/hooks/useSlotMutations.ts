@@ -4,6 +4,7 @@ import { apiPost, apiPatch, apiDelete } from '@/lib/api';
 import { TimeSlot, Turf } from '@/types';
 import { getISTDay, parseDateKey } from '@/lib/dateKey';
 import { STATUS_META } from '../constants';
+import { hourlyRateToSlotPrice } from '../utils';
 import { SlotAction, SlotsApiResponse, CreateSlotsPayload, TurfSettingsPayload } from '../types';
 
 type Params = {
@@ -95,7 +96,10 @@ export function useSlotMutations({ selectedTurfId, currentTurf, slotsQueryKey, o
             // itself on refetch.
             const day = getISTDay(s.startTime);
             const isWeekend = day === 0 || day === 6;
-            return { ...s, price: isWeekend ? weekend : weekday };
+            // weekday/weekend are per-hour rates and a slot is half an hour —
+            // showing the hourly figure here optimistically displayed double
+            // the price the server actually stores.
+            return { ...s, price: hourlyRateToSlotPrice(isWeekend ? weekend : weekday) };
           })
         };
       });

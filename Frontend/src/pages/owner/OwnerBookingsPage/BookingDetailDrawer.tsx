@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { Loader2, User, MapPin, CalendarDays, CreditCard, StickyNote, ShieldCheck, Flag } from 'lucide-react';
 import { apiPatch } from '@/lib/api';
 import { Booking, Payment } from '@/types';
-import { bookingEndTime, bookingStartTime, bookingTurf, bookingUser } from '@/lib/booking';
+import { bookingEndTime, bookingStartTime, bookingTurf, bookingUser, isFinishedBooking } from '@/lib/booking';
 import { formatSlotDate, formatSlotTimeRange } from '@/lib/dateKey';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -37,12 +37,11 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
     mutationFn: (bookingIds: string[]) =>
       Promise.all(
         bookingIds.map((id) =>
-          apiPatch<{ booking: Booking; refund: { refunded: boolean } }>(`/bookings/${id}/cancel`, { reason: reason.trim() || undefined })
+          apiPatch<{ booking: Booking }>(`/bookings/${id}/cancel`, { reason: reason.trim() || undefined })
         )
       ),
-    onSuccess: (results) => {
-      const anyRefunded = results.some((res) => res.data.refund.refunded);
-      toast.success(anyRefunded ? 'Booking cancelled — refund initiated' : 'Booking cancelled');
+    onSuccess: () => {
+      toast.success('Booking cancelled — the slot has been released');
       setConfirmingCancel(false);
       setReason('');
       invalidateAll();
@@ -50,13 +49,13 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
     onError: (error: Error) => toast.error(error.message || 'Failed to cancel booking'),
   });
 
-  const refundMutation = useMutation({
-    mutationFn: (bookingIds: string[]) => Promise.all(bookingIds.map((id) => apiPatch<Booking>(`/bookings/${id}/refund`))),
+  const noShowMutation = useMutation({
+    mutationFn: (bookingIds: string[]) => Promise.all(bookingIds.map((id) => apiPatch<Booking>(`/bookings/${id}/no-show`))),
     onSuccess: () => {
-      toast.success('Marked as refunded');
+      toast.success('Recorded as a no-show');
       invalidateAll();
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to update refund status'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to record no-show'),
   });
 
   if (!booking) return null;
@@ -68,6 +67,10 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
   const bookingIds = booking.bookingIds ?? [booking._id];
   const payment = typeof booking.paymentId === 'object' ? (booking.paymentId as Payment) : null;
   const isOnlinePayment = booking.paymentMethod === 'ONLINE' && !!booking.paymentId;
+  // A no-show can only be recorded once the slot has actually passed —
+  // before that the customer hasn't failed to turn up, they just haven't
+  // turned up yet. The server enforces the same rule.
+  const hasFinished = isFinishedBooking(booking);
 
   return (
     <Sheet open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) { setConfirmingCancel(false); setReason(''); } }}>
@@ -84,8 +87,7 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
               <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
                 {booking.refundStatus === 'REFUNDED' ? 'Refunded' :
                   booking.refundStatus === 'REFUND_PENDING' ? 'Refund pending' :
-                  booking.refundStatus === 'REFUND_FAILED' ? 'Refund failed' :
-                  booking.refundStatus === 'MARKED_REFUNDED' ? 'Refunded (recorded)' : 'Not refunded'}
+                  booking.refundStatus === 'REFUND_FAILED' ? 'Refund failed' : 'Non-refundable'}
               </span>
             )}
           </div>
@@ -160,6 +162,22 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
             />
           </div>
 
+          {hasFinished && booking.status !== 'CANCELLED' && booking.status !== 'NO_SHOW' && (
+            <div className="pt-4 border-t space-y-2">
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={noShowMutation.isPending}
+                onClick={() => noShowMutation.mutate(bookingIds)}
+              >
+                {noShowMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : 'Mark as no-show'}
+              </Button>
+              <p className="text-[11px] text-muted-foreground text-center">
+                The customer never turned up. The slot stays used and the payment stays with you — this doesn't refund anything.
+              </p>
+            </div>
+          )}
+
           {booking.status === 'CONFIRMED' && (
             <div className="pt-4 border-t space-y-3">
               {confirmingCancel ? (
@@ -194,28 +212,12 @@ export function BookingDetailDrawer({ booking, open, onOpenChange }: Props) {
             <div className="pt-4 border-t">
               <p className="text-[11px] text-muted-foreground text-center">
                 {booking.refundStatus === 'REFUNDED'
-                  ? `₹${booking.refundAmount ?? booking.amount} was refunded automatically to the customer's original payment method.`
+                  ? `₹${booking.refundAmount ?? booking.amount} was refunded to the customer from the Razorpay dashboard, and this booking was reconciled to match.`
                   : booking.refundStatus === 'REFUND_PENDING'
-                  ? "A refund was automatically initiated and is being processed by Razorpay — this updates on its own once it's confirmed."
+                  ? 'A refund is being processed by Razorpay — this updates on its own once confirmed.'
                   : booking.refundStatus === 'REFUND_FAILED'
-                  ? 'The automatic refund failed — this needs manual follow-up in the Razorpay dashboard.'
-                  : 'No refund was needed for this booking.'}
-              </p>
-            </div>
-          )}
-
-          {booking.status === 'CANCELLED' && !isOnlinePayment && booking.refundStatus !== 'MARKED_REFUNDED' && (
-            <div className="pt-4 border-t space-y-2">
-              <Button
-                variant="outline"
-                className="w-full"
-                disabled={refundMutation.isPending}
-                onClick={() => refundMutation.mutate(bookingIds)}
-              >
-                {refundMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : 'Mark as Refunded'}
-              </Button>
-              <p className="text-[11px] text-muted-foreground text-center">
-                Records that you refunded this booking outside the app — no payment is processed here.
+                  ? 'A refund was attempted and failed — needs follow-up in the Razorpay dashboard.'
+                  : 'Bookings are non-refundable, so no money was returned for this cancellation.'}
               </p>
             </div>
           )}

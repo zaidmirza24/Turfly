@@ -143,29 +143,24 @@ export const paymentFailedEmail = (payment) => {
   return { subject: "Payment failed — retry your booking", html };
 };
 
-export const bookingCancelledEmail = (booking, turf, refundInfo) => {
+// Says nothing about a refund, because cancelling doesn't produce one. The
+// customer-initiated case already agreed to that at checkout; the owner/admin
+// case is the venue calling it off, which is the one situation where someone
+// may reasonably expect their money back — so it points them at the venue
+// rather than quietly implying nothing happened.
+export const bookingCancelledEmail = (booking, turf) => {
+  const cancelledByVenue = booking.cancelledBy === "OWNER" || booking.cancelledBy === "ADMIN";
   const rows = [
     row("Booking reference", `#${bookingRef(booking)}`),
     row("Venue", turf?.name || "-"),
+    row("Amount paid", rupeesFromPaise(booking.amountPaise)),
     ...(booking.notes ? [row("Reason", booking.notes)] : []),
-    row("Refund amount", refundInfo?.refunded ? rupeesFromPaise(booking.amountPaise) : rupees(0)),
-    row("Refund status", refundInfo?.refunded ? "Initiated" : "Not applicable"),
   ];
-  const html = layout("Booking Cancelled", `<p>Your booking has been cancelled.</p>${table(rows)}`);
+  const note = cancelledByVenue
+    ? `<p>This booking was cancelled by the venue, so your slot is no longer reserved. Please contact ${turf?.name || "the venue"} directly about the amount you paid.</p>`
+    : `<p>Your booking has been cancelled and the slot released. As set out in our cancellation policy, the amount paid is not refunded.</p>`;
+  const html = layout("Booking Cancelled", `${note}${table(rows)}`);
   return { subject: "Booking cancelled", html };
-};
-
-export const refundInitiatedEmail = (booking, payment, refundId) => {
-  const rows = [
-    row("Refund amount", rupeesFromPaise(booking.amountPaise)),
-    row("Original payment", payment.razorpayPaymentId),
-    row("Refund reference", refundId),
-  ];
-  const html = layout(
-    "Refund Initiated",
-    `<p>We've initiated your refund. It typically takes 5-7 business days to reflect, depending on your bank.</p>${table(rows)}`
-  );
-  return { subject: "Refund initiated", html };
 };
 
 export const refundCompletedEmail = (booking, payment, refundId) => {

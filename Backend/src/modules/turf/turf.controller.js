@@ -1,6 +1,5 @@
 import * as turfService from "./turf.service.js";
 import ApiResponse from "../../common/utils/ApiResponse.js";
-import ApiError from "../../common/utils/ApiError.js";
 import { toPaise } from "../../common/utils/money.js";
 
 /**
@@ -83,15 +82,12 @@ const buildPublicTurfOptions = (query) => {
   return options;
 };
 
+// Owner accounts are not vetted. Anyone can register as an owner and list a
+// turf immediately — the listing itself is what an admin reviews, and it stays
+// invisible to customers until it's APPROVED (turf.service.js createTurf sets
+// PENDING; getTurfById and the public listing both filter on it). One review
+// gate, on the thing customers actually see, rather than two.
 export const createTurf = async (req, res) => {
-  if (req.user.approvalStatus !== "APPROVED") {
-    throw new ApiError(
-      403,
-      req.user.approvalStatus === "REJECTED"
-        ? "Your owner account was rejected — contact support to list a turf."
-        : "Your owner account is pending admin approval — you can't list a turf yet."
-    );
-  }
   const turf = await turfService.createTurf(req.user._id, req.body);
   new ApiResponse(201, "Turf created successfully", turf).send(res);
 };

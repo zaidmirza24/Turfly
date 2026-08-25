@@ -8,13 +8,13 @@ const SUPPORT_EMAIL = 'support@turfly.app';
 const topics = [
   { icon: XCircle, label: 'Cancellation issue', subject: 'Cancellation issue' },
   { icon: CreditCard, label: 'Payment issue', subject: 'Payment issue' },
-  { icon: RotateCcw, label: 'Refund issue', subject: 'Refund issue' },
+  { icon: RotateCcw, label: 'Payment issue', subject: 'Payment issue' },
   { icon: AlertTriangle, label: 'Report an issue', subject: 'Reporting an issue' },
 ];
 
 const faqs = [
-  { q: 'How do I cancel a booking?', a: 'Go to My Bookings → Upcoming, and tap Cancel on the booking. Free cancellation is available up to 6 hours before your slot starts.' },
-  { q: 'Will I get a refund if I cancel?', a: "This platform doesn't process real payments yet — checkout is simulated, so nothing is actually charged, and there's nothing to refund when you cancel." },
+  { q: 'How do I cancel a booking?', a: 'Go to My Bookings → Upcoming, and tap Cancel on the booking. You can cancel up to 6 hours before your slot starts. Cancelling releases the slot for someone else, but does not return your payment.' },
+  { q: 'Will I get a refund if I cancel?', a: "No — bookings are non-refundable. Payment holds the slot for you and the venue keeps it open on that basis, so cancelling releases the slot but doesn't return the amount. The one exception is a payment taken for a booking that was never confirmed, which is refunded automatically." },
   { q: "I didn't get a booking confirmation email", a: "Booking confirmation currently only appears in-app (on the confirmation screen and in My Bookings) — email/SMS receipts aren't built yet. Your booking record itself is real; you can view or print it from My Bookings → Receipt." },
   { q: 'How do I contact a venue directly?', a: "Open the venue's page — if they've listed a contact number, you'll find a Call Venue button. Not every venue has one on file yet." },
   { q: 'How are turfs verified?', a: 'Every turf is reviewed by our team before it appears in search results.' },

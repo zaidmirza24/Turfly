@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import User from "./user.model.js";
 import Turf from "../turf/turf.model.js";
-import Booking from "../booking/booking.model.js";
+import Booking, { HONOURED_STATUSES } from "../booking/booking.model.js";
 import Slot from "../slot/slot.model.js";
 import ApiError from "../../common/utils/ApiError.js";
 import logger from "../../common/utils/logger.js";
@@ -122,7 +122,7 @@ export const deleteMe = async (userId, password) => {
     throw new ApiError(401, "Password is incorrect");
   }
 
-  const confirmedSlotIds = await Booking.find({ userId, status: "CONFIRMED" }).distinct("slotId");
+  const confirmedSlotIds = await Booking.find({ userId, status: { $in: HONOURED_STATUSES } }).distinct("slotId");
   const hasUpcomingSlot = confirmedSlotIds.length > 0 && await Slot.exists({
     _id: { $in: confirmedSlotIds },
     startTime: { $gt: new Date() },

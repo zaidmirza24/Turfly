@@ -14,8 +14,6 @@ import { useNavigate } from 'react-router-dom';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ImageUploader, MAX_IMAGES } from '@/components/ImageUploader';
 import { turfCoverImage, TURF_PLACEHOLDER_IMAGE } from '@/lib/imageUrl';
-import { useAuth } from '@/contexts/AuthContext';
-import { AlertTriangle } from 'lucide-react';
 
 const allAmenities = ['Floodlights', 'Changing Rooms', 'Parking', 'Drinking Water', 'First Aid', 'Air Conditioning', 'Cafeteria', 'Equipment Rental', 'Coaching', 'Pro Shop'];
 const allSports: Sport[] = ['football', 'cricket', 'badminton', 'tennis', 'basketball', 'volleyball'];
@@ -254,9 +252,6 @@ function TurfForm({
 export default function ManageTurfsPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const isPending = user?.approvalStatus === 'PENDING';
-  const isRejected = user?.approvalStatus === 'REJECTED';
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTurf, setEditingTurf] = useState<Turf | null>(null);
   /** Turf whose photos are being edited, or null when the dialog is closed. */
@@ -375,21 +370,11 @@ export default function ManageTurfsPage() {
 
   return (
     <div>
-      {(isPending || isRejected) && (
-        <div className={`flex items-start gap-3 rounded-2xl border p-4 mb-6 ${isRejected ? 'bg-destructive/5 border-destructive/20 text-destructive' : 'bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-400'}`}>
-          <AlertTriangle size={18} className="mt-0.5 shrink-0" />
-          <p className="text-sm font-semibold">
-            {isRejected
-              ? 'Your owner account was rejected. Contact support if you think this is a mistake — you cannot list a turf until this is resolved.'
-              : 'Your owner account is awaiting admin approval. You can browse this page, but you cannot add a new turf until an admin approves your account.'}
-          </p>
-        </div>
-      )}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Manage Turfs</h1>
-        <Dialog open={dialogOpen} onOpenChange={(open) => { if (!(isPending || isRejected)) setDialogOpen(open); }}>
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
-            <Button className="gap-2" disabled={isPending || isRejected}><Plus size={16} /> Add Turf</Button>
+            <Button className="gap-2"><Plus size={16} /> Add Turf</Button>
           </DialogTrigger>
           <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader><DialogTitle>Add New Turf</DialogTitle></DialogHeader>

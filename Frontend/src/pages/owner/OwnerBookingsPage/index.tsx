@@ -18,7 +18,33 @@ import { ManualBookingModal } from './ManualBookingModal';
 
 const LIMIT = 20;
 
+/**
+ * The page opens on TODAY, not on all-time history.
+ *
+ * It used to default to every booking ever taken, ordered by when it was
+ * booked — a ledger, on the screen an owner opens to run their day. The
+ * question at 5pm is "who is arriving and have they paid", and that was
+ * several filter interactions away. History is still one click away for the
+ * times it's genuinely what you want.
+ */
+type Scope = 'today' | 'upcoming' | 'history';
+
+const SCOPE_META: Record<Scope, { label: string; blurb: string }> = {
+  today: { label: 'Today', blurb: 'Everything happening at your venues today.' },
+  upcoming: { label: 'Upcoming', blurb: 'Bookings still to be played, soonest first.' },
+  history: { label: 'History', blurb: 'Every booking ever taken. Filter by date to narrow it down.' },
+};
+
+const STATUS_FILTERS: { value: string; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'CONFIRMED', label: 'Confirmed' },
+  { value: 'COMPLETED', label: 'Completed' },
+  { value: 'NO_SHOW', label: 'No-show' },
+  { value: 'CANCELLED', label: 'Cancelled' },
+];
+
 export default function OwnerBookingsPage() {
+  const [scope, setScope] = useState<Scope>('today');
   const [status, setStatus] = useState('all');
   const [turfId, setTurfId] = useState('all');
   const [from, setFrom] = useState('');
@@ -33,15 +59,25 @@ export default function OwnerBookingsPage() {
   });
   const turfs = turfsResponse?.data ?? [];
 
-  const filters = { status, turfId, from, to, page };
+  // `from`/`to` filter on when a booking is *played*, server-side, so the
+  // scope tabs are just presets over that same range: Today pins both ends to
+  // today, Upcoming opens at today and stays open-ended, History hands the
+  // range back to the date pickers.
+  const todayKey = toDateKey(new Date());
+  const range =
+    scope === 'today' ? { from: todayKey, to: todayKey }
+    : scope === 'upcoming' ? { from: todayKey, to: '' }
+    : { from, to };
+
+  const filters = { scope, status, turfId, from: range.from, to: range.to, page };
   const { data: bookingsResponse, isLoading, isError, refetch } = useQuery({
     queryKey: ['owner-bookings', filters],
     queryFn: () => {
       const params = new URLSearchParams({ page: String(page), limit: String(LIMIT) });
-      if (status !== 'all') params.set('status', status.toUpperCase());
+      if (status !== 'all') params.set('status', status);
       if (turfId !== 'all') params.set('turfId', turfId);
-      if (from) params.set('from', from);
-      if (to) params.set('to', to);
+      if (range.from) params.set('from', range.from);
+      if (range.to) params.set('to', range.to);
       return apiGet<Paginated<Booking>>(`/bookings/owner?${params.toString()}`);
     },
   });
@@ -74,13 +110,28 @@ export default function OwnerBookingsPage() {
             </div>
             <span className="text-[10px] font-black uppercase tracking-[0.3em] text-primary">Owner Command Center</span>
           </div>
-          <h1 className="text-4xl font-black tracking-tighter">Booking History</h1>
-          <p className="text-muted-foreground font-medium mt-1">Full audit log of all your venue reservations.</p>
+          <h1 className="text-4xl font-black tracking-tighter">{SCOPE_META[scope].label}</h1>
+          <p className="text-muted-foreground font-medium mt-1">{SCOPE_META[scope].blurb}</p>
         </div>
 
         <div className="flex items-center gap-3">
           <ManualBookingModal turfs={turfs} />
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 bg-primary/5 p-2 rounded-2xl border border-primary/10 w-fit">
+        {(Object.keys(SCOPE_META) as Scope[]).map((s) => (
+          <Button
+            key={s}
+            variant="ghost"
+            size="sm"
+            onClick={() => { setScope(s); setPage(1); }}
+            className={cn('h-9 px-6 rounded-xl font-bold transition-all',
+              scope === s ? 'bg-background text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground')}
+          >
+            {SCOPE_META[s].label}
+          </Button>
+        ))}
       </div>
 
       <div className="flex flex-col lg:flex-row lg:items-center gap-3">
@@ -104,27 +155,32 @@ export default function OwnerBookingsPage() {
           </SelectContent>
         </Select>
 
-        <div className="flex items-center gap-2">
-          <Input type="date" value={from} onChange={(e) => resetToPage1(setFrom)(e.target.value)} className="h-12 rounded-2xl bg-primary/5 border-2 border-transparent" aria-label="From date" />
-          <span className="text-muted-foreground text-sm">to</span>
-          <Input type="date" value={to} onChange={(e) => resetToPage1(setTo)(e.target.value)} className="h-12 rounded-2xl bg-primary/5 border-2 border-transparent" aria-label="To date" />
-          {(from || to) && (
-            <Button variant="ghost" size="sm" onClick={() => { setFrom(''); setTo(''); setPage(1); }}>Clear</Button>
-          )}
-        </div>
+        {/* Only in History. Today and Upcoming define their own range, so
+            leaving the pickers visible there would show controls that either
+            do nothing or silently contradict the tab you're on. */}
+        {scope === 'history' && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Input type="date" value={from} onChange={(e) => resetToPage1(setFrom)(e.target.value)} className="h-12 rounded-2xl bg-primary/5 border-2 border-transparent" aria-label="From date" />
+            <span className="text-muted-foreground text-sm">to</span>
+            <Input type="date" value={to} onChange={(e) => resetToPage1(setTo)(e.target.value)} className="h-12 rounded-2xl bg-primary/5 border-2 border-transparent" aria-label="To date" />
+            {(from || to) && (
+              <Button variant="ghost" size="sm" onClick={() => { setFrom(''); setTo(''); setPage(1); }}>Clear</Button>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-3 bg-primary/5 p-2 rounded-2xl border border-primary/10 w-fit">
-        {['all', 'confirmed', 'cancelled'].map(s => (
+        {STATUS_FILTERS.map(({ value, label }) => (
           <Button
-            key={s}
+            key={value}
             variant="ghost"
             size="sm"
-            onClick={() => resetToPage1(setStatus)(s)}
-            className={cn("capitalize h-9 px-6 rounded-xl font-bold transition-all",
-              status === s ? "bg-background text-primary shadow-sm" : "text-muted-foreground hover:text-foreground")}
+            onClick={() => resetToPage1(setStatus)(value)}
+            className={cn("h-9 px-6 rounded-xl font-bold transition-all",
+              status === value ? "bg-background text-primary shadow-sm" : "text-muted-foreground hover:text-foreground")}
           >
-            {s}
+            {label}
           </Button>
         ))}
       </div>
@@ -135,7 +191,7 @@ export default function OwnerBookingsPage() {
         <>
           <div className="md:hidden space-y-3">
             {filtered.length === 0 ? (
-              <EmptyState />
+              <EmptyState scope={scope} />
             ) : (
               filtered.map((b) => {
                 const customer = bookingUser(b);
@@ -204,7 +260,7 @@ export default function OwnerBookingsPage() {
                     {filtered.length === 0 ? (
                       <motion.tr initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                         <td colSpan={5} className="p-32 text-center">
-                          <EmptyState />
+                          <EmptyState scope={scope} />
                         </td>
                       </motion.tr>
                     ) : (
@@ -297,14 +353,24 @@ export default function OwnerBookingsPage() {
   );
 }
 
-function EmptyState() {
+// An empty Today is a normal, informative state — a quiet day, not a failed
+// search — so it shouldn't read like something went wrong or that the filters
+// need fixing.
+const EMPTY_COPY: Record<Scope, { title: string; hint: string }> = {
+  today: { title: 'Nothing booked today', hint: 'No sessions at your venues today. Check Upcoming for what’s next.' },
+  upcoming: { title: 'No upcoming bookings', hint: 'Nothing booked ahead yet. New bookings appear here as they come in.' },
+  history: { title: 'No bookings found', hint: 'Try adjusting your search, filters or date range.' },
+};
+
+function EmptyState({ scope }: { scope: Scope }) {
+  const copy = EMPTY_COPY[scope];
   return (
     <div className="glass rounded-[3rem] p-16 text-center border-primary/10">
-      <div className="flex flex-col items-center gap-4 opacity-20">
+      <div className="flex flex-col items-center gap-4 opacity-30">
         <Filter size={48} />
         <div className="space-y-1">
-          <p className="text-lg font-black tracking-tighter text-foreground">No bookings found</p>
-          <p className="text-sm font-medium">Try adjusting your search or filters</p>
+          <p className="text-lg font-black tracking-tighter text-foreground">{copy.title}</p>
+          <p className="text-sm font-medium">{copy.hint}</p>
         </div>
       </div>
     </div>

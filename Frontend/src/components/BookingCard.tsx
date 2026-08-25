@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { BookingStatusBadge } from '@/components/BookingStatusBadge';
 import { ComplaintDialog } from '@/components/ComplaintDialog';
 import { Calendar, Clock, Flag, MapPin, Receipt, RotateCcw, Star } from 'lucide-react';
-import { bookingEndTime, bookingStartTime, bookingTurf } from '@/lib/booking';
+import { bookingEndTime, bookingStartTime, bookingTurf, isFinishedBooking, isOnlinePaidBooking } from '@/lib/booking';
 import { formatSlotDate, formatSlotTimeRange } from '@/lib/dateKey';
 import { useNavigate } from 'react-router-dom';
 
@@ -20,20 +20,20 @@ interface BookingCardProps {
 // server is what actually enforces the rule.
 const CANCELLATION_CUTOFF_MS = 6 * 60 * 60 * 1000;
 
-const refundCopy = (booking: Booking): string => {
+const cancelledCopy = (booking: Booking): string => {
+  // A refund can still exist without a refund *feature*: support can issue one
+  // by hand from the Razorpay dashboard for a dispute, and the webhook
+  // reconciles it back onto the booking. So this reports whatever actually
+  // happened rather than assuming nothing did.
   switch (booking.refundStatus) {
     case 'REFUNDED':
       return `Cancelled — ₹${booking.refundAmount ?? booking.amount} was refunded to your original payment method.`;
     case 'REFUND_PENDING':
-      return 'Cancelled — your refund is being processed and typically lands in 5-7 business days.';
-    case 'REFUND_FAILED':
-      return "Cancelled — we couldn't process your refund automatically. Please contact support.";
-    case 'MARKED_REFUNDED':
-      return 'Cancelled — the venue has recorded this as refunded.';
+      return 'Cancelled — a refund is being processed and typically lands in 5-7 business days.';
     default:
-      return booking.paymentMethod === 'ONLINE'
-        ? 'Cancelled.'
-        : "Cancelled — no online charge was made for this booking, so there's nothing to refund.";
+      return isOnlinePaidBooking(booking)
+        ? 'Cancelled. Bookings are non-refundable, so the amount paid has not been returned.'
+        : "Cancelled — no online charge was made for this booking.";
   }
 };
 
@@ -42,8 +42,10 @@ export function BookingCard({ booking, onCancel, onViewReceipt, showCancel }: Bo
   const turf = bookingTurf(booking);
   const startTime = bookingStartTime(booking);
   const endTime = bookingEndTime(booking);
-  const isPast = startTime ? startTime < new Date() : false;
-  const isCompleted = booking.status === 'CONFIRMED' && isPast;
+  const isPast = isFinishedBooking(booking);
+  // Only a genuinely played session earns a "Review" prompt — inviting someone
+  // to rate a venue they didn't turn up to is asking for a retaliatory review.
+  const isCompleted = isPast && booking.status !== 'NO_SHOW';
   const isPastCancellationCutoff = startTime
     ? startTime.getTime() - Date.now() < CANCELLATION_CUTOFF_MS
     : false;
@@ -75,7 +77,14 @@ export function BookingCard({ booking, onCancel, onViewReceipt, showCancel }: Bo
 
       {booking.status === 'CANCELLED' && (
         <p className="text-xs text-muted-foreground mt-3 bg-muted/50 rounded-lg px-3 py-2">
-          {refundCopy(booking)}
+          {cancelledCopy(booking)}
+        </p>
+      )}
+
+      {booking.status === 'NO_SHOW' && (
+        <p className="text-xs text-muted-foreground mt-3 bg-warning/10 rounded-lg px-3 py-2">
+          The venue recorded this booking as a no-show. The slot was held for you, so it isn't refundable —
+          get in touch with the venue if you think that's wrong.
         </p>
       )}
 

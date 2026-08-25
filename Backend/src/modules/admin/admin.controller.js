@@ -35,13 +35,12 @@ export const rejectTurf = async (req, res) => {
 };
 
 export const getAllUsers = async (req, res) => {
-  const { page, limit, search, role, approvalStatus } = req.query;
+  const { page, limit, search, role } = req.query;
   const users = await adminService.getAllUsers({
     page: page ? Number(page) : undefined,
     limit: limit ? Number(limit) : undefined,
     search,
     role,
-    approvalStatus,
   });
   new ApiResponse(200, "Users fetched successfully", users).send(res);
 };
@@ -49,15 +48,6 @@ export const getAllUsers = async (req, res) => {
 export const setUserBanned = async (req, res) => {
   const user = await adminService.setUserBanned(req.user._id, req.params.id, !!req.body.isBanned);
   new ApiResponse(200, "User updated", user).send(res);
-};
-
-export const setOwnerApproval = async (req, res) => {
-  const { approvalStatus } = req.body;
-  if (!["APPROVED", "REJECTED"].includes(approvalStatus)) {
-    throw new ApiError(400, "approvalStatus must be APPROVED or REJECTED");
-  }
-  const user = await adminService.setOwnerApproval(req.user._id, req.params.id, approvalStatus);
-  new ApiResponse(200, "Owner approval updated", user).send(res);
 };
 
 export const getAllBookings = async (req, res) => {

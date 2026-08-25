@@ -116,8 +116,17 @@ const env = {
   // notification.routes.js POST /jobs/send-reminders.
   BOOKING_REMINDER_HOURS_BEFORE: Number(process.env.BOOKING_REMINDER_HOURS_BEFORE || 3),
   // Shared secret the external scheduler must present (header
-  // X-Cron-Secret) to trigger the reminder job. Required in production.
+  // X-Cron-Secret, or Authorization: Bearer for Vercel Cron) to trigger the
+  // reminder job over HTTP. Required in production.
   CRON_SECRET: process.env.CRON_SECRET || "",
+
+  // How often the in-process reminder scheduler sweeps for bookings due a
+  // reminder. Only used when running as a long-lived Node process (server.js)
+  // — the serverless deployment drives the same job through vercel.json's
+  // cron instead. Wants to be comfortably shorter than
+  // BOOKING_REMINDER_HOURS_BEFORE so nothing slips past the window between
+  // sweeps; re-running is free, since reminders dedupe.
+  REMINDER_POLL_MINUTES: Number(process.env.REMINDER_POLL_MINUTES || 15),
 
   // ── Onboarding email OTP ──
   // Minutes an OTP stays valid after being issued (registerUser/resendOtp).

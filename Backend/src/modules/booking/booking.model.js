@@ -21,9 +21,43 @@ const bookingSchema = new mongoose.Schema(
       ref: "Slot",
       required: [true, "Slot reference is required"],
     },
+    // Copied from the slot at confirmation time (confirmSlot). Denormalised
+    // deliberately: *when the booking is played* is the field every
+    // operational view actually needs to filter, sort and paginate by, and it
+    // lived only on the referenced Slot document — unreachable from a Mongo
+    // query without a $lookup. That's why the owner's date filter and every
+    // booking list ordered by `createdAt` instead, i.e. by when the booking
+    // was made, so "show me today" returned bookings *placed* today rather
+    // than the day's actual schedule.
+    //
+    // Safe to denormalise because it never changes: a slot's time is fixed at
+    // creation, and moving a booking to a different time isn't supported (a
+    // reschedule would be a new booking). The slot remains the source of
+    // truth; these are a queryable copy.
+    slotStartTime: {
+      type: Date,
+      required: [true, "Slot start time is required"],
+      index: true,
+    },
+    slotEndTime: {
+      type: Date,
+      required: [true, "Slot end time is required"],
+    },
+    // CONFIRMED is the live state: booked and not yet played. COMPLETED and
+    // NO_SHOW are both terminal and both mean the slot has passed — they
+    // differ only in whether the customer turned up, which is the distinction
+    // the platform previously had no way to record at all. Everything used to
+    // infer "completed" from `slotEndTime < now`, which silently counted a
+    // no-show as a played session: owners couldn't flag one, repeat offenders
+    // were invisible, and a "they never showed" dispute had nothing to
+    // resolve against.
+    //
+    // COMPLETED is set lazily rather than by a scheduler — see
+    // `settleFinishedBookings`. NO_SHOW is only ever set deliberately, by the
+    // owner or an admin.
     status: {
       type: String,
-      enum: ["CONFIRMED", "CANCELLED"],
+      enum: ["CONFIRMED", "COMPLETED", "NO_SHOW", "CANCELLED"],
       default: "CONFIRMED",
     },
     // Who cancelled this booking, distinct from just knowing that it's
@@ -156,6 +190,11 @@ const bookingSchema = new mongoose.Schema(
 // createdAt order directly.
 bookingSchema.index({ turfId: 1, createdAt: -1 });
 bookingSchema.index({ userId: 1, createdAt: -1 });
+// The operational query shape: an owner's bookings for a date range, in the
+// order they'll actually be played. Mirrors the two above, but on play time
+// rather than booking time — see the slotStartTime field comment.
+bookingSchema.index({ turfId: 1, slotStartTime: -1 });
+bookingSchema.index({ userId: 1, slotStartTime: -1 });
 
 const moneyToJSON = (_doc, ret) => {
   ret.amount = toRupees(ret.amountPaise);
@@ -170,6 +209,22 @@ const moneyToJSON = (_doc, ret) => {
 };
 bookingSchema.set("toJSON", { transform: moneyToJSON });
 bookingSchema.set("toObject", { transform: moneyToJSON });
+
+/**
+ * The statuses where the venue keeps the money: the session is booked, played,
+ * or was a no-show the customer forfeited. Only CANCELLED is excluded, because
+ * only a cancellation refunds.
+ *
+ * Every revenue total, spend figure and booking count filters on this rather
+ * than on CONFIRMED alone. That distinction didn't exist while CONFIRMED was
+ * the only non-cancelled status — but the moment a booking can move on to
+ * COMPLETED, a query matching CONFIRMED starts quietly *excluding* played
+ * sessions, and revenue would fall as bookings finish.
+ */
+export const HONOURED_STATUSES = ["CONFIRMED", "COMPLETED", "NO_SHOW"];
+
+/** Mongo expression form of the same rule, for use inside aggregations. */
+export const IS_HONOURED_EXPR = { $in: ["$status", HONOURED_STATUSES] };
 
 const Booking = mongoose.model("Booking", bookingSchema);
 export default Booking;

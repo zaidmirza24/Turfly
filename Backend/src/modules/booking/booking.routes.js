@@ -8,8 +8,9 @@ import {
   getOwnerBookings,
   cancelBooking,
   cancelBookingAsOwner,
-  markBookingRefunded,
+  markBookingNoShow,
   createManualBooking,
+  getOwnerStats,
   getOwnerCustomers,
   getOwnerCustomerDetail,
   getTurfBookings,
@@ -73,6 +74,11 @@ router.get("/me", protect, getMyBookings);
 // GET /api/bookings/owner — all bookings for an owner
 router.get("/owner", protect, authorize("OWNER"), getOwnerBookings);
 
+// GET /api/bookings/owner/stats — dashboard headline figures, aggregated
+// server-side. Declared before /owner/customers/:userId so neither shadows
+// the other.
+router.get("/owner/stats", protect, authorize("OWNER"), getOwnerStats);
+
 // GET /api/bookings/owner/customers — aggregated customer list
 router.get("/owner/customers", protect, authorize("OWNER"), getOwnerCustomers);
 
@@ -88,8 +94,10 @@ router.delete("/:id", protect, authorize("USER"), cancelBooking);
 // PATCH /api/bookings/:id/cancel — owner/admin cancels a customer's booking
 router.patch("/:id/cancel", protect, authorize("OWNER", "ADMIN"), cancelBookingAsOwner);
 
-// PATCH /api/bookings/:id/refund — owner/admin marks a cancelled booking refunded
-router.patch("/:id/refund", protect, authorize("OWNER", "ADMIN"), markBookingRefunded);
+// PATCH /api/bookings/:id/no-show — owner/admin records that the customer
+// never turned up. Distinct from cancelling: the money stays with the venue
+// and the slot stays consumed.
+router.patch("/:id/no-show", protect, authorize("OWNER", "ADMIN"), markBookingNoShow);
 
 // PATCH /api/bookings/:id/payout — admin records having paid the owner their
 // share of this booking outside the app. Admin-only, deliberately not

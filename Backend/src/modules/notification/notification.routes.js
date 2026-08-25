@@ -1,11 +1,9 @@
 import { Router } from "express";
 import NotificationLog from "./notificationLog.model.js";
-import Booking from "../booking/booking.model.js";
-import Slot from "../slot/slot.model.js";
 import env from "../../common/config/env.js";
 import logger from "../../common/utils/logger.js";
 import safeEqual from "../../common/utils/safeEqual.js";
-import * as emailService from "./email.service.js";
+import { sendBookingReminders } from "../../common/jobs/sendBookingReminders.js";
 
 const router = Router();
 const log = logger.child({ module: "notification.webhook" });
@@ -60,42 +58,65 @@ router.post("/webhooks/brevo", async (req, res) => {
 });
 
 /**
- * Phase 18 (booking reminders) — meant to be invoked by an external
- * scheduler (Vercel Cron, GitHub Actions, cron-job.org — anything that can
- * make an HTTP POST on a schedule), not by any traffic inside this app.
- * There is deliberately no in-process scheduler here (see ai-context.md:
- * "Recurring work without a scheduler"); a reminder is the one job in this
- * codebase that genuinely cannot be derived from a request path the way
- * lock-expiry is, so unlike everything else, it needs an outside trigger.
+ * Booking reminders, triggered externally.
  *
- * Idempotent via the same NotificationLog dedupe mechanism as every other
- * email — safe to invoke this endpoint more often than needed (e.g. hourly)
- * without ever double-sending a reminder for the same booking.
+ * There are two ways this job can run, and which one applies is a property of
+ * the deployment, not a choice made here:
+ *
+ *  - A long-lived Node process (server.js) runs it on an in-process timer —
+ *    see common/jobs/sendBookingReminders.js.
+ *  - A serverless deployment can't hold a timer (the process is frozen between
+ *    requests), so it schedules a cron against this endpoint instead — see
+ *    the `crons` entry in vercel.json.
+ *
+ * Both call the same function. Idempotent via the NotificationLog dedupe every
+ * other email uses, so invoking this more often than needed — or alongside the
+ * timer — never double-sends a reminder for the same booking.
  */
-router.post("/jobs/send-reminders", async (req, res) => {
-  if (!env.CRON_SECRET || !safeEqual(req.headers["x-cron-secret"], env.CRON_SECRET)) {
+/**
+ * Two accepted shapes, because the schedulers that can call this don't agree
+ * on one:
+ *
+ *  - `X-Cron-Secret: <secret>` — any generic scheduler (cron-job.org, GitHub
+ *    Actions, a server crontab) that can set an arbitrary header.
+ *  - `Authorization: Bearer <secret>` — Vercel Cron, which sends a plain GET
+ *    and cannot set custom headers; it attaches CRON_SECRET this way itself.
+ *
+ * Supporting only the first is why the reminder job had never actually run:
+ * the natural way to schedule it on this deployment is a Vercel cron, and a
+ * Vercel cron hitting this route would have been rejected as unauthenticated
+ * every time — silently, since it 404s rather than erroring.
+ */
+const isAuthorizedCron = (req) => {
+  if (!env.CRON_SECRET) return false;
+  if (safeEqual(req.headers["x-cron-secret"], env.CRON_SECRET)) return true;
+  const auth = req.headers.authorization;
+  if (typeof auth === "string" && auth.startsWith("Bearer ")) {
+    return safeEqual(auth.slice(7), env.CRON_SECRET);
+  }
+  return false;
+};
+
+const sendReminders = async (req, res) => {
+  if (!isAuthorizedCron(req)) {
     return res.status(404).end();
   }
 
-  const windowStart = new Date();
-  const windowEnd = new Date(Date.now() + env.BOOKING_REMINDER_HOURS_BEFORE * 60 * 60 * 1000);
+  // Same job the in-process scheduler runs (common/jobs/sendBookingReminders.js).
+  // One implementation, two triggers: a long-lived deployment uses the timer,
+  // a serverless one uses a cron calling this endpoint. Running both would be
+  // harmless — reminders dedupe — but only one is ever wired up.
+  const result = await sendBookingReminders();
 
-  const upcomingSlots = await Slot.find({
-    status: "BOOKED",
-    startTime: { $gt: windowStart, $lte: windowEnd },
-  }).select("_id bookingId");
+  log.info("Booking reminder job ran via HTTP", result);
+  res.status(200).json(result);
+};
 
-  const bookingIds = upcomingSlots.map((s) => s.bookingId).filter(Boolean);
-  const bookings = await Booking.find({ _id: { $in: bookingIds }, status: "CONFIRMED" });
-
-  let sent = 0;
-  for (const booking of bookings) {
-    const row = await emailService.sendBookingReminder(booking);
-    if (row?.status === "SENT") sent += 1;
-  }
-
-  log.info("Booking reminder job ran", { candidates: bookings.length, sent });
-  res.status(200).json({ candidates: bookings.length, sent });
-});
+// GET for Vercel Cron (which only issues GETs), POST for everything else.
+// The job is idempotent — NotificationLog dedupes — so a GET having a side
+// effect here is safe against retries and double-delivery, which is the
+// property that usually makes it a bad idea.
+router.get("/jobs/send-reminders", sendReminders);
+router.post("/jobs/send-reminders", sendReminders);
 
 export default router;
