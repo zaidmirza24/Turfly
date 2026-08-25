@@ -9,6 +9,7 @@ import ApiError from "../../common/utils/ApiError.js";
 import logger from "../../common/utils/logger.js";
 import { toRupees } from "../../common/utils/money.js";
 import { istRangeFilter, istDateKey, istDayBounds, previousDateKey, IST_TIMEZONE } from "../../common/utils/istTime.js";
+import { buildPaginatedResult } from "../../common/utils/pagination.js";
 
 /**
  * Record an admin-triggered mutation for the audit trail. Never lets a
@@ -220,7 +221,7 @@ export const setUserBanned = async (adminId, userId, isBanned) => {
  * refunded. Booking has no Payment.status of its own to query directly, so a
  * paymentStatus filter is resolved as a Payment lookup first.
  */
-export const getAllBookingsForAdmin = async ({ page = 1, limit = 20, from, to, turfId, status, paymentStatus, refundStatus, payoutStatus } = {}) => {
+export const getAllBookingsForAdmin = async ({ page = 1, limit = 20, from, to, turfId, status, paymentStatus, refundStatus, payoutStatus, search } = {}) => {
   const query = {};
   if (turfId) query.turfId = turfId;
   if (status) query.status = status;
@@ -236,6 +237,22 @@ export const getAllBookingsForAdmin = async ({ page = 1, limit = 20, from, to, t
   // IST because that's the timezone the platform operates in.
   const playRange = istRangeFilter(from, to);
   if (playRange) query.slotStartTime = playRange;
+
+  // Server-side, platform-wide equivalent of booking.service.js's
+  // searchOrClause — matches customer name/email or turf name, combined with
+  // pagination rather than filtered client-side over one already-fetched page.
+  if (search) {
+    const regex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    const turfScope = turfId ? { _id: turfId } : {};
+    const [matchedUsers, matchedTurfs] = await Promise.all([
+      User.find({ $or: [{ name: regex }, { email: regex }] }).select("_id"),
+      Turf.find({ ...turfScope, name: regex }).select("_id"),
+    ]);
+    query.$or = [
+      { userId: { $in: matchedUsers.map((u) => u._id) } },
+      { turfId: { $in: matchedTurfs.map((t) => t._id) } },
+    ];
+  }
 
   const skip = (page - 1) * limit;
   const [items, total] = await Promise.all([
@@ -312,26 +329,44 @@ export const getAllCustomersForAdmin = async ({ page = 1, limit = 20 } = {}) => 
  * One customer's full detail, platform-wide (admin view) — every booking
  * they've ever made anywhere, not just at one owner's turfs.
  */
-export const getCustomerDetailForAdmin = async (customerId) => {
-  const bookings = await Booking.find({ userId: customerId })
-    .populate("turfId", "name location sportsType")
-    .populate("slotId", "startTime endTime pricePaise")
-    .sort({ createdAt: -1 });
-
+export const getCustomerDetailForAdmin = async (customerId, { page = 1, limit = 20 } = {}) => {
   const customer = await User.findById(customerId).select("name email phone isGuest");
   if (!customer) {
     throw new ApiError(404, "Customer not found");
   }
 
-  const confirmed = bookings.filter((b) => HONOURED_STATUSES.includes(b.status));
+  const query = { userId: customerId };
+  const skip = (page - 1) * limit;
+  const [bookings, total, statsAgg] = await Promise.all([
+    Booking.find(query)
+      .populate("turfId", "name location sportsType")
+      .populate("slotId", "startTime endTime pricePaise")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    Booking.countDocuments(query),
+    Booking.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: null,
+          totalBookings: { $sum: 1 },
+          confirmedCount: { $sum: { $cond: [IS_HONOURED_EXPR, 1, 0] } },
+          totalSpentPaise: { $sum: { $cond: [IS_HONOURED_EXPR, "$amountPaise", 0] } },
+        },
+      },
+    ]),
+  ]);
+
+  const agg = statsAgg[0] || { totalBookings: 0, confirmedCount: 0, totalSpentPaise: 0 };
   const stats = {
-    totalBookings: bookings.length,
-    confirmedCount: confirmed.length,
-    cancelledCount: bookings.length - confirmed.length,
-    totalSpent: toRupees(confirmed.reduce((sum, b) => sum + b.amountPaise, 0)),
+    totalBookings: agg.totalBookings,
+    confirmedCount: agg.confirmedCount,
+    cancelledCount: agg.totalBookings - agg.confirmedCount,
+    totalSpent: toRupees(agg.totalSpentPaise),
   };
 
-  return { customer, stats, bookings };
+  return { customer, stats, ...buildPaginatedResult(bookings, total, page, limit) };
 };
 
 /**
@@ -342,8 +377,8 @@ export const getCustomerDetailForAdmin = async (customerId) => {
  * (the existing bookings list already supports filtering that way), scoped
  * to that owner's turfs on the frontend.
  */
-export const getPendingPayoutsSummary = async () => {
-  const rows = await Booking.aggregate([
+export const getPendingPayoutsSummary = async ({ page = 1, limit = 20 } = {}) => {
+  const basePipeline = [
     { $match: { payoutStatus: "PENDING" } },
     { $lookup: { from: "turfs", localField: "turfId", foreignField: "_id", as: "turf" } },
     { $unwind: "$turf" },
@@ -356,22 +391,34 @@ export const getPendingPayoutsSummary = async () => {
       },
     },
     { $sort: { pendingAmountPaise: -1 } },
-    { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "owner" } },
-    { $unwind: "$owner" },
-    {
-      $project: {
-        _id: 0,
-        ownerId: "$_id",
-        ownerName: "$owner.name",
-        ownerEmail: "$owner.email",
-        payoutDetails: "$owner.payoutDetails",
-        pendingAmountPaise: 1,
-        pendingCount: 1,
-        oldestPendingAt: 1,
+  ];
+
+  const skip = (page - 1) * limit;
+  const [countResult, rows] = await Promise.all([
+    Booking.aggregate([...basePipeline, { $count: "total" }]),
+    Booking.aggregate([
+      ...basePipeline,
+      { $skip: skip },
+      { $limit: limit },
+      { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "owner" } },
+      { $unwind: "$owner" },
+      {
+        $project: {
+          _id: 0,
+          ownerId: "$_id",
+          ownerName: "$owner.name",
+          ownerEmail: "$owner.email",
+          payoutDetails: "$owner.payoutDetails",
+          pendingAmountPaise: 1,
+          pendingCount: 1,
+          oldestPendingAt: 1,
+        },
       },
-    },
+    ]),
   ]);
-  return rows.map(({ pendingAmountPaise, ...rest }) => ({ ...rest, pendingAmount: toRupees(pendingAmountPaise) }));
+  const total = countResult[0]?.total ?? 0;
+  const items = rows.map(({ pendingAmountPaise, ...rest }) => ({ ...rest, pendingAmount: toRupees(pendingAmountPaise) }));
+  return buildPaginatedResult(items, total, page, limit);
 };
 
 /**
@@ -380,13 +427,21 @@ export const getPendingPayoutsSummary = async () => {
  * can settle (or inspect) one booking at a time without a separate
  * turf-by-turf query on the frontend.
  */
-export const getPendingPayoutBookingsForOwner = async (ownerId) => {
+export const getPendingPayoutBookingsForOwner = async (ownerId, { page = 1, limit = 20 } = {}) => {
   const turfs = await Turf.find({ ownerId }).select("_id");
   const turfIds = turfs.map((t) => t._id);
-  return Booking.find({ turfId: { $in: turfIds }, payoutStatus: "PENDING" })
-    .populate("turfId", "name location")
-    .populate("userId", "name email")
-    .sort({ createdAt: 1 });
+  const query = { turfId: { $in: turfIds }, payoutStatus: "PENDING" };
+  const skip = (page - 1) * limit;
+  const [items, total] = await Promise.all([
+    Booking.find(query)
+      .populate("turfId", "name location")
+      .populate("userId", "name email")
+      .sort({ createdAt: 1 })
+      .skip(skip)
+      .limit(limit),
+    Booking.countDocuments(query),
+  ]);
+  return buildPaginatedResult(items, total, page, limit);
 };
 
 /**
@@ -395,11 +450,19 @@ export const getPendingPayoutBookingsForOwner = async (ownerId) => {
  * (see booking.model.js's payoutStatus doc comment); this just surfaces the
  * list so an admin can reconcile with the owner manually.
  */
-export const getClawbacksOwed = async () => {
-  return Booking.find({ payoutStatus: "CLAWBACK_OWED" })
-    .populate("turfId", "name location ownerId")
-    .populate("userId", "name email")
-    .sort({ paidOutAt: -1 });
+export const getClawbacksOwed = async ({ page = 1, limit = 20 } = {}) => {
+  const query = { payoutStatus: "CLAWBACK_OWED" };
+  const skip = (page - 1) * limit;
+  const [items, total] = await Promise.all([
+    Booking.find(query)
+      .populate("turfId", "name location ownerId")
+      .populate("userId", "name email")
+      .sort({ paidOutAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    Booking.countDocuments(query),
+  ]);
+  return buildPaginatedResult(items, total, page, limit);
 };
 
 /**

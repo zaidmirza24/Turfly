@@ -12,6 +12,7 @@ import Turf from "../turf/turf.model.js";
 import ApiError from "../../common/utils/ApiError.js";
 import logger from "../../common/utils/logger.js";
 import { attachReviewImages, rearmImagesByUrl } from "../image/image.service.js";
+import { buildPaginatedResult } from "../../common/utils/pagination.js";
 
 /**
  * Recompute a turf's denormalized rating summary from its actual reviews.
@@ -163,8 +164,14 @@ export const respondToReview = async (ownerId, reviewId, text) => {
   return review;
 };
 
-export const getReviewsForTurf = async (turfId) => {
-  return Review.find({ turfId }).populate("userId", "name").sort({ createdAt: -1 });
+export const getReviewsForTurf = async (turfId, { page = 1, limit = 20 } = {}) => {
+  const query = { turfId };
+  const skip = (page - 1) * limit;
+  const [items, total] = await Promise.all([
+    Review.find(query).populate("userId", "name").sort({ createdAt: -1 }).skip(skip).limit(limit),
+    Review.countDocuments(query),
+  ]);
+  return buildPaginatedResult(items, total, page, limit);
 };
 
 /**

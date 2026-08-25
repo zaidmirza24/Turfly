@@ -12,6 +12,7 @@ import ApiError from "../../common/utils/ApiError.js";
 import logger from "../../common/utils/logger.js";
 import { toRupees } from "../../common/utils/money.js";
 import { istRangeFilter, istDateKey, istDayBounds, previousDateKey, IST_TIMEZONE } from "../../common/utils/istTime.js";
+import { buildPaginatedResult } from "../../common/utils/pagination.js";
 
 const log = logger.child({ module: "booking.service" });
 
@@ -902,7 +903,30 @@ export const createManualBooking = async (ownerId, { turfId, customerId, slotIds
  * check any owner could enumerate turf ids and harvest the whole platform's
  * customer PII.
  */
-export const getBookingsByTurf = async (ownerId, turfId, { page = 1, limit = 20, status } = {}) => {
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Resolves a free-text `search` term into a `$or` clause matching either the
+ * customer's name/email or the turf's name, scoped to the turf ids already in
+ * play — so search combines with pagination server-side instead of the
+ * frontend filtering only whatever page happened to be loaded.
+ */
+const searchOrClause = async (search, scopedTurfIds) => {
+  if (!search) return null;
+  const regex = new RegExp(escapeRegex(search), "i");
+  const [matchedUsers, matchedTurfs] = await Promise.all([
+    User.find({ $or: [{ name: regex }, { email: regex }] }).select("_id"),
+    Turf.find({ _id: { $in: scopedTurfIds }, name: regex }).select("_id"),
+  ]);
+  return {
+    $or: [
+      { userId: { $in: matchedUsers.map((u) => u._id) } },
+      { turfId: { $in: matchedTurfs.map((t) => t._id) } },
+    ],
+  };
+};
+
+export const getBookingsByTurf = async (ownerId, turfId, { page = 1, limit = 20, status, search } = {}) => {
   const turf = await assertOwnsBookingTurf(ownerId, turfId);
 
   // `status` used to be hardcoded to CONFIRMED here, so this view silently
@@ -914,6 +938,8 @@ export const getBookingsByTurf = async (ownerId, turfId, { page = 1, limit = 20,
 
   const query = { turfId: turf._id };
   if (status) query.status = status;
+  const orClause = await searchOrClause(search, [turf._id]);
+  if (orClause) Object.assign(query, orClause);
 
   return pageOfReservations(query, { page, limit });
 };
@@ -923,17 +949,19 @@ export const getBookingsByTurf = async (ownerId, turfId, { page = 1, limit = 20,
  * date range, turf, status — and pagination. Established as the one
  * pagination pattern in this backend: { items, total, page, pages }.
  */
-export const getOwnerBookings = async (ownerId, { page = 1, limit = 20, from, to, turfId, status, paymentStatus, refundStatus, payoutStatus } = {}) => {
+export const getOwnerBookings = async (ownerId, { page = 1, limit = 20, from, to, turfId, status, paymentStatus, refundStatus, payoutStatus, search } = {}) => {
   const turfs = await Turf.find({ ownerId }).select("_id");
   const turfIds = turfs.map((t) => t._id);
   await settleFinishedBookings({ turfId: { $in: turfIds } });
 
   const query = { turfId: { $in: turfIds } };
+  let scopedTurfIds = turfIds;
   if (turfId) {
     if (!turfIds.some((id) => id.toString() === turfId)) {
       throw new ApiError(403, "You do not own this turf");
     }
     query.turfId = turfId;
+    scopedTurfIds = [turfId];
   }
   if (status) query.status = status;
   if (refundStatus) query.refundStatus = refundStatus;
@@ -943,6 +971,8 @@ export const getOwnerBookings = async (ownerId, { page = 1, limit = 20, from, to
     query.paymentId = { $in: paymentIds.map((p) => p._id) };
   }
   Object.assign(query, playTimeRangeFilter(from, to));
+  const orClause = await searchOrClause(search, scopedTurfIds);
+  if (orClause) Object.assign(query, orClause);
 
   return pageOfReservations(query, { page, limit });
 };
@@ -1116,17 +1146,35 @@ export const getOwnerCustomers = async (ownerId, { page = 1, limit = 20 } = {}) 
  * the customer has never booked here, so this can't be used to probe whether
  * an arbitrary userId exists on the platform.
  */
-export const getOwnerCustomerDetail = async (ownerId, customerId) => {
+export const getOwnerCustomerDetail = async (ownerId, customerId, { page = 1, limit = 20 } = {}) => {
   const turfs = await Turf.find({ ownerId }).select("_id");
   const turfIds = turfs.map((t) => t._id);
+  const query = { turfId: { $in: turfIds }, userId: customerId };
+  const skip = (page - 1) * limit;
 
-  const bookings = await Booking.find({ turfId: { $in: turfIds }, userId: customerId })
-    .populate("turfId", "name location sportsType")
-    .populate("slotId", "startTime endTime pricePaise")
-    .populate("paymentId", "status razorpayOrderId razorpayPaymentId amountPaise currency refunds failureReason paidAt")
-    .sort({ createdAt: -1 });
+  const [bookings, total, statsAgg] = await Promise.all([
+    Booking.find(query)
+      .populate("turfId", "name location sportsType")
+      .populate("slotId", "startTime endTime pricePaise")
+      .populate("paymentId", "status razorpayOrderId razorpayPaymentId amountPaise currency refunds failureReason paidAt")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    Booking.countDocuments(query),
+    Booking.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: null,
+          totalBookings: { $sum: 1 },
+          confirmedCount: { $sum: { $cond: [IS_HONOURED_EXPR, 1, 0] } },
+          totalSpentPaise: { $sum: { $cond: [IS_HONOURED_EXPR, "$amountPaise", 0] } },
+        },
+      },
+    ]),
+  ]);
 
-  if (bookings.length === 0) {
+  if (total === 0) {
     throw new ApiError(404, "No bookings found for this customer at your turfs");
   }
 
@@ -1135,13 +1183,13 @@ export const getOwnerCustomerDetail = async (ownerId, customerId) => {
     throw new ApiError(404, "Customer not found");
   }
 
-  const confirmed = bookings.filter((b) => HONOURED_STATUSES.includes(b.status));
+  const agg = statsAgg[0] || { totalBookings: 0, confirmedCount: 0, totalSpentPaise: 0 };
   const stats = {
-    totalBookings: bookings.length,
-    confirmedCount: confirmed.length,
-    cancelledCount: bookings.length - confirmed.length,
-    totalSpent: toRupees(confirmed.reduce((sum, b) => sum + b.amountPaise, 0)),
+    totalBookings: agg.totalBookings,
+    confirmedCount: agg.confirmedCount,
+    cancelledCount: agg.totalBookings - agg.confirmedCount,
+    totalSpent: toRupees(agg.totalSpentPaise),
   };
 
-  return { customer, stats, bookings };
+  return { customer, stats, ...buildPaginatedResult(bookings, total, page, limit) };
 };

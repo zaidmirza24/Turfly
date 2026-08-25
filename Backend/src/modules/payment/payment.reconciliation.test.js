@@ -67,23 +67,25 @@ describe("findStuckPayments", () => {
   it("flags a PAID payment whose bookingIds is shorter than slotIds", async () => {
     const select = vi.fn().mockReturnThis();
     const sort = vi.fn().mockReturnThis();
+    const limit = vi.fn().mockReturnThis();
     const lean = vi.fn().mockResolvedValue([
       { _id: "pay_1", slotIds: ["s1", "s2"], bookingIds: ["b1"] }, // stuck: 1 of 2
       { _id: "pay_2", slotIds: ["s1"], bookingIds: ["b1"] }, // complete: not stuck
     ]);
-    Payment.find.mockReturnValue({ select, sort, lean });
+    Payment.find.mockReturnValue({ select, sort, limit, lean });
 
-    const stuck = await findStuckPayments();
+    const { items } = await findStuckPayments();
 
-    expect(stuck).toHaveLength(1);
-    expect(stuck[0]._id).toBe("pay_1");
+    expect(items).toHaveLength(1);
+    expect(items[0]._id).toBe("pay_1");
   });
 
   it("only looks at PAID payments older than the stuck-detection window", async () => {
     const select = vi.fn().mockReturnThis();
     const sort = vi.fn().mockReturnThis();
+    const limit = vi.fn().mockReturnThis();
     const lean = vi.fn().mockResolvedValue([]);
-    Payment.find.mockReturnValue({ select, sort, lean });
+    Payment.find.mockReturnValue({ select, sort, limit, lean });
 
     await findStuckPayments();
 

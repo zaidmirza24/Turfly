@@ -1,10 +1,10 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { apiGet } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Filter, CalendarDays, User, MapPin, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Filter, CalendarDays, User, MapPin, Activity } from 'lucide-react';
 import { Booking, Paginated, Turf } from '@/types';
 import { bookingEndTime, bookingStartTime, bookingTurf, bookingUser } from '@/lib/booking';
 import { formatSlotDate, formatSlotTimeRange, toDateKey } from '@/lib/dateKey';
@@ -13,6 +13,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { SyncingIndicator } from '@/components/SyncingIndicator';
 import { BookingStatusBadge } from '@/components/BookingStatusBadge';
 import { QueryErrorState } from '@/components/QueryErrorState';
+import { PaginationFooter } from '@/components/PaginationFooter';
+import { usePageQueryParam } from '@/hooks/usePageQueryParam';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { BookingDetailDrawer } from './BookingDetailDrawer';
 import { ManualBookingModal } from './ManualBookingModal';
 
@@ -49,8 +52,9 @@ export default function OwnerBookingsPage() {
   const [turfId, setTurfId] = useState('all');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  const [page, setPage] = useState(1);
+  const { page, setPage, resetPage } = usePageQueryParam();
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search);
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
 
   const { data: turfsResponse } = useQuery({
@@ -69,8 +73,8 @@ export default function OwnerBookingsPage() {
     : scope === 'upcoming' ? { from: todayKey, to: '' }
     : { from, to };
 
-  const filters = { scope, status, turfId, from: range.from, to: range.to, page };
-  const { data: bookingsResponse, isLoading, isError, refetch } = useQuery({
+  const filters = { scope, status, turfId, from: range.from, to: range.to, search: debouncedSearch, page };
+  const { data: bookingsResponse, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: ['owner-bookings', filters],
     queryFn: () => {
       const params = new URLSearchParams({ page: String(page), limit: String(LIMIT) });
@@ -78,23 +82,20 @@ export default function OwnerBookingsPage() {
       if (turfId !== 'all') params.set('turfId', turfId);
       if (range.from) params.set('from', range.from);
       if (range.to) params.set('to', range.to);
+      if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
       return apiGet<Paginated<Booking>>(`/bookings/owner?${params.toString()}`);
     },
+    placeholderData: keepPreviousData,
   });
 
-  const bookings = bookingsResponse?.data?.items ?? [];
+  const filtered = bookingsResponse?.data?.items ?? [];
   const total = bookingsResponse?.data?.total ?? 0;
   const pages = bookingsResponse?.data?.pages ?? 1;
 
-  // Free-text search stays client-side over the current page only — a real
-  // server-side search would need a text index this backend doesn't have yet.
-  const q = search.trim().toLowerCase();
-  const filtered = bookings.filter((b) => {
-    if (!q) return true;
-    return bookingUser(b)?.name?.toLowerCase().includes(q) || bookingTurf(b)?.name?.toLowerCase().includes(q);
-  });
+  const resetToPage1 = <T,>(setter: (v: T) => void) => (v: T) => { setter(v); resetPage(); };
 
-  const resetToPage1 = <T,>(setter: (v: T) => void) => (v: T) => { setter(v); setPage(1); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { resetPage(); }, [debouncedSearch]);
 
   if (isLoading) {
     return <SyncingIndicator label="Syncing Bookings" />;
@@ -188,7 +189,7 @@ export default function OwnerBookingsPage() {
       {isError ? (
         <QueryErrorState message="Couldn't load bookings." onRetry={() => refetch()} />
       ) : (
-        <>
+        <div className={cn('space-y-10 transition-opacity', isFetching && !isLoading && 'opacity-60')}>
           <div className="md:hidden space-y-3">
             {filtered.length === 0 ? (
               <EmptyState scope={scope} />
@@ -326,22 +327,8 @@ export default function OwnerBookingsPage() {
             </div>
           </div>
 
-          {pages > 1 && (
-            <div className="flex items-center justify-between gap-4">
-              <p className="text-sm text-muted-foreground">
-                Page {page} of {pages} · {total} total
-              </p>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="icon" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-                  <ChevronLeft size={16} />
-                </Button>
-                <Button variant="outline" size="icon" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>
-                  <ChevronRight size={16} />
-                </Button>
-              </div>
-            </div>
-          )}
-        </>
+          <PaginationFooter page={page} pages={pages} total={total} onPageChange={setPage} />
+        </div>
       )}
 
       <BookingDetailDrawer

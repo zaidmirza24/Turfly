@@ -23,11 +23,16 @@ export const createComplaint = async (user, { bookingId, turfId, category, descr
   });
 };
 
+// One user's own complaints — naturally bounded by their own activity, but
+// still capped defensively rather than left fully unbounded.
+const MAX_USER_COMPLAINTS = 200;
+
 export const getMyComplaints = async (userId) => {
   return Complaint.find({ raisedBy: userId })
     .populate("bookingId", "amount createdAt")
     .populate("turfId", "name location")
-    .sort({ createdAt: -1 });
+    .sort({ createdAt: -1 })
+    .limit(MAX_USER_COMPLAINTS);
 };
 
 export const getAllComplaintsForAdmin = async ({ page = 1, limit = 20, status } = {}) => {

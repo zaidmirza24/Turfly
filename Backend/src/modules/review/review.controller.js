@@ -1,5 +1,6 @@
 import * as reviewService from "./review.service.js";
 import ApiResponse from "../../common/utils/ApiResponse.js";
+import { parsePagination } from "../../common/utils/pagination.js";
 
 export const createReview = async (req, res) => {
   const review = await reviewService.createReview(req.user._id, req.params.turfId, req.body);
@@ -22,7 +23,8 @@ export const respondToReview = async (req, res) => {
 };
 
 export const getReviewsForTurf = async (req, res) => {
-  const reviews = await reviewService.getReviewsForTurf(req.params.turfId);
+  const { page, limit } = parsePagination(req.query, { defaultLimit: 10 });
+  const reviews = await reviewService.getReviewsForTurf(req.params.turfId, { page, limit });
   new ApiResponse(200, "Reviews fetched", reviews).send(res);
 };
 

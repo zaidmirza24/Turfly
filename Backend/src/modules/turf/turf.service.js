@@ -6,6 +6,7 @@ import { attachImagesToTurf } from "../image/image.service.js";
 import { geocodeLocation } from "./geocode.js";
 import { updateSlots as updateSlotPrices } from "../slot/slot.service.js";
 import { toPaise } from "../../common/utils/money.js";
+import { buildPaginatedResult } from "../../common/utils/pagination.js";
 
 // Fields whose change should propagate to already-generated, not-yet-booked
 // Slot documents. Without this, editing a turf's rate only affects slots
@@ -119,7 +120,13 @@ const SORT_STAGES = {
  * `filter` — most callers (owner's-own-turfs, admin) pass neither and get
  * the original createdAt-sorted listing untouched.
  */
-export const getAllTurfs = async (filter = {}, { limit, sortBy, near, availableNow } = {}) => {
+// `page` is opt-in: internal "top N" callers (HomePage widgets, the name
+// autocomplete list, getMyTurfs) pass only `limit` and still get a plain
+// array back, unchanged. Only a caller that passes `page` (the public
+// listing/search) gets the paginated `{items, total, page, pages}` shape —
+// changing the return type for every caller would break those simpler
+// call sites for no benefit, since they already bound their own result size.
+export const getAllTurfs = async (filter = {}, { limit, page, sortBy, near, availableNow } = {}) => {
   let effectiveFilter = filter;
 
   if (availableNow) {
@@ -131,6 +138,9 @@ export const getAllTurfs = async (filter = {}, { limit, sortBy, near, availableN
     });
     effectiveFilter = { ...filter, _id: { $in: openTurfIds } };
   }
+
+  const effectiveLimit = page ? limit || 20 : limit;
+  const skip = page ? (page - 1) * effectiveLimit : 0;
 
   // A $geoNear-sorted result can't also be populated via a plain .find(), so
   // "near" runs as its own aggregation pipeline; everything else keeps using
@@ -146,6 +156,17 @@ export const getAllTurfs = async (filter = {}, { limit, sortBy, near, availableN
       geoNearStage.maxDistance = near.maxDistanceKm * 1000; // meters
     }
     const pipeline = [{ $geoNear: geoNearStage }];
+    if (page) {
+      const [countResult] = await Turf.aggregate([...pipeline, { $count: "total" }]);
+      const total = countResult?.total ?? 0;
+      pipeline.push({ $skip: skip }, { $limit: effectiveLimit });
+      pipeline.push(
+        { $lookup: { from: "users", localField: "ownerId", foreignField: "_id", as: "ownerId" } },
+        { $unwind: { path: "$ownerId", preserveNullAndEmptyArrays: true } }
+      );
+      const items = await Turf.aggregate(pipeline);
+      return buildPaginatedResult(items, total, page, effectiveLimit);
+    }
     if (limit) pipeline.push({ $limit: Number(limit) });
     pipeline.push(
       { $lookup: { from: "users", localField: "ownerId", foreignField: "_id", as: "ownerId" } },
@@ -157,6 +178,14 @@ export const getAllTurfs = async (filter = {}, { limit, sortBy, near, availableN
   let query = Turf.find(effectiveFilter)
     .populate("ownerId", "name email")
     .sort(SORT_STAGES[sortBy] || SORT_STAGES.newest);
+
+  if (page) {
+    const [items, total] = await Promise.all([
+      query.skip(skip).limit(effectiveLimit),
+      Turf.countDocuments(effectiveFilter),
+    ]);
+    return buildPaginatedResult(items, total, page, effectiveLimit);
+  }
 
   if (limit) {
     query = query.limit(Number(limit));

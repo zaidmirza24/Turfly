@@ -1,6 +1,7 @@
 import * as turfService from "./turf.service.js";
 import ApiResponse from "../../common/utils/ApiResponse.js";
 import { toPaise } from "../../common/utils/money.js";
+import { parsePagination } from "../../common/utils/pagination.js";
 
 /**
  * Build a Mongo filter from user-supplied query params.
@@ -63,6 +64,16 @@ const buildPublicTurfFilter = (query) => {
 
 const buildPublicTurfOptions = (query) => {
   const options = { limit: query.limit };
+
+  // `page` is opt-in (see turf.service.js getAllTurfs) — only present it once
+  // the caller has actually asked to page through results, so "give me the
+  // top N" callers (HomePage widgets, name autocomplete) keep getting a plain
+  // array back untouched.
+  if (query.page !== undefined) {
+    const parsed = parsePagination(query, { maxLimit: 60 });
+    options.page = parsed.page;
+    options.limit = parsed.limit;
+  }
 
   if (VALID_SORTS.has(query.sortBy)) options.sortBy = query.sortBy;
   if (query.availableNow === "true") options.availableNow = true;

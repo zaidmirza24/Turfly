@@ -409,15 +409,31 @@ const STUCK_PAYMENT_MINUTES = 15;
  * slots were booked. Bounded to payments older than STUCK_PAYMENT_MINUTES so
  * an order that's simply still in flight isn't flagged as stuck.
  */
-export const findStuckPayments = async () => {
+// This is an ops/support surface (see admin.controller.js's getStuckPayments
+// doc comment) expected to stay small — a crash between capture and booking
+// creation should be rare. STUCK_PAYMENT_QUERY_CAP is a defensive ceiling on
+// the raw DB fetch, not a real pagination boundary: the actual "is a slot
+// still missing" check can't be expressed as a Mongo filter (it compares two
+// array lengths on the same document), so it has to run in JS after fetch —
+// paginating that filtered result would be pagination theatre over a list
+// that's supposed to be near-empty. If this cap is ever hit in practice,
+// that's itself a signal something upstream is failing repeatedly.
+const STUCK_PAYMENT_QUERY_CAP = 500;
+
+export const findStuckPayments = async ({ page = 1, limit = 20 } = {}) => {
   const cutoff = new Date(Date.now() - STUCK_PAYMENT_MINUTES * 60 * 1000);
   const candidates = await Payment.find({ status: "PAID", paidAt: { $lt: cutoff } })
     .select("status userId turfId slotIds bookingIds amountPaise paidAt groupId razorpayPaymentId")
     .sort({ paidAt: 1 })
+    .limit(STUCK_PAYMENT_QUERY_CAP)
     .lean();
-  return candidates
+  const stuck = candidates
     .filter((p) => (p.bookingIds?.length || 0) < p.slotIds.length)
     .map(({ amountPaise, ...rest }) => ({ ...rest, amount: toRupees(amountPaise) }));
+
+  const total = stuck.length;
+  const start = (page - 1) * limit;
+  return { items: stuck.slice(start, start + limit), total, page, pages: Math.ceil(total / limit) || 1 };
 };
 
 /**

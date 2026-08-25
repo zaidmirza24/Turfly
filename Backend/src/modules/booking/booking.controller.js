@@ -2,6 +2,7 @@ import * as bookingService from "./booking.service.js";
 import * as emailService from "../notification/email.service.js";
 import ApiResponse from "../../common/utils/ApiResponse.js";
 import logger from "../../common/utils/logger.js";
+import { parsePagination } from "../../common/utils/pagination.js";
 
 const log = logger.child({ module: "booking.controller" });
 
@@ -114,25 +115,25 @@ export const getOwnerStats = async (req, res) => {
 };
 
 export const getOwnerCustomers = async (req, res) => {
-  const { page, limit } = req.query;
-  const customers = await bookingService.getOwnerCustomers(req.user._id, {
-    page: page ? Number(page) : undefined,
-    limit: limit ? Number(limit) : undefined,
-  });
+  const { page, limit } = parsePagination(req.query);
+  const customers = await bookingService.getOwnerCustomers(req.user._id, { page, limit });
   new ApiResponse(200, "Customers fetched successfully", customers).send(res);
 };
 
 export const getOwnerCustomerDetail = async (req, res) => {
-  const detail = await bookingService.getOwnerCustomerDetail(req.user._id, req.params.userId);
+  const { page, limit } = parsePagination(req.query);
+  const detail = await bookingService.getOwnerCustomerDetail(req.user._id, req.params.userId, { page, limit });
   new ApiResponse(200, "Customer detail fetched successfully", detail).send(res);
 };
 
 export const getTurfBookings = async (req, res) => {
-  const { page, limit, status } = req.query;
+  const { status, search } = req.query;
+  const { page, limit } = parsePagination(req.query, { maxLimit: 100 });
   const bookings = await bookingService.getBookingsByTurf(req.user._id, req.params.turfId, {
-    page: page ? Number(page) : undefined,
-    limit: limit ? Number(limit) : undefined,
+    page,
+    limit,
     status,
+    search,
   });
   new ApiResponse(200, "Turf bookings fetched successfully", bookings).send(
     res
@@ -140,10 +141,11 @@ export const getTurfBookings = async (req, res) => {
 };
 
 export const getOwnerBookings = async (req, res) => {
-  const { page, limit, from, to, turfId, status, paymentStatus, refundStatus, payoutStatus } = req.query;
+  const { from, to, turfId, status, paymentStatus, refundStatus, payoutStatus, search } = req.query;
+  const { page, limit } = parsePagination(req.query, { maxLimit: 100 });
   const bookings = await bookingService.getOwnerBookings(req.user._id, {
-    page: page ? Number(page) : undefined,
-    limit: limit ? Number(limit) : undefined,
+    page,
+    limit,
     from,
     to,
     turfId,
@@ -151,6 +153,7 @@ export const getOwnerBookings = async (req, res) => {
     paymentStatus,
     refundStatus,
     payoutStatus,
+    search,
   });
   new ApiResponse(200, "Owner bookings fetched successfully", bookings).send(
     res
