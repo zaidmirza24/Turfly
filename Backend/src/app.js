@@ -46,7 +46,7 @@ app.use(requestLogger);
 // frontend's URL). env.js already refuses to start in production if this is
 // unset, so `null` here only ever means "local/dev, deliberately open."
 const allowedOrigins = env.CORS_ORIGINS
-  ? env.CORS_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean)
+  ? env.CORS_ORIGINS.split(",").map((o) => o.trim().replace(/\/+$/, "")).filter(Boolean)
   : null;
 
 app.use(
